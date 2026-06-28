@@ -1,0 +1,72 @@
+/**
+ * Fallback de regras via Archives of Nethys.
+ *
+ * O AoN é servido por um índice Elasticsearch público. Consultamos esse índice
+ * para casos não cobertos pelo dataset local. Tudo aqui degrada graciosamente:
+ * qualquer erro de rede retorna `null`, e o GM cai de volta no conhecimento geral
+ * de PF2e em vez de quebrar a cena.
+ */
+
+const AON_ELASTIC = "https://elasticsearch.aonprd.com/aon/_search";
+const AON_BASE = "https://2e.aonprd.com";
+
+export interface WebRuleHit {
+  name: string;
+  category: string;
+  url: string;
+  text: string;
+}
+
+interface ElasticHit {
+  _source?: {
+    name?: string;
+    category?: string;
+    url?: string;
+    text?: string;
+    markdown?: string;
+  };
+}
+
+export async function lookupWebRule(
+  query: string,
+  timeoutMs = 6000,
+): Promise<WebRuleHit | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(AON_ELASTIC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        size: 1,
+        query: {
+          multi_match: {
+            query,
+            fields: ["name^3", "text", "markdown"],
+            type: "best_fields",
+          },
+        },
+      }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      hits?: { hits?: ElasticHit[] };
+    };
+    const hit = data.hits?.hits?.[0]?._source;
+    if (!hit?.name) return null;
+
+    const raw = hit.text ?? hit.markdown ?? "";
+    const text = raw.replace(/\s+/g, " ").slice(0, 1200);
+    return {
+      name: hit.name,
+      category: hit.category ?? "",
+      url: hit.url ? `${AON_BASE}${hit.url}` : AON_BASE,
+      text,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}

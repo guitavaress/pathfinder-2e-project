@@ -1,0 +1,114 @@
+{
+  "source": "Pathfinder 2e Player Core (https://2e.aonprd.com/). Resumos para uso do GM; não substitui o texto oficial.",
+  "actions": [
+    {
+      "id": "create-a-diversion",
+      "name": "Create a Diversion",
+      "skill": "deception",
+      "traits": ["mental"],
+      "defense": "perception",
+      "summary": "Você usa um gesto, truque ou conversa para tirar a atenção. Rola Deception contra a Perception dos alvos; quem falhar fica enganado, deixando você usar Hide ou Sneak mesmo sob observação.",
+      "criticalSuccess": "Você fica oculto a todos os alvos enganados até o fim do seu próximo turno (eles ficam off-guard a você).",
+      "success": "Igual ao crítico, mas seguintes Create a Diversion contra os mesmos alvos no mesmo encontro têm -4 circunstância acumulativo.",
+      "failure": "Os alvos percebem o truque; você não fica oculto.",
+      "criticalFailure": "Os alvos percebem o truque e ficam atentos a você."
+    },
+    {
+      "id": "lie",
+      "name": "Lie",
+      "skill": "deception",
+      "traits": ["auditory", "concentrate", "linguistic", "mental", "secret"],
+      "defense": "perception",
+      "summary": "Você tenta enganar com uma mentira. Rola Deception contra a Perception do alvo; o GM pode dar bônus/penalidade conforme a plausibilidade.",
+      "criticalSuccess": "O alvo acredita plenamente.",
+      "success": "O alvo acredita.",
+      "failure": "O alvo não acredita e fica desconfiado de você.",
+      "criticalFailure": "O alvo não acredita e fica hostil/desconfiado, podendo agir contra você."
+    },
+    {
+      "id": "make-an-impression",
+      "name": "Make an Impression",
+      "skill": "diplomacy",
+      "traits": ["auditory", "concentrate", "exploration", "linguistic", "mental"],
+      "defense": "will",
+      "summary": "Em ~1 minuto de conversa, você tenta causar boa impressão. Rola Diplomacy contra a Will DC do alvo; o resultado define a atitude inicial dele em relação a você.",
+      "criticalSuccess": "A atitude do alvo melhora em dois passos (até helpful).",
+      "success": "A atitude do alvo melhora em um passo.",
+      "failure": "A atitude do alvo não muda.",
+      "criticalFailure": "A atitude do alvo piora em um passo."
+    },
+    {
+      "id": "request",
+      "name": "Request",
+      "skill": "diplomacy",
+      "traits": ["auditory", "concentrate", "linguistic", "mental"],
+      "summary": "Você pede algo a alguém. Rola Diplomacy contra uma DC que o GM define pela ousadia do pedido e atitude do alvo.",
+      "criticalSuccess": "O alvo atende com entusiasmo, possivelmente fazendo mais que o pedido.",
+      "success": "O alvo atende, talvez com uma condição menor.",
+      "failure": "O alvo recusa, mas sem mágoa.",
+      "criticalFailure": "O alvo recusa e sua atitude piora em um passo."
+    },
+    {
+      "id": "demoralize",
+      "name": "Demoralize",
+      "skill": "intimidation",
+      "traits": ["auditory", "concentrate", "emotion", "fear", "mental"],
+      "defense": "will",
+      "summary": "Com uma ameaça ou exibição assustadora, você abala um inimigo. Rola Intimidation contra a Will DC do alvo; -4 se não compartilham idioma.",
+      "criticalSuccess": "O alvo fica frightened 2.",
+      "success": "O alvo fica frightened 1.",
+      "failure": "Sem efeito.",
+      "criticalFailure": "Sem efeito, e o alvo fica imune ao seu Demoralize por 10 minutos."
+    },
+    {
+      "id": "sense-motive",
+      "name": "Sense Motive",
+      "skill": "perception",
+      "traits": ["concentrate", "secret"],
+      "defense": "deception",
+      "summary": "Você avalia se alguém é confiável ou esconde algo. Rola Perception contra a Deception (ou DC) do alvo.",
+      "criticalSuccess": "Você entende a intenção e o estado emocional verdadeiros do alvo.",
+      "success": "Você sente se o alvo é honesto ou age estranho, sem detalhes.",
+      "failure": "Você tem uma impressão errada genérica.",
+      "criticalFailure": "Você forma uma conclusão claramente errada (ex.: confia em quem mente)."
+    },
+    {
+      "id": "recall-knowledge",
+      "name": "Recall Knowledge",
+      "skill": "arcana|nature|occultism|religion|society|crafting|medicine|lore",
+      "traits": ["concentrate", "secret"],
+      "summary": "Você tenta lembrar de um fato relevante. Rola a perícia de conhecimento apropriada contra a DC definida pelo GM (raridade/obscuridade).",
+      "criticalSuccess": "Você lembra do fato e de um detalhe extra útil.",
+      "success": "Você lembra do fato relevante.",
+      "failure": "Você não lembra de nada útil.",
+      "criticalFailure": "Você lembra de informação incorreta."
+    },
+    {
+      "id": "hide",
+      "name": "Hide",
+      "skill": "stealth",
+      "traits": ["secret"],
+      "summary": "Estando com cobertura ou ocultação, você rola Stealth contra a Perception DC dos observadores para ficar oculto a eles.",
+      "criticalSuccess": "Você fica oculto/escondido aos que falharam.",
+      "success": "Você fica oculto aos que falharam (eles sabem aproximadamente onde você está).",
+      "failure": "Você não consegue se esconder.",
+      "criticalFailure": "Você não consegue se esconder."
+    },
+    {
+      "id": "balance",
+      "name": "Balance / Acrobatics",
+      "skill": "acrobatics",
+      "summary": "Você atravessa terreno estreito ou instável. Rola Acrobatics contra a DC do terreno.",
+      "criticalSuccess": "Você atravessa normalmente e fica estável.",
+      "success": "Você se move pelo terreno difícil (fica off-guard durante).",
+      "failure": "Você para o movimento e fica off-guard.",
+      "criticalFailure": "Você cai e termina o turno (ou cai do terreno)."
+    }
+  ],
+  "dcByLevel": {
+    "note": "DCs simples por nível/dificuldade. Use como referência. Ajuste por raridade: +2 uncommon, +5 rare, +10 unique.",
+    "trivial": "DC ~ nível-relevante - 2",
+    "low": "0=14, 1=15, 2=16, 3=18, 4=19, 5=20, 6=22, 7=23, 8=24",
+    "guidance": "Para tarefas simples sem nível claro: very easy 10, easy 15, normal 20, hard 25, very hard 30, incredibly hard 40."
+  }
+}

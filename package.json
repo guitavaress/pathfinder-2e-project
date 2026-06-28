@@ -1,0 +1,21 @@
+{
+  "name": "pathfinder-2e-project",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RPG solo web local baseado em Pathfinder 2e, com Game Master gerado por IA (Claude).",
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:server": "npm run dev --workspace @pf2e/server",
+    "dev:web": "npm run dev --workspace @pf2e/web",
+    "data:pf2e": "npm run data:pf2e --workspace @pf2e/server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
