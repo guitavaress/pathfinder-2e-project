@@ -1,7 +1,12 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
-import { runTurn, type StreamEvent } from "../gm/agent.js";
+import {
+  NARRATIVE_MODEL,
+  RULES_MODEL,
+  runTurn,
+  type StreamEvent,
+} from "../gm/agent.js";
 import { createSession, getSession } from "../gm/sessions.js";
 import { parsePathbuilder } from "../pathbuilder/parse.js";
 
@@ -11,29 +16,41 @@ app.use(express.json({ limit: "2mb" }));
 
 const PORT = Number(process.env.PORT ?? 3001);
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
-const GM_MODEL = process.env.GM_MODEL ?? "qwen2.5:7b";
 
 const KICKOFF =
   "Comece a aventura. Descreva a cena de abertura, onde meu personagem está e o que percebe ao redor, e termine com uma deixa para minha ação.";
 
-/** Verifica se o Ollama está acessível e se o modelo configurado está disponível. */
-async function checkOllama(): Promise<{ reachable: boolean; hasModel: boolean }> {
+/** Verifica se o Ollama está acessível e quais modelos configurados estão presentes. */
+async function checkOllama(): Promise<{
+  reachable: boolean;
+  models: Record<string, boolean>;
+}> {
+  const wanted = { rules: RULES_MODEL, narrative: NARRATIVE_MODEL };
   try {
     const res = await fetch(`${OLLAMA_HOST}/api/tags`);
-    if (!res.ok) return { reachable: false, hasModel: false };
+    if (!res.ok) return { reachable: false, models: { rules: false, narrative: false } };
     const data = (await res.json()) as { models?: { name?: string }[] };
     const names = (data.models ?? []).map((m) => m.name ?? "");
-    const base = GM_MODEL.split(":")[0];
-    const hasModel = names.some((n) => n === GM_MODEL || n.startsWith(`${base}:`));
-    return { reachable: true, hasModel };
+    const has = (tag: string) => {
+      const base = tag.split(":")[0];
+      return names.some((n) => n === tag || n.startsWith(`${base}:`));
+    };
+    return {
+      reachable: true,
+      models: { rules: has(wanted.rules), narrative: has(wanted.narrative) },
+    };
   } catch {
-    return { reachable: false, hasModel: false };
+    return { reachable: false, models: { rules: false, narrative: false } };
   }
 }
 
 app.get("/health", async (_req, res) => {
   const ollama = await checkOllama();
-  res.json({ ok: true, model: GM_MODEL, ollama });
+  res.json({
+    ok: true,
+    models: { rules: RULES_MODEL, narrative: NARRATIVE_MODEL },
+    ollama,
+  });
 });
 
 /** Importa o JSON do Pathbuilder e cria uma sessão. */
@@ -105,15 +122,24 @@ app.use(
 
 app.listen(PORT, async () => {
   console.log(`GM server ouvindo em http://localhost:${PORT}`);
-  console.log(`Ollama: ${OLLAMA_HOST} | modelo: ${GM_MODEL}`);
-  const { reachable, hasModel } = await checkOllama();
+  console.log(
+    `Ollama: ${OLLAMA_HOST} | regras: ${RULES_MODEL} | narrativa: ${NARRATIVE_MODEL}`,
+  );
+  const { reachable, models } = await checkOllama();
   if (!reachable) {
     console.warn(
       `AVISO: Ollama não acessível em ${OLLAMA_HOST}. Inicie o Ollama antes de jogar.`,
     );
-  } else if (!hasModel) {
+    return;
+  }
+  if (!models.rules) {
     console.warn(
-      `AVISO: modelo "${GM_MODEL}" não encontrado no Ollama. Rode: ollama pull ${GM_MODEL}`,
+      `AVISO: modelo de regras "${RULES_MODEL}" não encontrado. Rode: ollama pull ${RULES_MODEL}`,
+    );
+  }
+  if (!models.narrative) {
+    console.warn(
+      `AVISO: modelo de narrativa "${NARRATIVE_MODEL}" não encontrado. Rode: ollama pull ${NARRATIVE_MODEL}`,
     );
   }
 });
