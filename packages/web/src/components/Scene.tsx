@@ -16,10 +16,16 @@ const DEGREE_LABEL: Record<DegreeOfSuccess, string> = {
 interface Props {
   log: LogItem[];
   busy: boolean;
+  phase: "rules" | "narrative" | null;
   onSend: (text: string) => void;
 }
 
-export function Scene({ log, busy, onSend }: Props) {
+const PHASE_LABEL: Record<"rules" | "narrative", string> = {
+  rules: "Consultando as regras…",
+  narrative: "Narrando…",
+};
+
+export function Scene({ log, busy, phase, onSend }: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -40,7 +46,11 @@ export function Scene({ log, busy, onSend }: Props) {
         {log.map((item, i) => (
           <LogRow key={i} item={item} />
         ))}
-        {busy && <div className="typing">O Mestre está narrando…</div>}
+        {busy && (
+          <div className="typing">
+            {phase ? PHASE_LABEL[phase] : "O Mestre está pensando…"}
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
       <div className="composer">

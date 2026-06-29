@@ -11,14 +11,19 @@ export function App() {
   const [state, setState] = useState<GameState | null>(null);
   const [log, setLog] = useState<LogItem[]>([]);
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<"rules" | "narrative" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const runTurn = useCallback(
     async (id: string, text: string) => {
       setBusy(true);
+      setPhase(null);
       try {
         await streamTurn(id, text, (event) => {
           switch (event.type) {
+            case "phase":
+              setPhase(event.phase);
+              break;
             case "delta":
               // Atualização PURA: mescla o delta no último bloco de narração,
               // ou cria um novo se o último item for player/check. Sem mutar refs
@@ -51,6 +56,7 @@ export function App() {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setBusy(false);
+        setPhase(null);
       }
     },
     [],
@@ -95,7 +101,7 @@ export function App() {
       <CharacterSheet character={character} state={state} />
       <main>
         {error && <p className="error">{error}</p>}
-        <Scene log={log} busy={busy} onSend={handleSend} />
+        <Scene log={log} busy={busy} phase={phase} onSend={handleSend} />
       </main>
     </div>
   );

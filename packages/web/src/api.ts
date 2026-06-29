@@ -11,6 +11,7 @@ export type StreamEvent =
   | { type: "delta"; text: string }
   | { type: "check"; result: CheckResult }
   | { type: "state"; state: GameState }
+  | { type: "phase"; phase: "rules" | "narrative" }
   | { type: "done" }
   | { type: "error"; message: string };
 

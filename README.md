@@ -11,13 +11,18 @@ decisões — com NPCs, um mundo vivo e testes de perícia seguindo as regras do
 
 ## Como funciona
 
-O Mestre é um **agente com tool use** rodando num **modelo local via [Ollama](https://ollama.com/)**:
-em vez de inventar números, ele *chama ferramentas* para rolar dados (`roll_check`), consultar regras
-(`lookup_rule`), ler a ficha (`get_character`) e registrar o estado da cena (`update_state`). Isso
-garante aderência às regras do PF2e e impede "alucinação" de rolagens.
+O Mestre roda em **modelos locais via [Ollama](https://ollama.com/)**, num **pipeline de dois modelos
+especializados** por turno:
 
-- **Modelo padrão:** `qwen2.5:7b` (versão instruct; tool calling confiável + bom português). Trocável
-  por `.env` (`GM_MODEL`), ex.: `llama3.1:8b`.
+1. **Regras (`RULES_MODEL`)** — resolve a mecânica PF2e com *tool use*: escolhe o teste/DC, rola dados
+   (`roll_check`), consulta regras (`lookup_rule`), atualiza o estado (`update_state`) e produz um
+   resumo mecânico. Isso impede "alucinação" de rolagens (os dados vêm do código, não do modelo).
+2. **Narrativa (`NARRATIVE_MODEL`)** — recebe esse resumo e escreve a cena imersiva (streaming),
+   coerente com o resultado. Não chama ferramentas.
+
+- **Padrão:** `RULES_MODEL=qwen3:30b-a3b` + `NARRATIVE_MODEL=gemma3:27b` (máxima qualidade).
+  ⚠️ Esse par **não cabe concorrente** em GPUs de ~12GB → turnos lentos (offload/troca). Para fluidez,
+  use no `.env` o par menor `RULES_MODEL=qwen3:8b` + `NARRATIVE_MODEL=gemma3:12b`.
 - **Custo de inferência:** zero — tudo roda na sua máquina.
 
 ## Estrutura
@@ -33,17 +38,19 @@ packages/
 
 - Node.js 20+
 - [Ollama](https://ollama.com/) instalado e rodando
-- GPU NVIDIA com ~8GB+ de VRAM recomendado (roda em CPU, porém lento)
+- GPU NVIDIA: o par menor (`qwen3:8b` + `gemma3:12b`) cabe em ~12GB e roda fluido; o par grande
+  (`qwen3:30b-a3b` + `gemma3:27b`) precisa de bem mais memória ou aceita ser lento (offload/troca)
 
 ## Configuração
 
 ```bash
-# 1. Instale o Ollama (https://ollama.com/download) e baixe o modelo
-ollama pull qwen2.5:7b
+# 1. Instale o Ollama (https://ollama.com/download) e baixe os dois modelos
+ollama pull qwen3:30b-a3b   # regras (ou o par menor: ollama pull qwen3:8b)
+ollama pull gemma3:27b      # narrativa (ou: ollama pull gemma3:12b)
 
 # 2. Dependências do projeto
 npm install
-cp .env.example .env   # ajuste OLLAMA_HOST / GM_MODEL se necessário
+cp .env.example .env   # ajuste RULES_MODEL / NARRATIVE_MODEL / OLLAMA_HOST
 
 # 3. Base de regras do PF2e (índice local para o GM consultar)
 #    Baixa o dataset do repo foundryvtt/pf2e (~26k entradas: ações, talentos,
