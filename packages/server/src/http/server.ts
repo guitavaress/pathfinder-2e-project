@@ -15,26 +15,26 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 const PORT = Number(process.env.PORT ?? 3001);
-const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
+const LMSTUDIO_BASE_URL =
+  process.env.LMSTUDIO_BASE_URL ?? "http://localhost:1234/v1";
 
 const KICKOFF =
   "Begin the adventure. Describe the opening scene, where my character is and what they notice around them, and end with a hook for my action.";
 
-/** Checks whether Ollama is reachable and which configured models are present. */
-async function checkOllama(): Promise<{
+/** Checks whether LM Studio is reachable and which configured models are present. */
+async function checkLmStudio(): Promise<{
   reachable: boolean;
   models: Record<string, boolean>;
 }> {
   const wanted = { rules: RULES_MODEL, narrative: NARRATIVE_MODEL };
   try {
-    const res = await fetch(`${OLLAMA_HOST}/api/tags`);
+    const res = await fetch(`${LMSTUDIO_BASE_URL}/models`);
     if (!res.ok) return { reachable: false, models: { rules: false, narrative: false } };
-    const data = (await res.json()) as { models?: { name?: string }[] };
-    const names = (data.models ?? []).map((m) => m.name ?? "");
-    const has = (tag: string) => {
-      const base = tag.split(":")[0];
-      return names.some((n) => n === tag || n.startsWith(`${base}:`));
-    };
+    const data = (await res.json()) as { data?: { id?: string }[] };
+    const ids = (data.data ?? []).map((m) => m.id ?? "");
+    // LM Studio reports each model's key as the id; match exact or substring.
+    const has = (key: string) =>
+      ids.some((id) => id === key || id.includes(key) || key.includes(id));
     return {
       reachable: true,
       models: { rules: has(wanted.rules), narrative: has(wanted.narrative) },
@@ -45,11 +45,11 @@ async function checkOllama(): Promise<{
 }
 
 app.get("/health", async (_req, res) => {
-  const ollama = await checkOllama();
+  const lmstudio = await checkLmStudio();
   res.json({
     ok: true,
     models: { rules: RULES_MODEL, narrative: NARRATIVE_MODEL },
-    ollama,
+    lmstudio,
   });
 });
 
@@ -123,23 +123,23 @@ app.use(
 app.listen(PORT, async () => {
   console.log(`GM server listening on http://localhost:${PORT}`);
   console.log(
-    `Ollama: ${OLLAMA_HOST} | rules: ${RULES_MODEL} | narrative: ${NARRATIVE_MODEL}`,
+    `LM Studio: ${LMSTUDIO_BASE_URL} | rules: ${RULES_MODEL} | narrative: ${NARRATIVE_MODEL}`,
   );
-  const { reachable, models } = await checkOllama();
+  const { reachable, models } = await checkLmStudio();
   if (!reachable) {
     console.warn(
-      `WARNING: Ollama not reachable at ${OLLAMA_HOST}. Start Ollama before playing.`,
+      `WARNING: LM Studio not reachable at ${LMSTUDIO_BASE_URL}. Run: lms server start`,
     );
     return;
   }
   if (!models.rules) {
     console.warn(
-      `WARNING: rules model "${RULES_MODEL}" not found. Run: ollama pull ${RULES_MODEL}`,
+      `WARNING: rules model "${RULES_MODEL}" not found. Run: lms get ${RULES_MODEL}`,
     );
   }
   if (!models.narrative) {
     console.warn(
-      `WARNING: narrative model "${NARRATIVE_MODEL}" not found. Run: ollama pull ${NARRATIVE_MODEL}`,
+      `WARNING: narrative model "${NARRATIVE_MODEL}" not found. Run: lms get ${NARRATIVE_MODEL}`,
     );
   }
 });

@@ -1,4 +1,8 @@
-import { Ollama, type Message, type Tool, type ToolCall } from "ollama";
+import OpenAI from "openai";
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from "openai/resources/chat/completions";
 import type { CheckResult, GameState } from "@pf2e/shared";
 import { rollCheck } from "../dice/check.js";
 import { lookupLocalRule } from "../rules/dataset.js";
@@ -12,10 +16,12 @@ import {
 import type { Session } from "./sessions.js";
 
 /** Model that resolves the RULES/tools (stage 1). */
-export const RULES_MODEL = process.env.RULES_MODEL ?? "qwen3:30b-a3b";
+export const RULES_MODEL = process.env.RULES_MODEL ?? "qwen/qwen3-30b-a3b";
 /** Model that writes the NARRATIVE (stage 2). */
-export const NARRATIVE_MODEL = process.env.NARRATIVE_MODEL ?? "gemma3:27b";
-const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
+export const NARRATIVE_MODEL = process.env.NARRATIVE_MODEL ?? "google/gemma-3-27b";
+/** LM Studio's OpenAI-compatible base URL (the server runs locally on :1234). */
+const LMSTUDIO_BASE_URL =
+  process.env.LMSTUDIO_BASE_URL ?? "http://localhost:1234/v1";
 const MAX_ITERATIONS = 8;
 /** How many recent history messages the rules stage sees as context. */
 const RULES_CONTEXT_TURNS = 6;
@@ -29,10 +35,11 @@ export type StreamEvent =
   | { type: "done" }
   | { type: "error"; message: string };
 
-const ollama = new Ollama({ host: OLLAMA_HOST });
+// LM Studio ignores the API key, but the OpenAI SDK requires a non-empty one.
+const client = new OpenAI({ baseURL: LMSTUDIO_BASE_URL, apiKey: "lm-studio" });
 
-/** Tool definitions in the OpenAI/Ollama format. */
-const TOOLS: Tool[] = [
+/** Tool definitions in the OpenAI function-calling format. */
+const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
@@ -216,13 +223,12 @@ async function runRulesStage(
   session: Session,
   emit: (e: StreamEvent) => void,
 ): Promise<string> {
-  const rulesSystem: Message = {
-    role: "system",
-    content: `${RULES_SYSTEM_PROMPT}\n\n${characterSheetBlock(session.character)}`,
-  };
   // Context: the recent dialogue messages (ending on the player's action).
-  const messages: Message[] = [
-    rulesSystem,
+  const messages: ChatCompletionMessageParam[] = [
+    {
+      role: "system",
+      content: `${RULES_SYSTEM_PROMPT}\n\n${characterSheetBlock(session.character)}`,
+    },
     ...session.messages.slice(-RULES_CONTEXT_TURNS),
   ];
 
@@ -236,39 +242,30 @@ async function runRulesStage(
   const rollCache = new Map<string, ToolOutcome>();
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const stream = await ollama.chat({
+    // The rules stage doesn't stream to the client (no delta events), so a
+    // single non-streaming completion keeps the tool_calls easy to read.
+    const resp = await client.chat.completions.create({
       model: RULES_MODEL,
       messages,
       tools: TOOLS,
-      stream: true,
-      think: false,
-      options: { num_ctx: 8192, temperature: 0.3 },
+      temperature: 0.3,
     });
-
-    let content = "";
-    const toolCalls: ToolCall[] = [];
-    for await (const chunk of stream) {
-      const msg = chunk.message;
-      if (msg.content) content += msg.content; // do NOT emit delta in the rules stage
-      if (msg.tool_calls?.length) toolCalls.push(...msg.tool_calls);
-    }
+    const message = resp.choices[0]?.message;
+    const toolCalls = message?.tool_calls ?? [];
     console.log(
-      `[GM][rules] iter ${i}: text=${content.length} chars, tools=[${toolCalls
+      `[GM][rules] iter ${i}: text=${message?.content?.length ?? 0} chars, tools=[${toolCalls
         .map((t) => t.function.name)
         .join(", ")}]`,
     );
 
-    messages.push({
-      role: "assistant",
-      content,
-      ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-    });
+    // Push the assistant message verbatim (it carries the tool_calls + ids).
+    if (message) messages.push(message);
 
     if (toolCalls.length === 0) break;
     anyTool = true;
 
     for (const tc of toolCalls) {
-      const args = (tc.function.arguments ?? {}) as Record<string, unknown>;
+      const args = parseToolArgs(tc.function.arguments);
       let outcome: ToolOutcome;
 
       if (tc.function.name === "roll_check") {
@@ -283,7 +280,7 @@ async function runRulesStage(
           outcome = await executeTool(session, "roll_check", args, emit);
           console.log(
             `[GM][rules]   tool roll_check(${JSON.stringify(args)}) -> ${
-              outcome.isError ? "ERRO: " : ""
+              outcome.isError ? "ERROR: " : ""
             }${outcome.content.slice(0, 80)}`,
           );
           if (!outcome.isError) {
@@ -299,7 +296,7 @@ async function runRulesStage(
         outcome = await executeTool(session, tc.function.name, args, emit);
         console.log(
           `[GM][rules]   tool ${tc.function.name}(${JSON.stringify(args)}) -> ${
-            outcome.isError ? "ERRO: " : ""
+            outcome.isError ? "ERROR: " : ""
           }${outcome.content.slice(0, 80)}`,
         );
         if (tc.function.name === "lookup_rule" && !outcome.isError) {
@@ -309,13 +306,23 @@ async function runRulesStage(
 
       messages.push({
         role: "tool",
+        tool_call_id: tc.id,
         content: outcome.content,
-        tool_name: tc.function.name,
       });
     }
   }
 
   return buildMechanicalSummary(session, checks, consulted, anyTool);
+}
+
+/** OpenAI returns tool-call arguments as a JSON string; parse defensively. */
+function parseToolArgs(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
 const DEGREE_EN: Record<CheckResult["degree"], string> = {
@@ -370,7 +377,7 @@ async function runNarrativeStage(
   emit: (e: StreamEvent) => void,
 ): Promise<void> {
   const lore = loadLore();
-  const narrativeSystem: Message = {
+  const narrativeSystem: ChatCompletionMessageParam = {
     role: "system",
     content: [
       NARRATIVE_SYSTEM_PROMPT,
@@ -386,20 +393,19 @@ async function runNarrativeStage(
       .join("\n\n"),
   };
 
-  // No `think`: gemma3 doesn't support thinking (and Ollama errors if passed).
-  const stream = await ollama.chat({
+  const stream = await client.chat.completions.create({
     model: NARRATIVE_MODEL,
     messages: [narrativeSystem, ...session.messages],
     stream: true,
-    options: { num_ctx: 8192, temperature: 0.7 },
+    temperature: 0.7,
   });
 
   let narration = "";
   for await (const chunk of stream) {
-    const msg = chunk.message;
-    if (msg.content) {
-      narration += msg.content;
-      emit({ type: "delta", text: msg.content });
+    const delta = chunk.choices[0]?.delta?.content;
+    if (delta) {
+      narration += delta;
+      emit({ type: "delta", text: delta });
     }
   }
   session.messages.push({ role: "assistant", content: narration });
