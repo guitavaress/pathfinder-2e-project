@@ -18,9 +18,9 @@ const PORT = Number(process.env.PORT ?? 3001);
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 
 const KICKOFF =
-  "Comece a aventura. Descreva a cena de abertura, onde meu personagem está e o que percebe ao redor, e termine com uma deixa para minha ação.";
+  "Begin the adventure. Describe the opening scene, where my character is and what they notice around them, and end with a hook for my action.";
 
-/** Verifica se o Ollama está acessível e quais modelos configurados estão presentes. */
+/** Checks whether Ollama is reachable and which configured models are present. */
 async function checkOllama(): Promise<{
   reachable: boolean;
   models: Record<string, boolean>;
@@ -53,13 +53,13 @@ app.get("/health", async (_req, res) => {
   });
 });
 
-/** Importa o JSON do Pathbuilder e cria uma sessão. */
+/** Imports the Pathbuilder JSON and creates a session. */
 app.post("/character/import", (req, res) => {
   try {
     if (!req.body || typeof req.body !== "object") {
       res.status(400).json({
         error:
-          "Corpo vazio ou inválido. Envie o JSON do Pathbuilder com Content-Type: application/json.",
+          "Empty or invalid body. Send the Pathbuilder JSON with Content-Type: application/json.",
       });
       return;
     }
@@ -72,17 +72,17 @@ app.post("/character/import", (req, res) => {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("Falha ao importar personagem:", message);
+    console.error("Failed to import character:", message);
     res.status(400).json({ error: message });
   }
 });
 
-/** Executa um turno e transmite os eventos do GM via SSE. */
+/** Runs a turn and streams the GM events via SSE. */
 app.post("/scene/turn", async (req, res) => {
   const { sessionId, text } = req.body ?? {};
   const session = getSession(String(sessionId ?? ""));
   if (!session) {
-    res.status(404).json({ error: "Sessão não encontrada." });
+    res.status(404).json({ error: "Session not found." });
     return;
   }
 
@@ -100,8 +100,8 @@ app.post("/scene/turn", async (req, res) => {
   res.end();
 });
 
-// Handler de erro global: body-parser (JSON malformado), payload grande, etc.
-// Garante resposta JSON + log, em vez de um 500 em HTML.
+// Global error handler: body-parser (malformed JSON), large payload, etc.
+// Ensures a JSON response + log instead of an HTML 500.
 app.use(
   (
     err: Error & { status?: number; type?: string },
@@ -109,37 +109,37 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
-    console.error("Erro na requisição:", err.message);
+    console.error("Request error:", err.message);
     const status = err.status && err.status < 500 ? err.status : 400;
     res.status(status).json({
       error:
         err.type === "entity.parse.failed"
-          ? "JSON inválido no corpo da requisição."
+          ? "Invalid JSON in the request body."
           : err.message,
     });
   },
 );
 
 app.listen(PORT, async () => {
-  console.log(`GM server ouvindo em http://localhost:${PORT}`);
+  console.log(`GM server listening on http://localhost:${PORT}`);
   console.log(
-    `Ollama: ${OLLAMA_HOST} | regras: ${RULES_MODEL} | narrativa: ${NARRATIVE_MODEL}`,
+    `Ollama: ${OLLAMA_HOST} | rules: ${RULES_MODEL} | narrative: ${NARRATIVE_MODEL}`,
   );
   const { reachable, models } = await checkOllama();
   if (!reachable) {
     console.warn(
-      `AVISO: Ollama não acessível em ${OLLAMA_HOST}. Inicie o Ollama antes de jogar.`,
+      `WARNING: Ollama not reachable at ${OLLAMA_HOST}. Start Ollama before playing.`,
     );
     return;
   }
   if (!models.rules) {
     console.warn(
-      `AVISO: modelo de regras "${RULES_MODEL}" não encontrado. Rode: ollama pull ${RULES_MODEL}`,
+      `WARNING: rules model "${RULES_MODEL}" not found. Run: ollama pull ${RULES_MODEL}`,
     );
   }
   if (!models.narrative) {
     console.warn(
-      `AVISO: modelo de narrativa "${NARRATIVE_MODEL}" não encontrado. Rode: ollama pull ${NARRATIVE_MODEL}`,
+      `WARNING: narrative model "${NARRATIVE_MODEL}" not found. Run: ollama pull ${NARRATIVE_MODEL}`,
     );
   }
 });

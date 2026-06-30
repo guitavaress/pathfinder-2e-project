@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** Os seis atributos do Pathfinder 2e. */
+/** The six Pathfinder 2e ability scores. */
 export const ABILITIES = ["str", "dex", "con", "int", "wis", "cha"] as const;
 export type Ability = (typeof ABILITIES)[number];
 
@@ -15,8 +15,8 @@ export const AbilityScoresSchema = z.object({
 export type AbilityScores = z.infer<typeof AbilityScoresSchema>;
 
 /**
- * As 16 perícias padrão do PF2e e a sua característica-chave.
- * Lores (perícias de conhecimento) são tratadas à parte porque têm nome livre.
+ * The 16 standard PF2e skills and their key ability.
+ * Lores (knowledge skills) are handled separately because they have free-form names.
  */
 export const SKILL_ABILITIES = {
   acrobatics: "dex",
@@ -40,7 +40,7 @@ export const SKILL_ABILITIES = {
 export type SkillName = keyof typeof SKILL_ABILITIES;
 export const SKILL_NAMES = Object.keys(SKILL_ABILITIES) as SkillName[];
 
-/** Rank de proficiência: 0 destreinado, 1 treinado, 2 perito, 3 mestre, 4 lendário. */
+/** Proficiency rank: 0 untrained, 1 trained, 2 expert, 3 master, 4 legendary. */
 export const ProficiencyRankSchema = z.union([
   z.literal(0),
   z.literal(1),
@@ -50,12 +50,12 @@ export const ProficiencyRankSchema = z.union([
 ]);
 export type ProficiencyRank = z.infer<typeof ProficiencyRankSchema>;
 
-/** Uma perícia com o seu rank e bônus total já calculado. */
+/** A skill with its rank and precomputed total bonus. */
 export const SkillSchema = z.object({
   name: z.string(),
   ability: z.enum(ABILITIES),
   rank: ProficiencyRankSchema,
-  /** Bônus total: rank*2 + nível (se treinado) + mod de atributo. */
+  /** Total bonus: rank*2 + level (if trained) + ability mod. */
   modifier: z.number().int(),
 });
 export type Skill = z.infer<typeof SkillSchema>;
@@ -67,16 +67,16 @@ export const LoreSchema = z.object({
 });
 export type Lore = z.infer<typeof LoreSchema>;
 
-/** Uma arma com ataque e dano já calculados pelo Pathbuilder. */
+/** A weapon with attack and damage precomputed by Pathbuilder. */
 export const WeaponSchema = z.object({
   name: z.string(),
-  /** Bônus de ataque total. */
+  /** Total attack bonus. */
   attack: z.number().int(),
-  /** Dado de dano, ex.: "d4". */
+  /** Damage die, e.g. "d4". */
   die: z.string(),
-  /** Bônus de dano fixo. */
+  /** Flat damage bonus. */
   damageBonus: z.number().int(),
-  /** Tipo de dano, ex.: "P", "S", "B". */
+  /** Damage type, e.g. "P", "S", "B". */
   damageType: z.string(),
 });
 export type Weapon = z.infer<typeof WeaponSchema>;
@@ -102,7 +102,7 @@ export const MoneySchema = z.object({
 });
 export type Money = z.infer<typeof MoneySchema>;
 
-/** Uma classe de conjuração do personagem (quando houver). */
+/** A character's spellcasting class (when present). */
 export const SpellcastingSchema = z.object({
   name: z.string(),
   tradition: z.string(),
@@ -111,12 +111,12 @@ export const SpellcastingSchema = z.object({
   ability: z.string(),
   attack: z.number().int().nullable(),
   dc: z.number().int().nullable(),
-  /** Lista achatada de nomes de magias conhecidas/preparadas. */
+  /** Flattened list of known/prepared spell names. */
   spells: z.array(z.string()),
 });
 export type Spellcasting = z.infer<typeof SpellcastingSchema>;
 
-/** Personagem normalizado a partir do export do Pathbuilder 2e. */
+/** Character normalized from the Pathbuilder 2e export. */
 export const CharacterSchema = z.object({
   name: z.string(),
   ancestry: z.string(),
@@ -136,14 +136,14 @@ export const CharacterSchema = z.object({
     will: z.number().int(),
   }),
   classDc: z.number().int(),
-  /** Bônus de item da CA (de armadura/escudo). */
+  /** AC item bonus (from armor/shield). */
   acItemBonus: z.number().int(),
   skills: z.record(z.string(), SkillSchema),
   lores: z.array(LoreSchema),
   feats: z.array(z.string()),
-  /** Traços de classe e habilidades especiais (de `specials`). */
+  /** Class features and special abilities (from `specials`). */
   classFeatures: z.array(z.string()),
-  /** Sentidos derivados (Darkvision, Low-Light Vision, etc.). */
+  /** Derived senses (Darkvision, Low-Light Vision, etc.). */
   senses: z.array(z.string()),
   weapons: z.array(WeaponSchema),
   armor: z.array(ArmorSchema),
@@ -158,7 +158,7 @@ export const CharacterSchema = z.object({
 });
 export type Character = z.infer<typeof CharacterSchema>;
 
-/** Graus de sucesso do PF2e. */
+/** PF2e degrees of success. */
 export const DEGREES = [
   "criticalSuccess",
   "success",
@@ -168,7 +168,7 @@ export const DEGREES = [
 export type DegreeOfSuccess = (typeof DEGREES)[number];
 
 export const CheckResultSchema = z.object({
-  /** Rótulo da rolagem, ex.: "Deception vs DC 18". */
+  /** Roll label, e.g. "Deception vs DC 18". */
   label: z.string(),
   die: z.number().int().min(1).max(20),
   modifier: z.number().int(),
@@ -178,7 +178,7 @@ export const CheckResultSchema = z.object({
 });
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 
-/** Eventos que compõem o registro de uma cena (renderizados na UI). */
+/** Events that make up a scene's log (rendered in the UI). */
 export const SceneEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("narration"), text: z.string() }),
   z.object({ type: z.literal("player"), text: z.string() }),
@@ -186,12 +186,12 @@ export const SceneEventSchema = z.discriminatedUnion("type", [
 ]);
 export type SceneEvent = z.infer<typeof SceneEventSchema>;
 
-/** Estado mutável de uma sessão de jogo. */
+/** Mutable state of a game session. */
 export const GameStateSchema = z.object({
   sessionId: z.string(),
   currentHp: z.number().int(),
   conditions: z.array(z.string()),
-  /** Flags livres da história (NPCs conhecidos, escolhas feitas, etc.). */
+  /** Free-form story flags (known NPCs, choices made, etc.). */
   flags: z.record(z.string(), z.unknown()),
 });
 export type GameState = z.infer<typeof GameStateSchema>;

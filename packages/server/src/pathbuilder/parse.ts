@@ -9,20 +9,20 @@ import {
   SKILL_ABILITIES,
 } from "@pf2e/shared";
 
-/** Modificador de atributo do PF2e: floor((score - 10) / 2). */
+/** PF2e ability modifier: floor((score - 10) / 2). */
 export function abilityModifier(score: number): number {
   return Math.floor((score - 10) / 2);
 }
 
-/** Pathbuilder grava proficiência como rank*2 (0/2/4/6/8). Converte para rank 0..4. */
+/** Pathbuilder stores proficiency as rank*2 (0/2/4/6/8). Converts to rank 0..4. */
 function toRank(pathbuilderValue: number | undefined): ProficiencyRank {
   const rank = Math.round((pathbuilderValue ?? 0) / 2);
   return Math.max(0, Math.min(4, rank)) as ProficiencyRank;
 }
 
 /**
- * Bônus total de uma proficiência (perícia, save, perception).
- * PF2e: se treinado+, soma nível + rank*2 + mod; se destreinado, soma só o mod.
+ * Total bonus of a proficiency (skill, save, perception).
+ * PF2e: if trained+, add level + rank*2 + mod; if untrained, add only the mod.
  */
 function proficiencyBonus(
   rank: ProficiencyRank,
@@ -33,7 +33,7 @@ function proficiencyBonus(
   return profPart + abilityMod;
 }
 
-/** Estrutura mínima do export do Pathbuilder que consumimos. */
+/** Minimal shape of the Pathbuilder export we consume. */
 interface PathbuilderExport {
   success?: boolean;
   build?: Record<string, unknown>;
@@ -48,14 +48,14 @@ function asString(v: unknown, fallback = ""): string {
 }
 
 /**
- * Converte o JSON exportado pelo Pathbuilder 2e num `Character` normalizado.
- * Lança erro se a estrutura básica não bater.
+ * Converts the JSON exported by Pathbuilder 2e into a normalized `Character`.
+ * Throws if the basic structure doesn't match.
  */
 export function parsePathbuilder(raw: unknown): Character {
   const data = raw as PathbuilderExport;
   const build = data?.build;
   if (!build || typeof build !== "object") {
-    throw new Error("JSON do Pathbuilder inválido: campo 'build' ausente.");
+    throw new Error("Invalid Pathbuilder JSON: 'build' field missing.");
   }
 
   const abilitiesRaw = (build.abilities ?? {}) as Record<string, unknown>;
@@ -70,7 +70,7 @@ export function parsePathbuilder(raw: unknown): Character {
   const level = asNumber(build.level, 1);
   const attributes = (build.attributes ?? {}) as Record<string, unknown>;
 
-  // Perícias padrão.
+  // Standard skills.
   const skills: Record<string, Skill> = {};
   for (const [name, ability] of Object.entries(SKILL_ABILITIES) as [
     keyof typeof SKILL_ABILITIES,
@@ -85,7 +85,7 @@ export function parsePathbuilder(raw: unknown): Character {
     };
   }
 
-  // Lores (perícias de conhecimento) usam INT.
+  // Lores (knowledge skills) use INT.
   const loresRaw = (build.lores ?? []) as [string, number][];
   const lores: Lore[] = loresRaw.map(([name, value]) => {
     const rank = toRank(value);
@@ -96,7 +96,7 @@ export function parsePathbuilder(raw: unknown): Character {
     };
   });
 
-  // HP = ancestryhp + (classhp + conMod) * nível + bonushp + bonushpPerLevel * nível.
+  // HP = ancestryhp + (classhp + conMod) * level + bonushp + bonushpPerLevel * level.
   const ancestryHp = asNumber(attributes.ancestryhp);
   const classHp = asNumber(attributes.classhp);
   const bonusHp = asNumber(attributes.bonushp);
@@ -127,10 +127,10 @@ export function parsePathbuilder(raw: unknown): Character {
 
   const perceptionRank = toRank(prof.perception);
 
-  // Armas: ataque e dano já vêm calculados pelo Pathbuilder.
+  // Weapons: attack and damage come precomputed from Pathbuilder.
   const weaponsRaw = (build.weapons ?? []) as Record<string, unknown>[];
   const weapons = weaponsRaw.map((w) => ({
-    name: asString(w.display, asString(w.name, "Arma")),
+    name: asString(w.display, asString(w.name, "Weapon")),
     attack: asNumber(w.attack),
     die: asString(w.die),
     damageBonus: asNumber(w.damageBonus),
@@ -139,12 +139,12 @@ export function parsePathbuilder(raw: unknown): Character {
 
   const armorRaw = (build.armor ?? []) as Record<string, unknown>[];
   const armor = armorRaw.map((a) => ({
-    name: asString(a.display, asString(a.name, "Armadura")),
+    name: asString(a.display, asString(a.name, "Armor")),
     proficiency: asString(a.prof),
     worn: a.worn === true,
   }));
 
-  // Equipamento: arrays no formato [nome, qtd, ...metadados].
+  // Equipment: arrays in the format [name, qty, ...metadata].
   const equipmentRaw = (build.equipment ?? []) as unknown[][];
   const equipment = equipmentRaw
     .filter((e) => Array.isArray(e) && e.length > 0)
@@ -159,7 +159,7 @@ export function parsePathbuilder(raw: unknown): Character {
     pp: asNumber(moneyRaw.pp),
   };
 
-  // `specials` mistura sentidos e traços de classe; separar por uma lista conhecida.
+  // `specials` mixes senses and class features; split via a known list.
   const SENSES = new Set([
     "darkvision",
     "greater darkvision",
@@ -175,7 +175,7 @@ export function parsePathbuilder(raw: unknown): Character {
   const senses = specials.filter((s) => SENSES.has(s.toLowerCase()));
   const classFeatures = specials.filter((s) => !SENSES.has(s.toLowerCase()));
 
-  // Conjuradores (vazio para a maioria dos marciais, como o Rogue de exemplo).
+  // Spellcasters (empty for most martials, like the example Rogue).
   const castersRaw = (build.spellCasters ?? []) as Record<string, unknown>[];
   const spellcasting = castersRaw.map((c) => {
     const spellsList: string[] = [];
@@ -189,7 +189,7 @@ export function parsePathbuilder(raw: unknown): Character {
       }
     }
     return {
-      name: asString(c.name, "Conjuração"),
+      name: asString(c.name, "Spellcasting"),
       tradition: asString(c.magicTradition),
       type: asString(c.spellcastingType),
       ability: asString(c.ability),
@@ -204,7 +204,7 @@ export function parsePathbuilder(raw: unknown): Character {
     .filter(Boolean);
 
   const character: Character = {
-    name: asString(build.name, "Aventureiro"),
+    name: asString(build.name, "Adventurer"),
     ancestry: asString(build.ancestry),
     heritage: build.heritage ? asString(build.heritage) : null,
     background: asString(build.background),

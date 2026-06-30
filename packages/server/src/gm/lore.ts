@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url";
 let cached: string | null | undefined;
 
 /**
- * Carrega o `LORE.md` da raiz do projeto (cenário + diretrizes do Mestre).
- * Caminho configurável por `LORE_PATH`. Retorna `null` se ausente.
- * O conteúdo entra no system prompt do GM — segredos só-GM não vão ao jogador.
+ * Loads the project root's `LORE.md` (setting + GM guidelines).
+ * Path configurable via `LORE_PATH`. Returns `null` if absent.
+ * The content goes into the GM's system prompt — GM-only secrets never reach the player.
  */
 export function loadLore(): string | null {
   if (cached !== undefined) return cached;

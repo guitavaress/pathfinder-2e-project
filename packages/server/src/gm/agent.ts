@@ -11,16 +11,16 @@ import {
 } from "./prompts.js";
 import type { Session } from "./sessions.js";
 
-/** Modelo que resolve as REGRAS/ferramentas (etapa 1). */
+/** Model that resolves the RULES/tools (stage 1). */
 export const RULES_MODEL = process.env.RULES_MODEL ?? "qwen3:30b-a3b";
-/** Modelo que escreve a NARRATIVA (etapa 2). */
+/** Model that writes the NARRATIVE (stage 2). */
 export const NARRATIVE_MODEL = process.env.NARRATIVE_MODEL ?? "gemma3:27b";
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 const MAX_ITERATIONS = 8;
-/** Quantas mensagens recentes do histórico a etapa de regras enxerga como contexto. */
+/** How many recent history messages the rules stage sees as context. */
 const RULES_CONTEXT_TURNS = 6;
 
-/** Eventos emitidos durante um turno, repassados ao cliente via SSE. */
+/** Events emitted during a turn, forwarded to the client via SSE. */
 export type StreamEvent =
   | { type: "delta"; text: string }
   | { type: "check"; result: CheckResult }
@@ -31,29 +31,29 @@ export type StreamEvent =
 
 const ollama = new Ollama({ host: OLLAMA_HOST });
 
-/** Definições das ferramentas no formato OpenAI/Ollama. */
+/** Tool definitions in the OpenAI/Ollama format. */
 const TOOLS: Tool[] = [
   {
     type: "function",
     function: {
       name: "roll_check",
       description:
-        "Rola UMA vez um d20 do personagem contra uma DC e retorna o grau de sucesso de PF2e. Use para perícias, saves, Perception e ATAQUES DE ARMA. Cada teste é rolado UMA única vez por turno — não repita a mesma rolagem. NUNCA escreva o resultado de um dado sem chamar esta ferramenta.",
+        "Rolls the character's d20 ONCE against a DC and returns the PF2e degree of success. Use for skills, saves, Perception, and WEAPON ATTACKS. Each check is rolled exactly ONCE per turn — do not repeat the same roll. NEVER state a die result without calling this tool.",
       parameters: {
         type: "object",
         properties: {
           skill: {
             type: "string",
             description:
-              "O que rolar: uma perícia (ex.: deception, stealth, athletics), um save (fortitude, reflex, will), 'perception', o nome de uma Lore, ou — para um ATAQUE — o nome da arma do personagem (ex.: 'dagger'). Para ataques, a 'dc' é a CA do alvo.",
+              "What to roll: a skill (e.g. deception, stealth, athletics), a save (fortitude, reflex, will), 'perception', a Lore name, or — for an ATTACK — the character's weapon name (e.g. 'dagger'). For attacks, 'dc' is the target's AC.",
           },
           dc: {
             type: "number",
-            description: "Dificuldade (DC) do teste — ou a CA do alvo, em ataques.",
+            description: "The check's DC — or the target's AC for attacks.",
           },
           reason: {
             type: "string",
-            description: "Descrição curta do que está sendo testado.",
+            description: "Short description of what is being attempted.",
           },
         },
         required: ["skill", "dc", "reason"],
@@ -65,11 +65,11 @@ const TOOLS: Tool[] = [
     function: {
       name: "lookup_rule",
       description:
-        "Consulta o texto oficial de uma regra do PF2e por nome: ação, talento (feat), magia, condição, item/equipamento ou monstro. Use antes de aplicar uma habilidade do personagem (ex.: 'Bon Mot', 'Sneak Attack') ou uma condição (ex.: 'Frightened'). Busca no índice local e cai para o Archives of Nethys se não achar.",
+        "Looks up the official text of a PF2e rule by name: action, feat, spell, condition, item/equipment, or monster. Use before applying one of the character's abilities (e.g. 'Bon Mot', 'Sneak Attack') or a condition (e.g. 'Frightened'). Searches the local index, falling back to Archives of Nethys if not found.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "O que buscar (nome da regra)." },
+          query: { type: "string", description: "What to look up (the rule's name)." },
         },
         required: ["query"],
       },
@@ -80,7 +80,7 @@ const TOOLS: Tool[] = [
     function: {
       name: "get_character",
       description:
-        "Retorna a ficha completa do personagem do jogador (atributos, perícias, saves).",
+        "Returns the player character's full sheet (attributes, skills, saves).",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -89,13 +89,13 @@ const TOOLS: Tool[] = [
     function: {
       name: "update_state",
       description:
-        "Registra mudanças persistentes da cena: dano/cura (hpDelta), condições e flags da história.",
+        "Records persistent scene changes: damage/healing (hpDelta) and conditions gained/removed.",
       parameters: {
         type: "object",
         properties: {
           hpDelta: {
             type: "number",
-            description: "Variação de HP (negativo = dano, positivo = cura).",
+            description: "HP change (negative = damage, positive = healing).",
           },
           addConditions: { type: "array", items: { type: "string" } },
           removeConditions: { type: "array", items: { type: "string" } },
@@ -105,7 +105,7 @@ const TOOLS: Tool[] = [
   },
 ];
 
-/** Resolve o modificador de um teste a partir da ficha do personagem. */
+/** Resolves a check's modifier from the character sheet. */
 function resolveModifier(session: Session, skillRaw: string): number | null {
   const key = skillRaw.toLowerCase().trim();
   const c = session.character;
@@ -118,7 +118,7 @@ function resolveModifier(session: Session, skillRaw: string): number | null {
   if (lore) return lore.modifier;
   const lorePartial = c.lores.find((l) => key.includes(l.name.toLowerCase()));
   if (lorePartial) return lorePartial.modifier;
-  // Ataques de arma: usa o bônus de ataque já calculado da arma (vs CA do alvo).
+  // Weapon attacks: use the weapon's precomputed attack bonus (vs target AC).
   const weapon =
     c.weapons.find((w) => w.name.toLowerCase() === key) ??
     c.weapons.find((w) => key.includes(w.name.toLowerCase()));
@@ -151,7 +151,7 @@ async function executeTool(
       const modifier = resolveModifier(session, skill);
       if (modifier === null) {
         return {
-          content: `Não encontrei o teste "${skill}" na ficha. Use uma perícia, save, perception ou lore existente.`,
+          content: `No check named "${skill}" on the sheet. Use an existing skill, save, perception, lore, or weapon name.`,
           isError: true,
         };
       }
@@ -175,7 +175,7 @@ async function executeTool(
         };
       }
       return {
-        content: `Sem entrada para "${query}" no dataset local nem no AoN. Use seu conhecimento geral de PF2e e narre de forma consistente.`,
+        content: `No entry for "${query}" in the local dataset or AoN. Use your general PF2e knowledge and stay consistent.`,
       };
     }
     case "get_character": {
@@ -199,17 +199,18 @@ async function executeTool(
         s.conditions = s.conditions.filter((c) => !remove.has(c));
       }
       emit({ type: "state", state: s });
-      return { content: `Estado atualizado: ${JSON.stringify(s)}` };
+      return { content: `State updated: ${JSON.stringify(s)}` };
     }
     default:
-      return { content: `Ferramenta desconhecida: ${name}`, isError: true };
+      return { content: `Unknown tool: ${name}`, isError: true };
   }
 }
 
 /**
- * ETAPA 1 — Regras: o modelo de regras resolve a mecânica via tool use (sem
- * narrar). Emite eventos `check`/`state`, NÃO emite `delta`. Roda num histórico
- * de mensagens próprio (não polui o diálogo narrativo) e retorna o resumo mecânico.
+ * STAGE 1 — Rules: the rules model resolves the mechanics via tool use (no
+ * narration). Emits `check`/`state` events but NOT `delta`. Runs on its own
+ * message history (doesn't pollute the narrative dialogue) and returns the
+ * mechanical summary.
  */
 async function runRulesStage(
   session: Session,
@@ -219,19 +220,19 @@ async function runRulesStage(
     role: "system",
     content: `${RULES_SYSTEM_PROMPT}\n\n${characterSheetBlock(session.character)}`,
   };
-  // Contexto: as mensagens recentes do diálogo (terminando na ação do jogador).
+  // Context: the recent dialogue messages (ending on the player's action).
   const messages: Message[] = [
     rulesSystem,
     ...session.messages.slice(-RULES_CONTEXT_TURNS),
   ];
 
-  // Coletamos os RESULTADOS reais das ferramentas e montamos o resumo no código
-  // (determinístico, em PT, conciso) — a prosa do modelo de regras é ignorada.
+  // We collect the REAL tool results and build the summary in code
+  // (deterministic, concise) — the rules model's prose is ignored.
   const checks: CheckResult[] = [];
   const consulted: string[] = [];
   let anyTool = false;
-  // Anti-spam: o modelo às vezes rola o MESMO teste várias vezes no turno.
-  // Cacheamos por (perícia|motivo) e reusamos o 1º resultado (sem novo card).
+  // Anti-spam: the model sometimes rolls the SAME check several times per turn.
+  // We cache by (skill|reason) and reuse the 1st result (no new card).
   const rollCache = new Map<string, ToolOutcome>();
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -248,11 +249,11 @@ async function runRulesStage(
     const toolCalls: ToolCall[] = [];
     for await (const chunk of stream) {
       const msg = chunk.message;
-      if (msg.content) content += msg.content; // NÃO emitir delta na etapa de regras
+      if (msg.content) content += msg.content; // do NOT emit delta in the rules stage
       if (msg.tool_calls?.length) toolCalls.push(...msg.tool_calls);
     }
     console.log(
-      `[GM][regras] iter ${i}: texto=${content.length} chars, tools=[${toolCalls
+      `[GM][rules] iter ${i}: text=${content.length} chars, tools=[${toolCalls
         .map((t) => t.function.name)
         .join(", ")}]`,
     );
@@ -276,28 +277,28 @@ async function runRulesStage(
           .trim();
         const cached = rollCache.get(key);
         if (cached) {
-          outcome = cached; // rolagem repetida no mesmo turno → reusa (sem rolar/emitir de novo)
-          console.log(`[GM][regras]   roll_check repetido ignorado (${key})`);
+          outcome = cached; // repeated roll this turn → reuse (don't roll/emit again)
+          console.log(`[GM][rules]   duplicate roll_check ignored (${key})`);
         } else {
           outcome = await executeTool(session, "roll_check", args, emit);
           console.log(
-            `[GM][regras]   tool roll_check(${JSON.stringify(args)}) -> ${
+            `[GM][rules]   tool roll_check(${JSON.stringify(args)}) -> ${
               outcome.isError ? "ERRO: " : ""
             }${outcome.content.slice(0, 80)}`,
           );
           if (!outcome.isError) {
-            rollCache.set(key, outcome); // só cacheia rolagens válidas
+            rollCache.set(key, outcome); // only cache valid rolls
             try {
               checks.push(JSON.parse(outcome.content) as CheckResult);
             } catch {
-              // ignora conteúdo não-JSON
+              // ignore non-JSON content
             }
           }
         }
       } else {
         outcome = await executeTool(session, tc.function.name, args, emit);
         console.log(
-          `[GM][regras]   tool ${tc.function.name}(${JSON.stringify(args)}) -> ${
+          `[GM][rules]   tool ${tc.function.name}(${JSON.stringify(args)}) -> ${
             outcome.isError ? "ERRO: " : ""
           }${outcome.content.slice(0, 80)}`,
         );
@@ -317,14 +318,23 @@ async function runRulesStage(
   return buildMechanicalSummary(session, checks, consulted, anyTool);
 }
 
-const DEGREE_PT: Record<CheckResult["degree"], string> = {
-  criticalSuccess: "sucesso crítico",
-  success: "sucesso",
-  failure: "falha",
-  criticalFailure: "falha crítica",
+const DEGREE_EN: Record<CheckResult["degree"], string> = {
+  criticalSuccess: "critical success",
+  success: "success",
+  failure: "failure",
+  criticalFailure: "critical failure",
 };
 
-/** Monta um resumo mecânico curto e factual a partir dos resultados das ferramentas. */
+/** Strips the "(skill vs DC n)" suffix so only the plain reason remains. */
+function checkReason(label: string): string {
+  return label.split(" (")[0]!.trim();
+}
+
+/**
+ * Builds a short, player-safe mechanical summary from the tool results. It
+ * deliberately omits rules jargon (no "DC", "total", or die numbers) so that
+ * if the narrative model leaks this block verbatim, nothing breaks immersion.
+ */
 function buildMechanicalSummary(
   session: Session,
   checks: CheckResult[],
@@ -332,26 +342,27 @@ function buildMechanicalSummary(
   anyTool: boolean,
 ): string {
   if (checks.length === 0 && consulted.length === 0 && !anyTool) {
-    return "Sem teste necessário.";
+    return "No roll was needed this turn.";
   }
   const lines: string[] = [];
   for (const c of checks) {
-    lines.push(`Teste: ${c.label} → ${DEGREE_PT[c.degree]} (total ${c.total}).`);
+    lines.push(`- ${checkReason(c.label)}: ${DEGREE_EN[c.degree]}.`);
   }
   if (consulted.length) {
-    lines.push(`Regras consultadas: ${consulted.join("; ")}.`);
+    lines.push(`Rules consulted: ${consulted.join("; ")}.`);
   }
   const st = session.state;
   const cond = st.conditions.length
-    ? `, condições: ${st.conditions.join(", ")}`
+    ? `, conditions: ${st.conditions.join(", ")}`
     : "";
-  lines.push(`Estado: HP ${st.currentHp}/${session.character.maxHp}${cond}.`);
+  lines.push(`State: HP ${st.currentHp}/${session.character.maxHp}${cond}.`);
   return lines.join("\n");
 }
 
 /**
- * ETAPA 2 — Narrativa: o modelo de narrativa escreve a cena (com streaming),
- * coerente com o resumo mecânico. Sem ferramentas. Anexa a narração ao histórico.
+ * STAGE 2 — Narrative: the narrative model writes the scene (streaming),
+ * consistent with the mechanical summary. No tools. Appends the narration to
+ * the history.
  */
 async function runNarrativeStage(
   session: Session,
@@ -364,18 +375,18 @@ async function runNarrativeStage(
     content: [
       NARRATIVE_SYSTEM_PROMPT,
       lore
-        ? `# Cenário e diretrizes do mundo (CONHECIMENTO EXCLUSIVO DO MESTRE — nunca revele segredos diretamente ao jogador)\n${lore}`
+        ? `# World setting and guidelines (GM-ONLY KNOWLEDGE — never reveal secrets directly to the player)\n${lore}`
         : "",
       characterSheetBlock(session.character),
       mechanical
-        ? `# Dados mecânicos deste turno (REFERÊNCIA INTERNA — NÃO copie nem cite estes termos na narração; traduza em ficção)\n${mechanical}`
-        : "# Dados mecânicos deste turno\nNenhum teste necessário; conduza a cena livremente.",
+        ? `# Mechanical results for this turn (INTERNAL REFERENCE — do NOT copy or quote these terms in the narration; translate them into fiction)\n${mechanical}`
+        : "# Mechanical results for this turn\nNo roll was needed; move the scene freely.",
     ]
       .filter(Boolean)
       .join("\n\n"),
   };
 
-  // Sem `think`: gemma3 não suporta thinking (e o Ollama erra se for passado).
+  // No `think`: gemma3 doesn't support thinking (and Ollama errors if passed).
   const stream = await ollama.chat({
     model: NARRATIVE_MODEL,
     messages: [narrativeSystem, ...session.messages],
@@ -395,9 +406,9 @@ async function runNarrativeStage(
 }
 
 /**
- * Executa um turno em duas etapas: (1) o modelo de regras resolve a mecânica
- * PF2e via ferramentas; (2) o modelo de narrativa escreve a cena coerente com
- * o resultado, em streaming. Emite eventos via `emit`.
+ * Runs a turn in two stages: (1) the rules model resolves the PF2e mechanics
+ * via tools; (2) the narrative model writes the scene consistent with the
+ * result, streaming. Emits events via `emit`.
  */
 export async function runTurn(
   session: Session,
@@ -406,21 +417,21 @@ export async function runTurn(
 ): Promise<void> {
   session.messages.push({ role: "user", content: playerText });
   console.log(
-    `[GM] turno iniciado (regras=${RULES_MODEL}, narrativa=${NARRATIVE_MODEL})`,
+    `[GM] turn started (rules=${RULES_MODEL}, narrative=${NARRATIVE_MODEL})`,
   );
   try {
     emit({ type: "phase", phase: "rules" });
     const mechanical = await runRulesStage(session, emit);
-    console.log(`[GM] resumo mecânico: ${mechanical.slice(0, 160) || "(vazio)"}`);
+    console.log(`[GM] mechanical summary: ${mechanical.slice(0, 160) || "(empty)"}`);
 
     emit({ type: "phase", phase: "narrative" });
     await runNarrativeStage(session, mechanical, emit);
 
-    console.log("[GM] turno concluído");
+    console.log("[GM] turn finished");
     emit({ type: "done" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[GM] ERRO no turno:", message);
+    console.error("[GM] turn ERROR:", message);
     emit({ type: "error", message });
   }
 }
