@@ -6,7 +6,7 @@ export interface ImportResult {
   state: GameState;
 }
 
-/** Espelha o StreamEvent do servidor (packages/server/src/gm/agent.ts). */
+/** Mirrors the server's StreamEvent (packages/server/src/gm/agent.ts). */
 export type StreamEvent =
   | { type: "delta"; text: string }
   | { type: "check"; result: CheckResult }
@@ -23,14 +23,14 @@ export async function importCharacter(rawJson: string): Promise<ImportResult> {
   });
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(err.error ?? `Falha ao importar (HTTP ${res.status}).`);
+    throw new Error(err.error ?? `Import failed (HTTP ${res.status}).`);
   }
   return (await res.json()) as ImportResult;
 }
 
 /**
- * Executa um turno e consome o stream SSE, chamando `onEvent` para cada evento.
- * `text` vazio inicia a cena de abertura.
+ * Runs a turn and consumes the SSE stream, calling `onEvent` for each event.
+ * An empty `text` starts the opening scene.
  */
 export async function streamTurn(
   sessionId: string,
@@ -43,7 +43,7 @@ export async function streamTurn(
     body: JSON.stringify({ sessionId, text }),
   });
   if (!res.ok || !res.body) {
-    throw new Error(`Falha no turno (HTTP ${res.status}).`);
+    throw new Error(`Turn failed (HTTP ${res.status}).`);
   }
 
   const reader = res.body.getReader();
@@ -55,7 +55,7 @@ export async function streamTurn(
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
 
-    // Eventos SSE são separados por linha em branco.
+    // SSE events are separated by a blank line.
     const chunks = buffer.split("\n\n");
     buffer = chunks.pop() ?? "";
     for (const chunk of chunks) {
@@ -66,7 +66,7 @@ export async function streamTurn(
       try {
         onEvent(JSON.parse(json) as StreamEvent);
       } catch {
-        // ignora linhas malformadas
+        // ignore malformed lines
       }
     }
   }

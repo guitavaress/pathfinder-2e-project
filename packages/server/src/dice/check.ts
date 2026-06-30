@@ -1,20 +1,20 @@
 import type { CheckResult, DegreeOfSuccess } from "@pf2e/shared";
 
-/** Rola um d20 (1–20). Substituível em testes injetando `roll`. */
+/** Rolls a d20 (1–20). Overridable in tests by injecting `rng`. */
 export function rollD20(rng: () => number = Math.random): number {
   return Math.floor(rng() * 20) + 1;
 }
 
 /**
- * Calcula o grau de sucesso de PF2e.
+ * Computes the PF2e degree of success.
  *
- * Regra base (margem de 10):
- *  - total >= DC + 10 → sucesso crítico
- *  - total >= DC      → sucesso
- *  - total <= DC - 10 → falha crítica
- *  - caso contrário   → falha
+ * Base rule (margin of 10):
+ *  - total >= DC + 10 → critical success
+ *  - total >= DC      → success
+ *  - total <= DC - 10 → critical failure
+ *  - otherwise        → failure
  *
- * Ajuste do d20 natural: um 20 natural sobe um grau; um 1 natural desce um grau.
+ * Natural d20 adjustment: a natural 20 bumps one degree up; a natural 1 bumps one degree down.
  */
 export function degreeOfSuccess(
   die: number,
@@ -50,7 +50,7 @@ function bumpDown(d: DegreeOfSuccess): DegreeOfSuccess {
   return ORDER[Math.max(i - 1, 0)]!;
 }
 
-/** Executa uma rolagem completa: d20 + modificador contra a DC. */
+/** Runs a full roll: d20 + modifier against the DC. */
 export function rollCheck(
   label: string,
   modifier: number,

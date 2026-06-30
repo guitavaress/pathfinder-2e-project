@@ -1,10 +1,10 @@
 /**
- * Fallback de regras via Archives of Nethys.
+ * Rules fallback via Archives of Nethys.
  *
- * O AoN é servido por um índice Elasticsearch público. Consultamos esse índice
- * para casos não cobertos pelo dataset local. Tudo aqui degrada graciosamente:
- * qualquer erro de rede retorna `null`, e o GM cai de volta no conhecimento geral
- * de PF2e em vez de quebrar a cena.
+ * AoN is backed by a public Elasticsearch index. We query that index for cases
+ * not covered by the local dataset. Everything here degrades gracefully: any
+ * network error returns `null`, and the GM falls back on general PF2e knowledge
+ * instead of breaking the scene.
  */
 
 const AON_ELASTIC = "https://elasticsearch.aonprd.com/aon/_search";
