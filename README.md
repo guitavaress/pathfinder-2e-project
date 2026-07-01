@@ -1,94 +1,100 @@
 # pathfinder-2e-project
 
-RPG **solo, web e local** baseado em **Pathfinder 2e**, com um **Mestre (Game Master) gerado por IA**
-rodando **100% localmente** (sem custo de API). Você importa um personagem criado no
-[Pathbuilder 2e](https://pathbuilder2e.com/), e o Mestre narra uma história 100% dirigida pelas suas
-decisões — com NPCs, um mundo vivo e testes de perícia seguindo as regras do PF2e
+A **solo, web, local** RPG based on **Pathfinder 2e**, with an **AI-driven Game Master** running
+**100% locally** (no API cost). You import a character built in
+[Pathbuilder 2e](https://pathbuilder2e.com/), and the GM narrates a story driven entirely by your
+decisions — with NPCs, a living world, and skill checks following the PF2e rules
 ([Archives of Nethys](https://2e.aonprd.com/)).
 
-> **Status:** MVP — importar personagem, ver a ficha e jogar uma **cena narrativa** com NPCs e testes de
-> perícia. Motor de combate tático completo virá em fases seguintes.
+> **Status:** MVP — import a character, view the sheet, and play a **narrative scene** with NPCs and
+> skill checks. A full tactical combat engine will come in later phases.
 
-## Como funciona
+## How it works
 
-O Mestre roda em **modelos locais via [Ollama](https://ollama.com/)**, num **pipeline de dois modelos
-especializados** por turno:
+The GM runs on **local models via [LM Studio](https://lmstudio.ai/)**, in a **two-model pipeline**
+per turn:
 
-1. **Regras (`RULES_MODEL`)** — resolve a mecânica PF2e com *tool use*: escolhe o teste/DC, rola dados
-   (`roll_check`), consulta regras (`lookup_rule`), atualiza o estado (`update_state`) e produz um
-   resumo mecânico. Isso impede "alucinação" de rolagens (os dados vêm do código, não do modelo).
-2. **Narrativa (`NARRATIVE_MODEL`)** — recebe esse resumo e escreve a cena imersiva (streaming),
-   coerente com o resultado. Não chama ferramentas.
+1. **Rules (`RULES_MODEL`)** — resolves the PF2e mechanics with *tool use*: picks the check/DC, rolls
+   dice (`roll_check`), looks up rules (`lookup_rule`), updates state (`update_state`), and produces a
+   mechanical summary. This prevents "hallucinated" rolls (the dice come from code, not the model).
+2. **Narrative (`NARRATIVE_MODEL`)** — receives that summary and writes the immersive scene
+   (streaming), consistent with the result. It calls no tools.
 
-- **Padrão:** `RULES_MODEL=qwen3:30b-a3b` + `NARRATIVE_MODEL=gemma3:27b` (máxima qualidade).
-  ⚠️ Esse par **não cabe concorrente** em GPUs de ~12GB → turnos lentos (offload/troca). Para fluidez,
-  use no `.env` o par menor `RULES_MODEL=qwen3:8b` + `NARRATIVE_MODEL=gemma3:12b`.
-- **Custo de inferência:** zero — tudo roda na sua máquina.
+The server talks to LM Studio through its **OpenAI-compatible API** (`http://localhost:1234/v1`).
 
-## Estrutura
+- **Default:** `RULES_MODEL=qwen/qwen3-30b-a3b` + `NARRATIVE_MODEL=google/gemma-3-27b` (max quality).
+  ⚠️ This pair **does not fit together** in ~12 GB GPUs, so LM Studio swaps models each turn (slower).
+  For fluidity, download a smaller pair and point `RULES_MODEL` / `NARRATIVE_MODEL` at them in `.env`.
+- **Inference cost:** zero — everything runs on your machine.
+
+## Structure
 
 ```
 packages/
-├── shared/   # tipos TS compartilhados (Character, GameState, CheckResult...)
-├── server/   # Node/Express: API REST + agente GM (Ollama) + dados + regras PF2e
-└── web/      # React/Vite: import, ficha e cena narrativa (streaming via SSE)
+├── shared/   # shared TS types (Character, GameState, CheckResult...)
+├── server/   # Node/Express: REST API + GM agent (LM Studio) + data + PF2e rules
+└── web/      # React/Vite: import, sheet, and narrative scene (streaming via SSE)
 ```
 
-## Requisitos
+## Requirements
 
 - Node.js 20+
-- [Ollama](https://ollama.com/) instalado e rodando
-- GPU NVIDIA: o par menor (`qwen3:8b` + `gemma3:12b`) cabe em ~12GB e roda fluido; o par grande
-  (`qwen3:30b-a3b` + `gemma3:27b`) precisa de bem mais memória ou aceita ser lento (offload/troca)
+- [LM Studio](https://lmstudio.ai/) installed, with its local server running (`lms server start`)
+- NVIDIA GPU: a smaller model pair fits in ~12 GB and runs smoothly; the large default pair
+  (`qwen/qwen3-30b-a3b` + `google/gemma-3-27b`) needs much more memory or accepts being slow
+  (model swap each turn)
 
-## Configuração
+## Setup
 
 ```bash
-# 1. Instale o Ollama (https://ollama.com/download) e baixe os dois modelos
-ollama pull qwen3:30b-a3b   # regras (ou o par menor: ollama pull qwen3:8b)
-ollama pull gemma3:27b      # narrativa (ou: ollama pull gemma3:12b)
+# 1. Install LM Studio (https://lmstudio.ai/download), start its server, and download both models
+lms server start
+lms get qwen/qwen3-30b-a3b   # rules
+lms get google/gemma-3-27b   # narrative
 
-# 2. Dependências do projeto
+# 2. Project dependencies
 npm install
-cp .env.example .env   # ajuste RULES_MODEL / NARRATIVE_MODEL / OLLAMA_HOST
+cp .env.example .env   # adjust RULES_MODEL / NARRATIVE_MODEL / LMSTUDIO_BASE_URL
 
-# 3. Base de regras do PF2e (índice local para o GM consultar)
-#    Baixa o dataset do repo foundryvtt/pf2e (~26k entradas: ações, talentos,
-#    magias, condições, itens, bestiário). Requer git. Versão via PF2E_GIT_REF.
+# 3. PF2e rules dataset (local index the GM consults)
+#    Downloads the dataset from the foundryvtt/pf2e repo (~26k entries: actions, feats,
+#    spells, conditions, items, bestiary). Requires git. Version via PF2E_GIT_REF.
 npm run data:pf2e
-#    Alternativa: ler da sua instalação local do Foundry (feche o Foundry antes):
-#    npm run data:pf2e -- --from-local      # usa PF2E_SYSTEM_PATH
+#    Alternative: read from your local Foundry install (close Foundry first):
+#    npm run data:pf2e -- --from-local      # uses PF2E_SYSTEM_PATH
 ```
 
-> O dataset gerado fica em `packages/server/data/pf2e/generated/` (gitignored — não
-> redistribuído). Antes de rodar `data:pf2e`, o GM usa uma pequena base semente.
+> The generated dataset lives in `packages/server/data/pf2e/generated/` (gitignored — not
+> redistributed). Before running `data:pf2e`, the GM uses a small seed dataset.
 
-### Mundo / cenário
+### World / setting
 
-Copie `LORE.example.md` para **`LORE.md`** na raiz e descreva o seu cenário + diretrizes do Mestre.
-Ele é injetado automaticamente no prompt do GM (os segredos ali nunca são revelados diretamente ao
-jogador). O `LORE.md` é **gitignored** (fica local, fora do repo público — porque costuma conter
-spoilers só-GM). Caminho configurável via `LORE_PATH`; sem `LORE.md`, o jogo roda sem lore específica.
+Copy `LORE.example.md` to **`LORE.md`** in the root and describe your setting + GM guidelines. It is
+injected automatically into the GM prompt (the secrets there are never revealed directly to the
+player). `LORE.md` is **gitignored** (kept local, out of the public repo — it usually contains
+GM-only spoilers). Path configurable via `LORE_PATH`; without `LORE.md`, the game runs with no
+specific lore.
 
-## Rodando
+## Running
 
-Em dois terminais:
+In two terminals:
 
 ```bash
-npm run dev:server   # backend do GM em http://localhost:3001
-npm run dev:web      # frontend em http://localhost:5173
+npm run dev:server   # GM backend at http://localhost:3001
+npm run dev:web      # frontend at http://localhost:5173
 ```
 
-Abra `http://localhost:5173`, importe `exemplo_personagem.json` (um Goblin Rogue nível 5) ou o seu próprio
-export do Pathbuilder 2e, e comece a jogar. (O Ollama precisa estar rodando com o modelo já baixado.)
+Open `http://localhost:5173`, import `exemplo_personagem.json` (a level 5 Goblin Rogue) or your own
+Pathbuilder 2e export, and start playing. (LM Studio must be running with the models downloaded; the
+server loads them on demand.)
 
-## Testes e build
+## Tests and build
 
 ```bash
-npm test     # testes do parser do Pathbuilder e dos dados/graus de sucesso
+npm test     # Pathbuilder parser + dice/degree-of-success tests
 npm run build
 ```
 
-## Licença
+## License
 
 MIT

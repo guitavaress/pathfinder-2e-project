@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { Message } from "ollama";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { Character, GameState } from "@pf2e/shared";
 
 export interface Session {
   id: string;
   character: Character;
   state: GameState;
-  /** Histórico de mensagens trocadas com o modelo (user/assistant/tool). */
-  messages: Message[];
+  /** History of messages exchanged with the model (user/assistant/tool). */
+  messages: ChatCompletionMessageParam[];
 }
 
 const sessions = new Map<string, Session>();
