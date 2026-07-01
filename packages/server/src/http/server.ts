@@ -122,9 +122,11 @@ app.use(
 
 app.listen(PORT, async () => {
   console.log(`GM server listening on http://localhost:${PORT}`);
-  console.log(
-    `LM Studio: ${LMSTUDIO_BASE_URL} | rules: ${RULES_MODEL} | narrative: ${NARRATIVE_MODEL}`,
-  );
+  const modelLine =
+    RULES_MODEL === NARRATIVE_MODEL
+      ? `GM model (single, two contexts): ${RULES_MODEL}`
+      : `rules: ${RULES_MODEL} | narrative: ${NARRATIVE_MODEL}`;
+  console.log(`LM Studio: ${LMSTUDIO_BASE_URL} | ${modelLine}`);
   const { reachable, models } = await checkLmStudio();
   if (!reachable) {
     console.warn(

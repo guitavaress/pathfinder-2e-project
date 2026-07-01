@@ -15,10 +15,20 @@ import {
 } from "./prompts.js";
 import type { Session } from "./sessions.js";
 
-/** Model that resolves the RULES/tools (stage 1). */
-export const RULES_MODEL = process.env.RULES_MODEL ?? "qwen/qwen3-30b-a3b";
-/** Model that writes the NARRATIVE (stage 2). */
-export const NARRATIVE_MODEL = process.env.NARRATIVE_MODEL ?? "google/gemma-3-27b";
+/**
+ * Single model that drives both stages by default. Each stage runs its own
+ * CONTEXT (system prompt + message thread), not its own model — so LM Studio
+ * keeps one model resident across the turn instead of swapping weights (which
+ * on ~12 GB VRAM costs minutes per turn). Qwen3 is the default: strong at
+ * tool-calling AND acceptable at prose.
+ */
+const GM_MODEL = process.env.GM_MODEL ?? "qwen/qwen3-30b-a3b";
+/** Model for the RULES/tools stage. Defaults to GM_MODEL; override only to
+ * split across two models (needs enough VRAM to avoid a per-turn swap). */
+export const RULES_MODEL = process.env.RULES_MODEL ?? GM_MODEL;
+/** Model for the NARRATIVE stage. Defaults to GM_MODEL; override only to split
+ * across two models (needs enough VRAM to avoid a per-turn swap). */
+export const NARRATIVE_MODEL = process.env.NARRATIVE_MODEL ?? GM_MODEL;
 /** LM Studio's OpenAI-compatible base URL (the server runs locally on :1234). */
 const LMSTUDIO_BASE_URL =
   process.env.LMSTUDIO_BASE_URL ?? "http://localhost:1234/v1";

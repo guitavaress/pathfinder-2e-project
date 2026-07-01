@@ -11,20 +11,26 @@ decisions — with NPCs, a living world, and skill checks following the PF2e rul
 
 ## How it works
 
-The GM runs on **local models via [LM Studio](https://lmstudio.ai/)**, in a **two-model pipeline**
-per turn:
+The GM runs on **local models via [LM Studio](https://lmstudio.ai/)**, in a **two-stage pipeline**
+per turn. By default **one model** drives both stages — each stage runs its own *context* (system
+prompt + message thread), not its own model, so LM Studio keeps a single model resident and never
+swaps weights mid-turn:
 
-1. **Rules (`RULES_MODEL`)** — resolves the PF2e mechanics with *tool use*: picks the check/DC, rolls
-   dice (`roll_check`), looks up rules (`lookup_rule`), updates state (`update_state`), and produces a
+1. **Rules context** — resolves the PF2e mechanics with *tool use*: picks the check/DC, rolls dice
+   (`roll_check`), looks up rules (`lookup_rule`), updates state (`update_state`), and produces a
    mechanical summary. This prevents "hallucinated" rolls (the dice come from code, not the model).
-2. **Narrative (`NARRATIVE_MODEL`)** — receives that summary and writes the immersive scene
-   (streaming), consistent with the result. It calls no tools.
+2. **Narrative context** — receives that summary and writes the immersive scene (streaming),
+   consistent with the result. It calls no tools.
 
 The server talks to LM Studio through its **OpenAI-compatible API** (`http://localhost:1234/v1`).
 
-- **Default:** `RULES_MODEL=qwen/qwen3-30b-a3b` + `NARRATIVE_MODEL=google/gemma-3-27b` (max quality).
-  ⚠️ This pair **does not fit together** in ~12 GB GPUs, so LM Studio swaps models each turn (slower).
-  For fluidity, download a smaller pair and point `RULES_MODEL` / `NARRATIVE_MODEL` at them in `.env`.
+- **Default (`GM_MODEL`):** one model for both stages — `qwen/qwen3-30b-a3b` (strong tool-calling and
+  acceptable prose). No per-turn model swap.
+  ⚠️ On ~12 GB VRAM a 30B still partially offloads to CPU (slower than a model that fully fits, but
+  **no swap**). For snappy turns, point `GM_MODEL` at a smaller model / quant that fits entirely.
+- **Two-model mode (opt-in):** set `RULES_MODEL` and `NARRATIVE_MODEL` to different models for
+  specialization (e.g. a stronger narrator). Needs enough VRAM for both to stay resident, otherwise
+  LM Studio swaps weights each turn (minutes/turn on ~12 GB).
 - **Inference cost:** zero — everything runs on your machine.
 
 ## Structure
@@ -40,21 +46,21 @@ packages/
 
 - Node.js 20+
 - [LM Studio](https://lmstudio.ai/) installed, with its local server running (`lms server start`)
-- NVIDIA GPU: a smaller model pair fits in ~12 GB and runs smoothly; the large default pair
-  (`qwen/qwen3-30b-a3b` + `google/gemma-3-27b`) needs much more memory or accepts being slow
-  (model swap each turn)
+- NVIDIA GPU: a model that fully fits in ~12 GB runs smoothly; the default `qwen/qwen3-30b-a3b`
+  partially offloads on 12 GB (slower, but no per-turn swap). Two-model mode needs enough VRAM for
+  both models to stay resident.
 
 ## Setup
 
 ```bash
-# 1. Install LM Studio (https://lmstudio.ai/download), start its server, and download both models
+# 1. Install LM Studio (https://lmstudio.ai/download), start its server, and download the model
 lms server start
-lms get qwen/qwen3-30b-a3b   # rules
-lms get google/gemma-3-27b   # narrative
+lms get qwen/qwen3-30b-a3b   # GM_MODEL (drives both stages)
+# Optional two-model mode: also `lms get google/gemma-3-27b` and set NARRATIVE_MODEL
 
 # 2. Project dependencies
 npm install
-cp .env.example .env   # adjust RULES_MODEL / NARRATIVE_MODEL / LMSTUDIO_BASE_URL
+cp .env.example .env   # adjust GM_MODEL / LMSTUDIO_BASE_URL (RULES/NARRATIVE_MODEL optional)
 
 # 3. PF2e rules dataset (local index the GM consults)
 #    Downloads the dataset from the foundryvtt/pf2e repo (~26k entries: actions, feats,
