@@ -24,10 +24,11 @@ swaps weights mid-turn:
 
 The server talks to LM Studio through its **OpenAI-compatible API** (`http://localhost:1234/v1`).
 
-- **Default (`GM_MODEL`):** one model for both stages — `qwen/qwen3-30b-a3b` (strong tool-calling and
-  acceptable prose). No per-turn model swap.
-  ⚠️ On ~12 GB VRAM a 30B still partially offloads to CPU (slower than a model that fully fits, but
-  **no swap**). For snappy turns, point `GM_MODEL` at a smaller model / quant that fits entirely.
+- **Default (`GM_MODEL`):** one model for both stages — `google/gemma-4-12b`
+  (Gemma 4 12B, official, Q4). It fits entirely in ~12 GB VRAM (no CPU offload) and follows
+  instructions well. No per-turn model swap.
+  ⚠️ Its native context is huge (256K); keep the LM Studio **Context Length** modest (e.g. 16k–32k) so
+  the KV cache fits alongside the weights on 12 GB. Confirm the exact model key with `lms ls`.
 - **Two-model mode (opt-in):** set `RULES_MODEL` and `NARRATIVE_MODEL` to different models for
   specialization (e.g. a stronger narrator). Needs enough VRAM for both to stay resident, otherwise
   LM Studio swaps weights each turn (minutes/turn on ~12 GB).
@@ -46,16 +47,16 @@ packages/
 
 - Node.js 20+
 - [LM Studio](https://lmstudio.ai/) installed, with its local server running (`lms server start`)
-- NVIDIA GPU: a model that fully fits in ~12 GB runs smoothly; the default `qwen/qwen3-30b-a3b`
-  partially offloads on 12 GB (slower, but no per-turn swap). Two-model mode needs enough VRAM for
-  both models to stay resident.
+- NVIDIA GPU: a model that fully fits in ~12 GB runs smoothly; the default
+  `google/gemma-4-12b` (Gemma 4 12B, Q4) fits entirely on 12 GB
+  (keep the context modest). Two-model mode needs enough VRAM for both models to stay resident.
 
 ## Setup
 
 ```bash
 # 1. Install LM Studio (https://lmstudio.ai/download), start its server, and download the model
 lms server start
-lms get qwen/qwen3-30b-a3b   # GM_MODEL (drives both stages)
+lms get google/gemma-4-12b   # GM_MODEL (drives both stages); then `lms ls` to confirm the exact key
 # Optional two-model mode: also `lms get google/gemma-3-27b` and set NARRATIVE_MODEL
 
 # 2. Project dependencies
@@ -75,11 +76,16 @@ npm run data:pf2e
 
 ### World / setting
 
-Copy `LORE.example.md` to **`LORE.md`** in the root and describe your setting + GM guidelines. It is
-injected automatically into the GM prompt (the secrets there are never revealed directly to the
-player). `LORE.md` is **gitignored** (kept local, out of the public repo — it usually contains
-GM-only spoilers). Path configurable via `LORE_PATH`; without `LORE.md`, the game runs with no
-specific lore.
+The world is split into **two layers**, both injected into the GM prompt and both **gitignored**
+(kept local, out of the public repo):
+
+- Copy `WORLD.example.md` to **`WORLD.md`** — the **player-facing** surface world plus an authored
+  **`## Opening scene`**. This is what the GM may reveal naturally, and what the opening turn narrates
+  (so the GM starts small and mundane instead of improvising from secrets). Path via `WORLD_PATH`.
+- Copy `LORE.example.md` to **`LORE.md`** — the **GM-only secrets** (spoilers/hidden truth). The GM
+  uses these only to plant subtle hints and **never reveals or dumps them**. Path via `LORE_PATH`.
+
+Both are optional: without them the game runs with no specific setting.
 
 ## Running
 

@@ -1,4 +1,7 @@
-import "dotenv/config";
+// Load the repo-root .env FIRST, before any import that reads process.env at
+// module load (e.g. ../gm/agent.js). ESM evaluates imports in source order, so
+// this side-effect import must stay at the very top.
+import "../env.js";
 import cors from "cors";
 import express from "express";
 import {
@@ -19,7 +22,7 @@ const LMSTUDIO_BASE_URL =
   process.env.LMSTUDIO_BASE_URL ?? "http://localhost:1234/v1";
 
 const KICKOFF =
-  "Begin the adventure. Describe the opening scene, where my character is and what they notice around them, and end with a hook for my action.";
+  "Begin the adventure by narrating the opening scene described under 'Opening scene' in the Setting. Introduce ONLY what is physically present around my character right now — keep it grounded and mundane. Reveal nothing cosmic, secret, or from the GM-only lore. Keep it short (1-3 paragraphs) and end with a single, concrete hook for my first action.";
 
 /** Checks whether LM Studio is reachable and which configured models are present. */
 async function checkLmStudio(): Promise<{

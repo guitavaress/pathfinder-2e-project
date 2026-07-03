@@ -7,7 +7,7 @@ import type { CheckResult, GameState } from "@pf2e/shared";
 import { rollCheck } from "../dice/check.js";
 import { lookupLocalRule } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
-import { loadLore } from "./lore.js";
+import { loadLore, loadWorld } from "./lore.js";
 import {
   NARRATIVE_SYSTEM_PROMPT,
   RULES_SYSTEM_PROMPT,
@@ -19,10 +19,11 @@ import type { Session } from "./sessions.js";
  * Single model that drives both stages by default. Each stage runs its own
  * CONTEXT (system prompt + message thread), not its own model — so LM Studio
  * keeps one model resident across the turn instead of swapping weights (which
- * on ~12 GB VRAM costs minutes per turn). Qwen3 is the default: strong at
- * tool-calling AND acceptable at prose.
+ * on ~12 GB VRAM costs minutes per turn). Gemma 4 12B (official, Q4) is the
+ * default: it fits entirely in ~12 GB VRAM (no CPU offload) and follows
+ * instructions well. Keep the LM Studio context modest so its KV cache fits.
  */
-const GM_MODEL = process.env.GM_MODEL ?? "qwen/qwen3-30b-a3b";
+const GM_MODEL = process.env.GM_MODEL ?? "google/gemma-4-12b";
 /** Model for the RULES/tools stage. Defaults to GM_MODEL; override only to
  * split across two models (needs enough VRAM to avoid a per-turn swap). */
 export const RULES_MODEL = process.env.RULES_MODEL ?? GM_MODEL;
@@ -35,6 +36,16 @@ const LMSTUDIO_BASE_URL =
 const MAX_ITERATIONS = 8;
 /** How many recent history messages the rules stage sees as context. */
 const RULES_CONTEXT_TURNS = 6;
+/** How many recent history messages the narrative stage sees (bounds context
+ * growth so long sessions don't overflow the model's window). */
+const NARRATIVE_CONTEXT_MESSAGES = 30;
+/** LM Studio extension: disable "thinking" on reasoning models (e.g. gemma-4).
+ * Without this they burn the token budget on `reasoning_content` we never show,
+ * starving the visible output (empty narration). Cast because the OpenAI type
+ * doesn't list "none"; LM Studio accepts it and non-reasoning models ignore it. */
+const NO_REASONING = { reasoning_effort: "none" } as unknown as {
+  reasoning_effort: "low";
+};
 
 /** Events emitted during a turn, forwarded to the client via SSE. */
 export type StreamEvent =
@@ -259,6 +270,7 @@ async function runRulesStage(
       messages,
       tools: TOOLS,
       temperature: 0.3,
+      ...NO_REASONING,
     });
     const message = resp.choices[0]?.message;
     const toolCalls = message?.tool_calls ?? [];
@@ -386,18 +398,22 @@ async function runNarrativeStage(
   mechanical: string,
   emit: (e: StreamEvent) => void,
 ): Promise<void> {
+  const world = loadWorld();
   const lore = loadLore();
   const narrativeSystem: ChatCompletionMessageParam = {
     role: "system",
     content: [
       NARRATIVE_SYSTEM_PROMPT,
+      world
+        ? `# Setting (player-facing — the surface world the character already knows; you MAY reveal this naturally through play)\n${world}`
+        : "",
       lore
-        ? `# World setting and guidelines (GM-ONLY KNOWLEDGE — never reveal secrets directly to the player)\n${lore}`
+        ? `# GM-ONLY SECRETS (NEVER reveal, narrate, quote, or dump these — not even in the opening. They are background only: use them to plant at most one small, deniable hint at a time, and only once the player earns it.)\n${lore}`
         : "",
       characterSheetBlock(session.character),
       mechanical
         ? `# Mechanical results for this turn (INTERNAL REFERENCE — do NOT copy or quote these terms in the narration; translate them into fiction)\n${mechanical}`
-        : "# Mechanical results for this turn\nNo roll was needed; move the scene freely.",
+        : "# Mechanical results for this turn\nNo roll was needed. Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot.",
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -405,9 +421,17 @@ async function runNarrativeStage(
 
   const stream = await client.chat.completions.create({
     model: NARRATIVE_MODEL,
-    messages: [narrativeSystem, ...session.messages],
+    messages: [
+      narrativeSystem,
+      ...session.messages.slice(-NARRATIVE_CONTEXT_MESSAGES),
+    ],
     stream: true,
-    temperature: 0.7,
+    temperature: 0.6,
+    // Hard length cap so the scene can't ramble (the "1-3 paragraphs" limit in
+    // the prompt is a soft ask; this enforces it).
+    max_tokens: 450,
+    top_p: 0.9,
+    ...NO_REASONING,
   });
 
   let narration = "";
