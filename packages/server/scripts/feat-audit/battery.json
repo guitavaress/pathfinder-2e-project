@@ -1,0 +1,769 @@
+{
+  "generatedAt": "2026-07-05",
+  "note": "Editável à mão. Re-rodar select-battery.ts sobrescreve.",
+  "combat": {
+    "atividade-multi-strike": [
+      {
+        "name": "Twin Feint",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 2,
+        "traits": [
+          "rogue"
+        ]
+      },
+      {
+        "name": "Double Slice",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 2,
+        "traits": [
+          "fighter"
+        ]
+      },
+      {
+        "name": "Hunted Shot",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "flourish",
+          "ranger"
+        ]
+      },
+      {
+        "name": "Stunning Blows",
+        "level": 2,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "monk"
+        ]
+      },
+      {
+        "name": "Double Shot",
+        "level": 4,
+        "actionType": "action",
+        "actionCost": 2,
+        "traits": [
+          "fighter",
+          "flourish"
+        ]
+      }
+    ],
+    "strike-modificada": [
+      {
+        "name": "Kneecap",
+        "level": 5,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "goblin"
+        ]
+      },
+      {
+        "name": "Shackles of Law",
+        "level": 0,
+        "actionType": "action",
+        "actionCost": 2,
+        "traits": [
+          "flourish"
+        ]
+      },
+      {
+        "name": "Combat Assessment",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "commander",
+          "fighter"
+        ]
+      },
+      {
+        "name": "Flying Blade",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "swashbuckler"
+        ]
+      },
+      {
+        "name": "Furious Finish",
+        "level": 2,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "barbarian",
+          "rage"
+        ]
+      }
+    ],
+    "condicao-via-check": [
+      {
+        "name": "Dirty Trick",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "attack",
+          "general",
+          "manipulate",
+          "skill"
+        ]
+      },
+      {
+        "name": "Sturdy Bindings",
+        "level": 0,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": []
+      },
+      {
+        "name": "Shake it Off",
+        "level": 2,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "barbarian",
+          "concentrate",
+          "rage"
+        ]
+      },
+      {
+        "name": "Bravery",
+        "level": 3,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "fighter"
+        ]
+      },
+      {
+        "name": "Leading Dance",
+        "level": 4,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "bravado",
+          "move",
+          "swashbuckler"
+        ]
+      }
+    ],
+    "reacao-defensiva": [
+      {
+        "name": "Goblin Scuttle",
+        "level": 1,
+        "actionType": "reaction",
+        "actionCost": null,
+        "traits": [
+          "goblin"
+        ]
+      },
+      {
+        "name": "Exotic Edge",
+        "level": 0,
+        "actionType": "free",
+        "actionCost": null,
+        "traits": []
+      },
+      {
+        "name": "Nimble Dodge",
+        "level": 1,
+        "actionType": "reaction",
+        "actionCost": null,
+        "traits": [
+          "rogue"
+        ]
+      },
+      {
+        "name": "Reactive Shield",
+        "level": 1,
+        "actionType": "reaction",
+        "actionCost": null,
+        "traits": [
+          "fighter",
+          "guardian"
+        ]
+      },
+      {
+        "name": "Shield Block",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "champion",
+          "commander",
+          "druid",
+          "exemplar",
+          "fighter",
+          "guardian",
+          "inventor"
+        ]
+      }
+    ],
+    "reacao-ofensiva": [
+      {
+        "name": "Flashy Dodge",
+        "level": 1,
+        "actionType": "reaction",
+        "actionCost": null,
+        "traits": [
+          "swashbuckler"
+        ]
+      },
+      {
+        "name": "Reactive Strike",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "fighter"
+        ]
+      },
+      {
+        "name": "Clever Gambit",
+        "level": 2,
+        "actionType": "reaction",
+        "actionCost": null,
+        "traits": [
+          "rogue"
+        ]
+      },
+      {
+        "name": "Disrupt Prey",
+        "level": 4,
+        "actionType": "reaction",
+        "actionCost": null,
+        "traits": [
+          "ranger"
+        ]
+      },
+      {
+        "name": "Stand Still",
+        "level": 4,
+        "actionType": "reaction",
+        "actionCost": null,
+        "traits": [
+          "monk"
+        ]
+      }
+    ],
+    "stance": [
+      {
+        "name": "Crane Stance",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "monk",
+          "stance"
+        ]
+      },
+      {
+        "name": "Point Blank Stance",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "fighter",
+          "stance"
+        ]
+      },
+      {
+        "name": "Jotun's Battle Stance",
+        "level": 5,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "jotunborn",
+          "stance"
+        ]
+      },
+      {
+        "name": "Disarming Stance",
+        "level": 6,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "fighter",
+          "stance"
+        ]
+      },
+      {
+        "name": "Ricochet Stance (Fighter)",
+        "level": 6,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "fighter",
+          "stance"
+        ]
+      }
+    ],
+    "movimento-tatico": [
+      {
+        "name": "Defensive Advance",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 2,
+        "traits": [
+          "champion",
+          "flourish",
+          "guardian"
+        ]
+      },
+      {
+        "name": "Plane-Stepping Dash",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "jotunborn",
+          "occult",
+          "teleportation"
+        ]
+      },
+      {
+        "name": "Sudden Charge",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 2,
+        "traits": [
+          "barbarian",
+          "fighter",
+          "flourish"
+        ]
+      },
+      {
+        "name": "Retreating Finisher",
+        "level": 2,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "finisher",
+          "swashbuckler"
+        ]
+      },
+      {
+        "name": "Dual-Handed Assault",
+        "level": 4,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "fighter",
+          "flourish"
+        ]
+      }
+    ],
+    "buff-suporte": [
+      {
+        "name": "Battle Medicine",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "general",
+          "healing",
+          "manipulate",
+          "skill"
+        ]
+      },
+      {
+        "name": "Plant Banner",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "commander",
+          "manipulate"
+        ]
+      },
+      {
+        "name": "Smite",
+        "level": 6,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "champion",
+          "concentrate"
+        ]
+      },
+      {
+        "name": "Sanctify Water",
+        "level": 2,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "general",
+          "skill"
+        ]
+      },
+      {
+        "name": "Improvised Repair",
+        "level": 3,
+        "actionType": "action",
+        "actionCost": 3,
+        "traits": [
+          "general"
+        ]
+      }
+    ],
+    "passivo-combate": [
+      {
+        "name": "Distracting Feint",
+        "level": 2,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "rogue"
+        ]
+      },
+      {
+        "name": "Twin Distraction",
+        "level": 4,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "rogue"
+        ]
+      },
+      {
+        "name": "Incredible Initiative",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "general"
+        ]
+      },
+      {
+        "name": "Toughness",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "general"
+        ]
+      },
+      {
+        "name": "Diehard",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "general"
+        ]
+      }
+    ],
+    "combate-outro": [
+      {
+        "name": "Bon Mot",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "auditory",
+          "concentrate",
+          "emotion",
+          "general",
+          "linguistic",
+          "mental",
+          "skill"
+        ]
+      },
+      {
+        "name": "Extravagant Parry",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "swashbuckler"
+        ]
+      },
+      {
+        "name": "Flurry of Blows",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "flourish",
+          "monk"
+        ]
+      },
+      {
+        "name": "Dueling Parry",
+        "level": 2,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "fighter"
+        ]
+      },
+      {
+        "name": "Phantom Visage",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "goblin",
+          "illusion",
+          "occult",
+          "visual"
+        ]
+      }
+    ]
+  },
+  "noncombat": {
+    "skill-activity": [
+      {
+        "name": "Esoteric Wayfinder",
+        "level": 0,
+        "actionType": "free",
+        "actionCost": null,
+        "traits": []
+      },
+      {
+        "name": "Eye for Numbers",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "general",
+          "skill"
+        ]
+      },
+      {
+        "name": "Goblin Song",
+        "level": 1,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "goblin"
+        ]
+      },
+      {
+        "name": "Distracting Performance",
+        "level": 2,
+        "actionType": "action",
+        "actionCost": 1,
+        "traits": [
+          "general",
+          "skill"
+        ]
+      },
+      {
+        "name": "Read the Roots",
+        "level": 5,
+        "actionType": "action",
+        "actionCost": 2,
+        "traits": [
+          "ardande",
+          "primal",
+          "scrying",
+          "wood"
+        ]
+      }
+    ],
+    "downtime": [
+      {
+        "name": "Acupuncturist",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "downtime",
+          "manipulate"
+        ]
+      },
+      {
+        "name": "Train Animal",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "downtime",
+          "general",
+          "manipulate",
+          "skill"
+        ]
+      },
+      {
+        "name": "Bonded Animal",
+        "level": 2,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "downtime",
+          "general",
+          "skill"
+        ]
+      },
+      {
+        "name": "Inventor",
+        "level": 2,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "downtime",
+          "general",
+          "skill"
+        ]
+      },
+      {
+        "name": "Sow Rumor",
+        "level": 2,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "general",
+          "secret",
+          "skill"
+        ]
+      }
+    ],
+    "social-influencia": [
+      {
+        "name": "Charming Liar",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "general",
+          "skill"
+        ]
+      },
+      {
+        "name": "Lie to Me",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "general",
+          "skill"
+        ]
+      },
+      {
+        "name": "Bring Them Back Alive",
+        "level": 0,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": []
+      },
+      {
+        "name": "Battledancer",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "swashbuckler"
+        ]
+      },
+      {
+        "name": "Animal Empathy (Ranger)",
+        "level": 2,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "ranger"
+        ]
+      }
+    ],
+    "exploracao": [
+      {
+        "name": "Swift Traveler",
+        "level": 0,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": []
+      },
+      {
+        "name": "Experienced Tracker",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "general",
+          "skill"
+        ]
+      },
+      {
+        "name": "Unimpeded Step",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "champion"
+        ]
+      },
+      {
+        "name": "Favored Terrain",
+        "level": 2,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "ranger"
+        ]
+      },
+      {
+        "name": "Anticipate Ambush",
+        "level": 6,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "exploration",
+          "rogue"
+        ]
+      }
+    ],
+    "passivo-utilitario": [
+      {
+        "name": "Adversary Lore",
+        "level": 0,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": []
+      },
+      {
+        "name": "Acute Vision",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "barbarian"
+        ]
+      },
+      {
+        "name": "Additional Lore",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "general",
+          "skill"
+        ]
+      },
+      {
+        "name": "City Scavenger",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "goblin"
+        ]
+      },
+      {
+        "name": "Streetwise",
+        "level": 1,
+        "actionType": "passive",
+        "actionCost": null,
+        "traits": [
+          "general",
+          "skill"
+        ]
+      }
+    ]
+  }
+}
