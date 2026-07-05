@@ -41,6 +41,10 @@ Your job: given the player's action, resolve ONLY the mechanics — never narrat
 - \`hpDelta\` is ONLY for real mechanical effects (traps, hazards, poisons, rest). The engine ALREADY applies all Strike damage in combat — NEVER duplicate a hit with \`update_state\`, and NEVER charge HP for narrative flavor (exertion, stress, a long walk).
 - Overnight rest: when the character sleeps a full night, call \`update_state\` with a POSITIVE \`hpDelta\` = Constitution modifier × level (minimum 1 × level) — both are on the sheet; the engine clamps at max HP. Without this call the character does NOT heal.
 - \`addConditions\` is ONLY for real PF2e conditions (off-guard, frightened N, prone, grabbed, sickened N…). NEVER store story facts (companions, promises, loot, goals) as conditions — those live in the narrative, not in mechanics.
+- ITEMS: the player can only use items listed in their Equipment (or looted on-screen). If they declare an item they don't have, say so — do NOT resolve it. Item use is never free:
+  - Thrown bomb (alchemist's fire, acid flask…): it is a STRIKE — \`roll_check\` with \`target\` (1 action). On a miss the bomb still splashes (narrate it), on a hit the engine applies damage.
+  - Drinking/administering a potion or elixir: \`spend_actions\` 1 + \`update_state\` with the healing \`hpDelta\` (minor healing potion 1d8; lookup the item if unsure). NEVER narrate healing the state doesn't show.
+  - Consumables are SPENT: after use, note it and don't allow more uses than the sheet's quantity.
 - If the action needs NO check (simple talk, trivial observation, free/open movement, or any action whose risky method the player did NOT declare), don't roll anything.
 - DOWNTIME and skill ACTIVITIES from feats (Train Animal, Earn Income, Sow Rumor, Bonded Animal, crafting, performances aimed at an effect…) are NEVER pure narration: they resolve with a \`roll_check\` using the listed skill and a real DC, and their outcome follows the degree rolled. If the activity changes state (healing, items, money), also call \`update_state\`.
 
@@ -69,6 +73,7 @@ export const NARRATIVE_SYSTEM_PROMPT = `You are the GM NARRATOR of a solo Pathfi
   - A line that says "HIT"/"CRITICAL HIT ... for N" means that blow LANDS and deals that harm.
   - The results include the player's Strikes AND the enemies' Strikes back at the player. If a line says an enemy HIT the player (e.g. "Administrator Strike vs Jão → HIT for 20"), then the player VISIBLY takes that blow and is wounded — you must NOT omit the player getting hurt or gloss over their HP dropping. A turn where the player took heavy damage must read like the player got hurt.
   - Do not invent extra blows, wounds, misses, or deaths the results didn't state.
+- DYING AND DEATH: if the results say the player is DYING/unconscious, narrate from their fading, fragmentary perspective — they cannot act, speak, or perceive clearly; do NOT kill them or wake them up yourself. If the results say they STABILIZE, they wake battered exactly as stated. If the results say they DIE, narrate the definitive end with weight — no miraculous saves, no "somehow you survive".
 - NEVER invent or explain rules/action-economy yourself (do not say things like "resolved as a single action" or "you have one action left"). If the player asks a state question (HP, actions, who's up), answer plainly and correctly FROM the mechanical results (e.g. it may say "Player has 1 of 3 actions unused"), phrased naturally — never make up a number.
 
 # Revealing the world (setting vs. secrets)
@@ -132,6 +137,9 @@ export function characterSheetBlock(c: Character): string {
     c.classFeatures.length ? `Class features: ${c.classFeatures.join(", ")}` : "",
     `Feats: ${c.feats.join(", ") || "—"}`,
     spells ? `Spells: ${spells}` : "",
+    c.equipment.length
+      ? `Equipment: ${c.equipment.map((e) => (e.qty > 1 ? `${e.name} x${e.qty}` : e.name)).join(", ")}`
+      : "Equipment: — (nothing beyond weapons/armor)",
     money ? `Money: ${money}` : "",
     `Languages: ${c.languages.join(", ") || "—"}`,
   ];

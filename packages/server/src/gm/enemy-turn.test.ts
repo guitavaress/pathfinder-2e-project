@@ -23,7 +23,7 @@ function mk(partial: Partial<Combatant> & Pick<Combatant, "name" | "kind">): Com
   };
 }
 
-/** A session whose only relevant field is state.combat + currentHp. */
+/** A session with state.combat + currentHp and a minimal character (name). */
 function sessionWith(player: Combatant, ...enemies: Combatant[]): Session {
   const combat = buildCombat([player, ...enemies]);
   const state: GameState = {
@@ -33,7 +33,11 @@ function sessionWith(player: Combatant, ...enemies: Combatant[]): Session {
     flags: {},
     combat,
   };
-  return { id: "t", state } as unknown as Session;
+  return {
+    id: "t",
+    state,
+    character: { name: player.name, maxHp: player.maxHp },
+  } as unknown as Session;
 }
 
 const noop = () => {};
@@ -58,13 +62,17 @@ describe("resolveEnemyTurns", () => {
     expect(session.state.combat!.active).toBe(true);
   });
 
-  it("encerra o combate em DEFEAT quando o jogador cai", () => {
+  it("encerra o combate em DEFEAT quando o jogador cai — e entra em dying", () => {
     const player = mk({ name: "Hero", kind: "player", ac: 1, maxHp: 3, currentHp: 3 });
     const session = sessionWith(player, mk({ name: "Foe", kind: "enemy", level: 5 }));
     const lines = resolveEnemyTurns(session, noop);
     expect(session.state.currentHp).toBe(0);
     expect(session.state.combat!.active).toBe(false);
     expect(lines.some((l) => l.includes("DEFEAT"))).toBe(true);
+    // Dying rules: cair a 0 HP = dying 1+ e inconsciente (não morte imediata).
+    expect(session.state.conditions.some((c) => /^dying [12]$/.test(c))).toBe(true);
+    expect(session.state.conditions).toContain("unconscious");
+    expect(lines.some((l) => l.includes("DYING"))).toBe(true);
   });
 
   it("ignora inimigos derrotados", () => {

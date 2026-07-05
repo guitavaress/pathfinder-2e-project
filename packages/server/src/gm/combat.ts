@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { Character, Combat, Combatant } from "@pf2e/shared";
+import type { Character, Combat, Combatant, DegreeOfSuccess } from "@pf2e/shared";
+import { degreeOfSuccess } from "../dice/check.js";
 
 /** Rolls `n` dice with `faces` sides and returns the total. */
 export function rollDice(n: number, faces: number): number {
@@ -150,6 +151,38 @@ export function beginPlayerRound(combat: Combat): void {
     c.reactionAvailable = true;
     if (!c.defeated) c.actionsRemaining = 3;
   }
+}
+
+/** Value of a "name N" condition inside a plain string[] ("dying 2" → 2). */
+export function conditionValueIn(conditions: string[], name: string): number {
+  for (const cond of conditions) {
+    const m = cond.toLowerCase().match(new RegExp(`^${name}\\s*(\\d+)?$`));
+    if (m) return m[1] ? Number(m[1]) : 1;
+  }
+  return 0;
+}
+
+/** Replaces/sets a valued condition in a string[]; value <= 0 removes it. */
+export function setValuedCondition(conditions: string[], name: string, value: number): string[] {
+  const rest = conditions.filter(
+    (c) => !c.toLowerCase().match(new RegExp(`^${name}\\s*(\\d+)?$`)),
+  );
+  if (value <= 0) return rest;
+  return [...rest, `${name} ${value}`];
+}
+
+/**
+ * PF2e recovery check (flat check DC 10 + dying, with nat 20/1 bumps):
+ * crit success −2 dying, success −1, failure +1, crit failure +2.
+ */
+export function applyRecovery(
+  die: number,
+  dying: number,
+): { degree: DegreeOfSuccess; newDying: number } {
+  const degree = degreeOfSuccess(die, die, 10 + dying);
+  const delta =
+    degree === "criticalSuccess" ? -2 : degree === "success" ? -1 : degree === "failure" ? 1 : 2;
+  return { degree, newDying: Math.max(0, dying + delta) };
 }
 
 /**
