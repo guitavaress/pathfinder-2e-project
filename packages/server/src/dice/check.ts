@@ -50,6 +50,15 @@ function bumpDown(d: DegreeOfSuccess): DegreeOfSuccess {
   return ORDER[Math.max(i - 1, 0)]!;
 }
 
+/**
+ * A plausible PF2e DC: finite and at least 5 (the GMG's lowest simple DC).
+ * Guards against the model omitting `dc` — rolling vs DC 0 fabricates an
+ * automatic critical success, which is worse than not rolling at all.
+ */
+export function isValidDc(dc: number): boolean {
+  return Number.isFinite(dc) && dc >= 5;
+}
+
 /** Runs a full roll: d20 + modifier against the DC. */
 export function rollCheck(
   label: string,

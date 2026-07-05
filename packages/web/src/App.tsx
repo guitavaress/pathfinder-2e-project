@@ -103,7 +103,13 @@ export function App() {
     <div className="game">
       <HeroBanner character={character} state={state} />
       <div className="game-body">
-        <Scene log={log} busy={busy} phase={phase} onSend={handleSend} />
+        <Scene
+          log={log}
+          busy={busy}
+          phase={phase}
+          combat={state.combat}
+          onSend={handleSend}
+        />
         <CompactRail
           character={character}
           state={state}

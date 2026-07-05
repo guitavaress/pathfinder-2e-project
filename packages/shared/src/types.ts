@@ -167,14 +167,30 @@ export const DEGREES = [
 ] as const;
 export type DegreeOfSuccess = (typeof DEGREES)[number];
 
+/** Attack-specific context attached to a Strike's roll (null for plain checks). */
+export const AttackContextSchema = z.object({
+  attacker: z.string(),
+  target: z.string(),
+  /** Whoever swung — lets the UI tell "you hit" from "you got hit". */
+  attackerKind: z.enum(["player", "ally", "enemy"]),
+  outcome: z.enum(["hit", "criticalHit", "miss", "criticalMiss"]),
+  /** Damage dealt on a hit (null on a miss). */
+  damage: z.number().int().nullable(),
+  damageType: z.string().nullable(),
+});
+export type AttackContext = z.infer<typeof AttackContextSchema>;
+
 export const CheckResultSchema = z.object({
   /** Roll label, e.g. "Deception vs DC 18". */
   label: z.string(),
   die: z.number().int().min(1).max(20),
   modifier: z.number().int(),
   total: z.number().int(),
+  /** The number the roll was against — a DC for checks, the target's AC for attacks. */
   dc: z.number().int(),
   degree: z.enum(DEGREES),
+  /** Present when this roll is a weapon Strike, so the UI can render it richly. */
+  attack: AttackContextSchema.nullable().optional(),
 });
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 
@@ -186,6 +202,41 @@ export const SceneEventSchema = z.discriminatedUnion("type", [
 ]);
 export type SceneEvent = z.infer<typeof SceneEventSchema>;
 
+/** A participant in a combat encounter (the player, an ally, or an enemy). */
+export const CombatantSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.enum(["player", "ally", "enemy"]),
+  initiative: z.number().int(),
+  ac: z.number().int(),
+  maxHp: z.number().int(),
+  currentHp: z.number().int(),
+  /** Conditions with values, e.g. "frightened 1", "off-guard". */
+  conditions: z.array(z.string()),
+  /** Actions left in this combatant's current turn (0-3). */
+  actionsRemaining: z.number().int(),
+  /** Whether the reaction is still available this round. */
+  reactionAvailable: z.boolean(),
+  /** Strikes already made this turn → MAP: 0 = -0, 1 = -5, 2+ = -10. */
+  mapProgress: z.number().int(),
+  /** Creature level (null for the player / unknown). */
+  level: z.number().int().nullable(),
+  traits: z.array(z.string()),
+  defeated: z.boolean(),
+});
+export type Combatant = z.infer<typeof CombatantSchema>;
+
+/** Active combat encounter (null when the party is not in combat). */
+export const CombatSchema = z.object({
+  active: z.boolean(),
+  round: z.number().int(),
+  /** Index into `combatants` (initiative order) whose turn it is. */
+  turnIndex: z.number().int(),
+  /** Combatants sorted by initiative (highest first). */
+  combatants: z.array(CombatantSchema),
+});
+export type Combat = z.infer<typeof CombatSchema>;
+
 /** Mutable state of a game session. */
 export const GameStateSchema = z.object({
   sessionId: z.string(),
@@ -193,5 +244,7 @@ export const GameStateSchema = z.object({
   conditions: z.array(z.string()),
   /** Free-form story flags (known NPCs, choices made, etc.). */
   flags: z.record(z.string(), z.unknown()),
+  /** Present only during a combat encounter; null otherwise. */
+  combat: CombatSchema.nullable(),
 });
 export type GameState = z.infer<typeof GameStateSchema>;
