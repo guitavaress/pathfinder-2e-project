@@ -718,6 +718,27 @@ async function executeTool(
       const you = playerOf(combat);
       if (!you || you.defeated) return { content: "No active player combatant.", isError: true };
       const reason = String(input.reason ?? "activity");
+      // Ação de ITEM só existe se o item existir (o modelo gastou 1 ação
+      // "bebendo" uma poção que não estava no inventário — a narração então
+      // mostrou o gole). Mesmo espírito do guard de cura: ficha manda.
+      const itemWord = reason.match(
+        /\b(potion|elixir|tonic|flask|bomb|alchemical|acid|scroll|oil|talisman|antidote|antiplague)\b/i,
+      )?.[0];
+      if (itemWord) {
+        const family = /potion|elixir|tonic/i.test(itemWord)
+          ? /potion|elixir|tonic/i
+          : /flask|bomb|alchemical|acid/i.test(itemWord)
+            ? /flask|bomb|alchemical|acid/i
+            : new RegExp(itemWord, "i");
+        const has = session.character.equipment.some((e) => family.test(e.name));
+        if (!has) {
+          return {
+            content: `REJECTED: there is no "${itemWord}" item in the character's Equipment — this action does NOT happen and no action is spent. Resolve the rest of the turn without it.`,
+            isError: true,
+            summaryLine: `- ${reason}: FAILED — no such item in the character's Equipment; their hand finds nothing.`,
+          };
+        }
+      }
       // O dataset manda no custo quando o reason cita a atividade (o modelo
       // chamou spend_actions com 1 para Improvised Repair, que custa 3).
       const spendActivity = multiActionCost(reason);
@@ -784,6 +805,26 @@ async function executeTool(
           content: `Unknown parameter(s) ${unknown.map((k) => `"${k}"`).join(", ")} — NOTHING was applied. Valid parameters: hpDelta (number), addConditions (string[]), removeConditions (string[]), target (combatant id/name). To apply a condition, retry with addConditions, e.g. {"target":"${targetRef || "..."}","addConditions":["off-guard"]}.`,
           isError: true,
         };
+      }
+
+      // Cura EM COMBATE exige uma fonte real na ficha (regras-como-dados): o
+      // modelo curou o jogador com uma "poção" que não existia no inventário.
+      // Fora de combate o descanso continua livre (regra RAW já ensinada).
+      if (
+        typeof input.hpDelta === "number" &&
+        input.hpDelta > 0 &&
+        combat?.active
+      ) {
+        const healSource = session.character.equipment.some((e) =>
+          /potion|elixir|tonic|healer'?s (toolkit|kit|tools)|salve|balm|medicine/i.test(e.name),
+        );
+        if (!healSource) {
+          return {
+            content: `REJECTED: no healing source in the character's Equipment (no potion/elixir/healer's toolkit). In-combat healing needs a real item or ability — without one, ${session.character.name} does NOT heal. Resolve the rest of the turn without it.`,
+            isError: true,
+            summaryLine: `- Healing attempt: FAILED — no healing item in the character's Equipment; no HP recovered.`,
+          };
+        }
       }
 
       // Combat: target a specific combatant (enemy/ally/player).
@@ -1281,8 +1322,8 @@ async function runNarrativeStage(
   const resultsMessage: ChatCompletionMessageParam = {
     role: "user",
     content: mechanical
-      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}`
-      : "[GM ENGINE] No roll was needed. Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot.",
+      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. These lines are COMPLETE: if the player's message declared an item, attack, or ability that does NOT appear below, it DID NOT HAPPEN — the engine rejected or ignored it (usually the item isn't in their Equipment). Show its absence in-fiction ("your hand finds no such flask in your pack") instead of narrating it working. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}`
+      : "[GM ENGINE] No roll was needed and NO mechanical effect happened (no damage, no healing, no item consumed). Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot, and do NOT narrate items/abilities taking mechanical effect.",
   };
 
   const inCombat = session.state.combat?.active === true;
