@@ -3,12 +3,14 @@ import type { Combatant } from "@pf2e/shared";
 import {
   advanceTurn,
   applyDamage,
+  applyRecovery,
   attackStatusPenalty,
   beginPlayerRound,
   benchmark,
   buildCombat,
   clampActionCost,
   combatStatus,
+  conditionValueIn,
   conditionValue,
   effectiveAC,
   findCombatant,
@@ -16,6 +18,7 @@ import {
   isOffGuard,
   livingEnemy,
   mapPenalty,
+  setValuedCondition,
   tickEndOfRound,
 } from "./combat.js";
 
@@ -150,6 +153,35 @@ describe("combatStatus", () => {
       mkCombatant({ name: "Foe", kind: "enemy" }),
     ]);
     expect(combatStatus(combat)).toBe("ongoing");
+  });
+});
+
+describe("applyRecovery (dying RAW)", () => {
+  it("flat check DC 10+dying: sucesso −1, falha +1, margens ±10 dobram", () => {
+    // dying 1 → DC 11
+    expect(applyRecovery(11, 1)).toEqual({ degree: "success", newDying: 0 });
+    expect(applyRecovery(10, 1)).toEqual({ degree: "failure", newDying: 2 });
+    // dying 2 → DC 12: crit success precisa 20+ (só nat 20 via bump)
+    expect(applyRecovery(20, 2)).toEqual({ degree: "criticalSuccess", newDying: 0 });
+    // nat 1 desce um grau: failure → critical failure (+2)
+    expect(applyRecovery(1, 1).newDying).toBe(3);
+  });
+
+  it("nunca fica negativo", () => {
+    expect(applyRecovery(20, 1).newDying).toBe(0);
+  });
+});
+
+describe("conditionValueIn / setValuedCondition", () => {
+  it("lê e escreve condições valoradas em string[]", () => {
+    expect(conditionValueIn(["dying 2", "unconscious"], "dying")).toBe(2);
+    expect(conditionValueIn(["wounded"], "wounded")).toBe(1);
+    expect(conditionValueIn([], "dying")).toBe(0);
+    expect(setValuedCondition(["dying 2", "unconscious"], "dying", 3)).toEqual([
+      "unconscious",
+      "dying 3",
+    ]);
+    expect(setValuedCondition(["dying 1"], "dying", 0)).toEqual([]);
   });
 });
 

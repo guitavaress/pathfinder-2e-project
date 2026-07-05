@@ -6,8 +6,12 @@ A **solo, web, local** RPG based on **Pathfinder 2e**, with an **AI-driven Game 
 decisions — with NPCs, a living world, and skill checks following the PF2e rules
 ([Archives of Nethys](https://2e.aonprd.com/)).
 
-> **Status:** MVP — import a character, view the sheet, and play a **narrative scene** with NPCs and
-> skill checks. A full tactical combat engine will come in later phases.
+> **Status:** playable — import a character, play narrative scenes, and fight through a
+> **deterministic PF2e combat engine**: initiative, the 3-action economy (activity costs read from
+> the rules dataset), Multiple Attack Penalty, automatic damage with crits and Sneak Attack,
+> conditions as real mechanics, enemy turns resolved in code, item grounding (you can only use what
+> your sheet carries), and full **dying/recovery rules** — you can actually die.
+> Validated by a 75-scenario feat-audit regression battery (75/75 PASS).
 
 ## How it works
 
@@ -16,11 +20,19 @@ per turn. By default **one model** drives both stages — each stage runs its ow
 prompt + message thread), not its own model, so LM Studio keeps a single model resident and never
 swaps weights mid-turn:
 
-1. **Rules context** — resolves the PF2e mechanics with *tool use*: picks the check/DC, rolls dice
-   (`roll_check`), looks up rules (`lookup_rule`), updates state (`update_state`), and produces a
-   mechanical summary. This prevents "hallucinated" rolls (the dice come from code, not the model).
+1. **Rules context** — resolves the PF2e mechanics with *tool use*: rolls checks and Strikes
+   (`roll_check`), runs combat (`start_combat`/`end_combat`/`end_turn`/`spend_actions`), looks up
+   rules (`lookup_rule`), updates state (`update_state`), and produces a numbered mechanical
+   summary. Dice, damage, action costs, conditions, and dying checks all come from **code**, not the
+   model — the engine validates every tool input and rejects what the sheet can't support.
 2. **Narrative context** — receives that summary and writes the immersive scene (streaming),
-   consistent with the result. It calls no tools.
+   consistent with the result. It calls no tools; what isn't in the summary didn't happen.
+
+**Combat model:** one player message = one full turn (3 actions). The engine charges action costs
+(reading activity costs from the rules dataset), applies damage automatically (crit doubles, Sneak
+Attack vs off-guard), resolves every enemy's retaliation deterministically, and — when you drop to
+0 HP — runs RAW dying/recovery checks until you stabilize (waking at 1 HP + wounded) or die at
+dying 4. The web UI shows a combat HUD (HP bars, action pips, MAP) and rich roll medallions.
 
 The server talks to LM Studio through its **OpenAI-compatible API** (`http://localhost:1234/v1`).
 
@@ -38,9 +50,10 @@ The server talks to LM Studio through its **OpenAI-compatible API** (`http://loc
 
 ```
 packages/
-├── shared/   # shared TS types (Character, GameState, CheckResult...)
-├── server/   # Node/Express: REST API + GM agent (LM Studio) + data + PF2e rules
-└── web/      # React/Vite: import, sheet, and narrative scene (streaming via SSE)
+├── shared/   # shared TS types (Character, GameState, Combat, CheckResult...)
+├── server/   # Node/Express: REST API + GM agent (LM Studio) + combat engine + PF2e rules data
+│   └── scripts/feat-audit/   # GM regression suite: 7039 feats classified + 75-scenario battery
+└── web/      # React/Vite: import, sheet, narrative scene + combat HUD (streaming via SSE)
 ```
 
 ## Requirements
@@ -103,8 +116,21 @@ server loads them on demand.)
 ## Tests and build
 
 ```bash
-npm test     # Pathbuilder parser + dice/degree-of-success tests
+npm test         # 56 unit tests: combat engine, dice/degrees, dying/recovery, parser
 npm run build
+```
+
+### GM regression battery (feat audit)
+
+A reusable audit suite exercises the GM (model + engine) against real PF2e feats, grouped by
+mechanical archetype, with hard assertions (action economy vs dataset cost, DC validity,
+state-vs-narrative consistency). Uses the GPU/LM Studio while running:
+
+```bash
+cd packages/server
+npx tsx scripts/feat-audit/classify-feats.ts   # classify all 7039 feats (combat × non-combat)
+npx tsx scripts/feat-audit/run-feat-tests.ts   # run the 75-scenario battery (resumable)
+#   filters: --side=combat|noncombat --archetype=<name> --feat="Name" --fresh
 ```
 
 ## License

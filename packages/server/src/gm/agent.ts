@@ -10,11 +10,14 @@ import { lookupLocalRule, multiActionCost } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
 import {
   applyDamage,
+  applyRecovery,
   attackStatusPenalty,
   beginPlayerRound,
   benchmark,
   buildCombat,
   clampActionCost,
+  conditionValueIn,
+  setValuedCondition,
   combatStatus,
   effectiveAC,
   enemyCombatant,
@@ -69,6 +72,26 @@ const turnStruck = new WeakMap<Session, Set<string>>();
  * Sudden Charge 2→1, Improvised Repair 3→0).
  */
 const turnActivityCharged = new WeakMap<Session, Set<string>>();
+
+/**
+ * O jogador caiu a 0 HP: entra em dying 1 (2 se foi crit) + wounded acumulado,
+ * inconsciente — regras RAW de PF2e. A morte definitiva só acontece em
+ * dying 4+, resolvido pelos recovery checks no início dos turnos seguintes.
+ */
+function enterDying(session: Session, crit: boolean): string {
+  const conds = session.state.conditions;
+  const wounded = conditionValueIn(conds, "wounded");
+  const dying = Math.min(4, (crit ? 2 : 1) + wounded);
+  let next = setValuedCondition(conds, "dying", dying);
+  if (!next.some((c) => /^unconscious$/i.test(c))) next = [...next, "unconscious"];
+  session.state.conditions = next;
+  const combat = session.state.combat;
+  const you = combat?.active ? playerOf(combat) : undefined;
+  if (you) you.conditions = [...next];
+  return dying >= 4
+    ? `${session.character.name} drops to 0 HP and DIES instantly (dying ${dying}).`
+    : `${session.character.name} drops to 0 HP: DYING ${dying}, unconscious. Recovery checks decide their fate on the following turns.`;
+}
 /** How many recent history messages the rules stage sees as context. */
 const RULES_CONTEXT_TURNS = 6;
 /** How many recent history messages the narrative stage sees (bounds context
@@ -516,7 +539,10 @@ async function executeTool(
           applyDamage(target, dmg.amount);
           turnStruck.get(session)?.add(target.id);
           if (target.kind === "player") session.state.currentHp = target.currentHp;
-          const defeatedNote = target.defeated ? ` — ${target.name} DEFEATED` : "";
+          let defeatedNote = target.defeated ? ` — ${target.name} DEFEATED` : "";
+          if (target.kind === "player" && target.defeated) {
+            defeatedNote = ` — ${enterDying(session, crit)}`;
+          }
           damageLine = ` for ${dmg.amount} ${dmg.type}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
         }
         // Emit the roll with full attack context so the UI can render it richly.
@@ -692,6 +718,27 @@ async function executeTool(
       const you = playerOf(combat);
       if (!you || you.defeated) return { content: "No active player combatant.", isError: true };
       const reason = String(input.reason ?? "activity");
+      // Ação de ITEM só existe se o item existir (o modelo gastou 1 ação
+      // "bebendo" uma poção que não estava no inventário — a narração então
+      // mostrou o gole). Mesmo espírito do guard de cura: ficha manda.
+      const itemWord = reason.match(
+        /\b(potion|elixir|tonic|flask|bomb|alchemical|acid|scroll|oil|talisman|antidote|antiplague)\b/i,
+      )?.[0];
+      if (itemWord) {
+        const family = /potion|elixir|tonic/i.test(itemWord)
+          ? /potion|elixir|tonic/i
+          : /flask|bomb|alchemical|acid/i.test(itemWord)
+            ? /flask|bomb|alchemical|acid/i
+            : new RegExp(itemWord, "i");
+        const has = session.character.equipment.some((e) => family.test(e.name));
+        if (!has) {
+          return {
+            content: `REJECTED: there is no "${itemWord}" item in the character's Equipment — this action does NOT happen and no action is spent. Resolve the rest of the turn without it.`,
+            isError: true,
+            summaryLine: `- ${reason}: FAILED — no such item in the character's Equipment; their hand finds nothing.`,
+          };
+        }
+      }
       // O dataset manda no custo quando o reason cita a atividade (o modelo
       // chamou spend_actions com 1 para Improvised Repair, que custa 3).
       const spendActivity = multiActionCost(reason);
@@ -743,6 +790,42 @@ async function executeTool(
       const s = session.state;
       const combat = s.combat;
       const targetRef = input.target ? String(input.target) : "";
+
+      // Contrato estrito: parâmetro desconhecido não pode ser engolido em
+      // silêncio (play-test: `updateType: "off-guard"` foi ignorado e o
+      // off-guard do Twin Feint nunca aplicou — a 2ª Strike rolou vs AC cheia).
+      const KNOWN_PARAMS = new Set(["hpDelta", "addConditions", "removeConditions", "target"]);
+      const unknown = Object.keys(input).filter((k) => !KNOWN_PARAMS.has(k));
+      const hasEffect =
+        typeof input.hpDelta === "number" ||
+        Array.isArray(input.addConditions) ||
+        Array.isArray(input.removeConditions);
+      if (unknown.length > 0 && !hasEffect) {
+        return {
+          content: `Unknown parameter(s) ${unknown.map((k) => `"${k}"`).join(", ")} — NOTHING was applied. Valid parameters: hpDelta (number), addConditions (string[]), removeConditions (string[]), target (combatant id/name). To apply a condition, retry with addConditions, e.g. {"target":"${targetRef || "..."}","addConditions":["off-guard"]}.`,
+          isError: true,
+        };
+      }
+
+      // Cura EM COMBATE exige uma fonte real na ficha (regras-como-dados): o
+      // modelo curou o jogador com uma "poção" que não existia no inventário.
+      // Fora de combate o descanso continua livre (regra RAW já ensinada).
+      if (
+        typeof input.hpDelta === "number" &&
+        input.hpDelta > 0 &&
+        combat?.active
+      ) {
+        const healSource = session.character.equipment.some((e) =>
+          /potion|elixir|tonic|healer'?s (toolkit|kit|tools)|salve|balm|medicine/i.test(e.name),
+        );
+        if (!healSource) {
+          return {
+            content: `REJECTED: no healing source in the character's Equipment (no potion/elixir/healer's toolkit). In-combat healing needs a real item or ability — without one, ${session.character.name} does NOT heal. Resolve the rest of the turn without it.`,
+            isError: true,
+            summaryLine: `- Healing attempt: FAILED — no healing item in the character's Equipment; no HP recovered.`,
+          };
+        }
+      }
 
       // Combat: target a specific combatant (enemy/ally/player).
       if (combat?.active && targetRef) {
@@ -858,7 +941,7 @@ export function resolveEnemyTurns(
         const before = player.currentHp;
         applyDamage(player, amount);
         session.state.currentHp = player.currentHp;
-        const down = player.defeated ? ` — ${player.name} is DOWN` : "";
+        const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
         dmgLine = ` for ${amount}; ${player.name} ${before}→${player.currentHp} HP${down}`;
       }
       const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
@@ -940,6 +1023,54 @@ async function runRulesStage(
   // the narrator dramatize old wounds out of nowhere).
   const hpBefore = session.state.currentHp;
   const condsBefore = session.state.conditions.join("|");
+
+  // Morto é morto: sem mecânica a resolver — o narrador conduz o epílogo.
+  if (session.state.conditions.some((c) => /^dead$/i.test(c))) {
+    return `${session.character.name} is DEAD. No mechanics remain — narrate the aftermath; this character's story has ended.`;
+  }
+
+  // Caído (dying): inconsciente não age — o turno É o recovery check (RAW:
+  // flat check DC 10+dying; crit −2, sucesso −1, falha +1, crit falha +2;
+  // dying 4 = morte). Desvio deliberado p/ jogo solo: estabilizar acorda o
+  // personagem com 1 HP e wounded +1 (RAW ficaria 0 HP inconsciente — um
+  // limbo injogável sem aliados para curar).
+  const dyingNow = conditionValueIn(session.state.conditions, "dying");
+  if (session.state.currentHp <= 0 && dyingNow > 0) {
+    const die = rollDice(1, 20);
+    const { degree, newDying } = applyRecovery(die, dyingNow);
+    emit({
+      type: "check",
+      result: {
+        label: `Recovery check (flat d20 vs DC ${10 + dyingNow})`,
+        die,
+        modifier: 0,
+        total: die,
+        dc: 10 + dyingNow,
+        degree,
+      },
+    });
+    let line: string;
+    if (newDying >= 4) {
+      session.state.conditions = ["dead"];
+      line = `Recovery check: ${DEGREE_EN[degree]} (d20 ${die} vs DC ${10 + dyingNow}) — dying reaches 4. ${session.character.name} DIES. This is final.`;
+    } else if (newDying === 0) {
+      const wounded = conditionValueIn(session.state.conditions, "wounded") + 1;
+      let conds = setValuedCondition(session.state.conditions, "dying", 0);
+      conds = conds.filter((c) => !/^unconscious$/i.test(c));
+      session.state.conditions = setValuedCondition(conds, "wounded", wounded);
+      session.state.currentHp = 1;
+      line = `Recovery check: ${DEGREE_EN[degree]} (d20 ${die} vs DC ${10 + dyingNow}) — ${session.character.name} STABILIZES: conscious again at 1 HP, wounded ${wounded}. They wake battered, on the ground, moments later.`;
+    } else {
+      session.state.conditions = setValuedCondition(
+        session.state.conditions,
+        "dying",
+        newDying,
+      );
+      line = `Recovery check: ${DEGREE_EN[degree]} (d20 ${die} vs DC ${10 + dyingNow}) — still unconscious, DYING ${newDying} of 4. The player cannot act; narrate only what their fading senses catch.`;
+    }
+    emit({ type: "state", state: session.state });
+    return `1. ${line}`;
+  }
 
   // Each player message is their turn: refresh actions/MAP so they get a fresh
   // 3 actions (and enemies reset MAP) before resolving this turn's Strikes.
@@ -1191,8 +1322,8 @@ async function runNarrativeStage(
   const resultsMessage: ChatCompletionMessageParam = {
     role: "user",
     content: mechanical
-      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}`
-      : "[GM ENGINE] No roll was needed. Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot.",
+      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. These lines are COMPLETE: if the player's message declared an item, attack, or ability that does NOT appear below, it DID NOT HAPPEN — the engine rejected or ignored it (usually the item isn't in their Equipment). Show its absence in-fiction ("your hand finds no such flask in your pack") instead of narrating it working. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}`
+      : "[GM ENGINE] No roll was needed and NO mechanical effect happened (no damage, no healing, no item consumed). Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot, and do NOT narrate items/abilities taking mechanical effect.",
   };
 
   const inCombat = session.state.combat?.active === true;
