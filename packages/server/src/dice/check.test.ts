@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { degreeOfSuccess, rollCheck } from "./check.js";
+import { degreeOfSuccess, isValidDc, rollCheck } from "./check.js";
 
 describe("degreeOfSuccess", () => {
   it("aplica a margem de 10", () => {
@@ -23,6 +23,23 @@ describe("degreeOfSuccess", () => {
   it("nat 20 num crit success continua crit; nat 1 numa crit failure continua crit failure", () => {
     expect(degreeOfSuccess(20, 30, 15)).toBe("criticalSuccess");
     expect(degreeOfSuccess(1, 1, 15)).toBe("criticalFailure");
+  });
+});
+
+describe("isValidDc", () => {
+  it("rejeita DC ausente/zerado/absurdo (fonte dos crits falsos)", () => {
+    expect(isValidDc(0)).toBe(false);
+    expect(isValidDc(NaN)).toBe(false);
+    expect(isValidDc(-10)).toBe(false);
+    expect(isValidDc(4)).toBe(false);
+    expect(isValidDc(Infinity)).toBe(false);
+  });
+
+  it("aceita DCs plausíveis de PF2e", () => {
+    expect(isValidDc(5)).toBe(true);
+    expect(isValidDc(10)).toBe(true);
+    expect(isValidDc(20)).toBe(true);
+    expect(isValidDc(40)).toBe(true);
   });
 });
 

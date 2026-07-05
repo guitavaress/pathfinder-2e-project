@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { CheckResult } from "@pf2e/shared";
+import type { CheckResult, Combat } from "@pf2e/shared";
+import { CombatPanel } from "./CombatPanel.js";
 import { FeatherIcon, ArrowRightIcon } from "./icons.js";
 import { RollMedallion } from "./RollMedallion.js";
 
@@ -17,10 +18,11 @@ interface Props {
   log: LogItem[];
   busy: boolean;
   phase: "rules" | "narrative" | null;
+  combat: Combat | null;
   onSend: (text: string) => void;
 }
 
-export function Scene({ log, busy, phase, onSend }: Props) {
+export function Scene({ log, busy, phase, combat, onSend }: Props) {
   const [input, setInput] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -41,6 +43,7 @@ export function Scene({ log, busy, phase, onSend }: Props) {
 
   return (
     <section className="scene">
+      {combat?.active && <CombatPanel combat={combat} />}
       <div className="log" ref={logRef}>
         <div className="narr">
           {log.map((item, i) => (

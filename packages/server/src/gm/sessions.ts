@@ -22,6 +22,7 @@ export function createSession(character: Character): Session {
       currentHp: character.maxHp,
       conditions: [],
       flags: {},
+      combat: null,
     },
     messages: [],
   };
