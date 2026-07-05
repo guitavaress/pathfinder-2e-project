@@ -43,6 +43,10 @@ interface RuleRecord {
   rarity: string | null;
   text: string;
   source: string;
+  /** Foundry system.actionType.value: "action" | "reaction" | "free" | "passive" (null p/ docs sem ação). */
+  actionType: string | null;
+  /** Foundry system.actions.value: 1 | 2 | 3 (null p/ reaction/free/passive). */
+  actionCost: number | null;
 }
 
 /** Mapeia o `type` do documento Foundry para a nossa categoria. */
@@ -84,7 +88,15 @@ function cleanText(html: unknown): string {
   if (typeof html !== "string") return "";
   return html
     .replace(/@(UUID|Compendium)\[[^\]]+\]\{([^}]*)\}/g, "$2")
-    .replace(/@(UUID|Compendium)\[[^\]]+\]/g, "")
+    // Sem label: o Foundry renderiza o NOME do documento — recuperar o último
+    // segmento do path quando ele é um nome legível (descarta hashes de id).
+    // Perder isso mutila o texto ("You can  with a mere glare" sem "Demoralize").
+    .replace(/@(UUID|Compendium)\[([^\]]+)\]/g, (_m, _k, path: string) => {
+      const seg = (path.split(".").pop() ?? "").trim();
+      return /^[A-Z][\w' -]*$/.test(seg) && !/^[A-Za-z0-9]{16}$/.test(seg)
+        ? seg.replace(/-/g, " ")
+        : "";
+    })
     .replace(/@Localize\[[^\]]+\]/g, "")
     .replace(/@(Check|Damage|Template)\[[^\]]*\](\{([^}]*)\})?/g, "$3")
     .replace(/<[^>]+>/g, " ")
@@ -120,6 +132,16 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
   const text =
     cleanText(description.value) || cleanText(detailsObj.publicNotes);
 
+  // Custo de ação (feats/actions): separa "tem custo no encounter" de passivo.
+  const actionTypeObj = (system.actionType ?? {}) as Record<string, unknown>;
+  const actionsObj = (system.actions ?? {}) as Record<string, unknown>;
+  const actionType =
+    typeof actionTypeObj.value === "string" && actionTypeObj.value
+      ? actionTypeObj.value
+      : null;
+  const actionCost =
+    typeof actionsObj.value === "number" ? actionsObj.value : null;
+
   return {
     name,
     category,
@@ -130,6 +152,8 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
     rarity: typeof traitsObj.rarity === "string" ? traitsObj.rarity : null,
     text,
     source,
+    actionType,
+    actionCost,
   };
 }
 

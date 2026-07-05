@@ -15,6 +15,10 @@ export interface RuleRecord {
   rarity?: string | null;
   text: string;
   source: string;
+  /** Foundry actionType: "action" | "reaction" | "free" | "passive" (absent in seed/old data). */
+  actionType?: string | null;
+  /** Number of actions (1|2|3) when actionType is "action". */
+  actionCost?: number | null;
 }
 
 interface SeedAction {
@@ -72,7 +76,12 @@ function loadGenerated(): RuleRecord[] {
       const arr = JSON.parse(
         readFileSync(join(generatedDir, file), "utf8"),
       ) as RuleRecord[];
-      out.push(...arr);
+      // Só registros COMPLETOS entram no índice: um .json auxiliar largado na
+      // pasta (ex.: feats-classified.json, sem `text`) poluía o lookup com
+      // milhares de regras vazias — o modelo consultava e recebia nada.
+      out.push(
+        ...arr.filter((r) => r && typeof r.name === "string" && r.category && r.text),
+      );
     } catch {
       // ignore invalid file
     }
@@ -145,4 +154,37 @@ export function lookupLocalRule(query: string): RuleRecord | null {
 export function datasetSource(): string {
   load();
   return sourceLabel;
+}
+
+let activityCosts: Map<string, number> | null = null;
+
+/**
+ * Detects a MULTI-action activity (feat/action, actionType "action", cost ≥ 2)
+ * mentioned inside free text (a roll's reason). Returns its canonical
+ * lowercase name and cost, or null. Used by the engine to charge an
+ * activity's FULL cost even when the model forgets to pass it — the model
+ * naming the activity in `reason` is far more reliable than it passing a
+ * separate cost argument. Names < 6 chars are skipped (false-positive prone).
+ */
+export function multiActionCost(
+  text: string,
+): { name: string; cost: number } | null {
+  if (!activityCosts) {
+    activityCosts = new Map();
+    for (const r of load()) {
+      if (
+        (r.category === "feats" || r.category === "actions") &&
+        r.actionType === "action" &&
+        (r.actionCost ?? 0) >= 2 &&
+        r.name.length >= 6
+      ) {
+        activityCosts.set(r.name.toLowerCase(), r.actionCost!);
+      }
+    }
+  }
+  const t = text.toLowerCase();
+  for (const [name, cost] of activityCosts) {
+    if (t.includes(name)) return { name, cost };
+  }
+  return null;
 }
