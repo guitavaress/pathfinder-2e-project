@@ -7,6 +7,7 @@ import {
   commitFrequency,
   findSheetWeapon,
   frequencyLimit,
+  isOfficialCondition,
   resolveEnemyTurns,
 } from "./agent.js";
 import { buildCombat } from "./combat.js";
@@ -101,6 +102,23 @@ describe.skipIf(!hasGenerated)("frequency enforcement (requer generated/)", () =
 
   it("texto sem atividade com frequency → null", () => {
     expect(frequencyLimit(freshSession(true), "I strike with my dagger")).toBeNull();
+  });
+});
+
+describe("isOfficialCondition (whitelist)", () => {
+  it("aceita condições oficiais, com e sem valor", () => {
+    expect(isOfficialCondition("frightened 2")).toBe(true);
+    expect(isOfficialCondition("off-guard")).toBe(true);
+    expect(isOfficialCondition("Prone")).toBe(true); // case-insensitive
+    expect(isOfficialCondition("dying 3")).toBe(true);
+    expect(isOfficialCondition("persistent fire damage 2")).toBe(true);
+  });
+
+  it("rejeita história-como-condição e nomes inventados", () => {
+    expect(isOfficialCondition("companion: Cat")).toBe(false);
+    expect(isOfficialCondition("angry")).toBe(false);
+    expect(isOfficialCondition("blessed by the moon")).toBe(false);
+    expect(isOfficialCondition("")).toBe(false);
   });
 });
 

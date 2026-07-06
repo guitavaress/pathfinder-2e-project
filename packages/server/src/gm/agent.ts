@@ -11,6 +11,7 @@ import {
   itemTraits,
   lookupLocalRule,
   multiActionCost,
+  officialConditions,
 } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
 import {
@@ -124,6 +125,29 @@ export function frequencyLimit(session: Session, text: string): ToolOutcome | nu
     };
   }
   return null;
+}
+
+/**
+ * Condição oficial de PF2e? Aceita a forma valuada ("frightened 2") e a
+ * família "persistent X damage". Whitelist = conditions.json (44 oficiais).
+ */
+export function isOfficialCondition(cond: string): boolean {
+  const c = cond.toLowerCase().trim();
+  if (!c) return false;
+  if (/^persistent\b.*damage(\s+\d+)?$/.test(c)) return true;
+  const name = c.replace(/\s+\d+$/, "");
+  return officialConditions().has(name);
+}
+
+/** Sugestões próximas para uma condição inválida (erro educativo). */
+function conditionSuggestions(bad: string): string {
+  const tokens = bad.toLowerCase().split(/[^a-z-]+/).filter((t) => t.length > 3);
+  const near = [...officialConditions()].filter((n) =>
+    tokens.some((t) => n.includes(t) || t.includes(n)),
+  );
+  return (near.length ? near : ["frightened 1", "off-guard", "prone", "grabbed"])
+    .slice(0, 4)
+    .join(", ");
 }
 
 /** Grava o uso de uma atividade com Frequency (par do `frequencyLimit`). */
@@ -936,6 +960,21 @@ async function executeTool(
         }
       }
 
+      // Whitelist de condições (regras-como-dados): só as 44 oficiais entram
+      // no estado. História-como-condição ("companion: Cat") é rejeitada —
+      // fatos de história vivem na narrativa, não na mecânica.
+      let addConds: string[] = [];
+      if (Array.isArray(input.addConditions)) {
+        addConds = (input.addConditions as unknown[]).map((c) => String(c).toLowerCase().trim());
+        const invalid = addConds.filter((c) => !isOfficialCondition(c));
+        if (invalid.length > 0) {
+          return {
+            content: `REJECTED: ${invalid.map((c) => `"${c}"`).join(", ")} ${invalid.length > 1 ? "are" : "is"} not a PF2e condition — NOTHING was applied. Only official conditions go in state (closest: ${conditionSuggestions(invalid[0]!)}). Story facts are NOT conditions; keep them in the narrative. Retry with official conditions only, e.g. {"addConditions":["frightened 1"]}.`,
+            isError: true,
+          };
+        }
+      }
+
       // Combat: target a specific combatant (enemy/ally/player).
       if (combat?.active && targetRef) {
         const target = findCombatant(combat, targetRef);
@@ -958,14 +997,15 @@ async function executeTool(
           if (input.hpDelta < 0) applyDamage(target, -input.hpDelta);
           else target.currentHp = Math.min(target.maxHp, target.currentHp + input.hpDelta);
         }
-        if (Array.isArray(input.addConditions)) {
-          for (const cond of input.addConditions as string[]) {
-            if (!target.conditions.includes(cond)) target.conditions.push(cond);
-          }
+        for (const cond of addConds) {
+          if (!target.conditions.includes(cond)) target.conditions.push(cond);
         }
         if (Array.isArray(input.removeConditions)) {
-          const remove = new Set(input.removeConditions as string[]);
-          target.conditions = target.conditions.filter((c) => !remove.has(c));
+          // Leniente: remover o que não está lá é no-op, sem whitelist.
+          const remove = new Set(
+            (input.removeConditions as unknown[]).map((c) => String(c).toLowerCase().trim()),
+          );
+          target.conditions = target.conditions.filter((c) => !remove.has(c.toLowerCase()));
         }
         if (target.kind === "player") s.currentHp = target.currentHp;
         emit({ type: "state", state: s });
@@ -981,14 +1021,14 @@ async function executeTool(
           Math.min(session.character.maxHp, s.currentHp + input.hpDelta),
         );
       }
-      if (Array.isArray(input.addConditions)) {
-        for (const cond of input.addConditions as string[]) {
-          if (!s.conditions.includes(cond)) s.conditions.push(cond);
-        }
+      for (const cond of addConds) {
+        if (!s.conditions.includes(cond)) s.conditions.push(cond);
       }
       if (Array.isArray(input.removeConditions)) {
-        const remove = new Set(input.removeConditions as string[]);
-        s.conditions = s.conditions.filter((c) => !remove.has(c));
+        const remove = new Set(
+          (input.removeConditions as unknown[]).map((c) => String(c).toLowerCase().trim()),
+        );
+        s.conditions = s.conditions.filter((c) => !remove.has(c.toLowerCase()));
       }
       // Keep the player's combatant HP in sync during combat.
       if (combat) {
