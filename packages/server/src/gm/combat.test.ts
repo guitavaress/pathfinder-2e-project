@@ -18,9 +18,12 @@ import {
   isOffGuard,
   livingEnemy,
   mapPenalty,
+  passiveFeatBonus,
+  playerCombatant,
   setValuedCondition,
   tickEndOfRound,
 } from "./combat.js";
+import type { Character } from "@pf2e/shared";
 
 /** Builds a bare combatant with overridable fields (deterministic — no RNG). */
 function mkCombatant(partial: Partial<Combatant> & Pick<Combatant, "name" | "kind">): Combatant {
@@ -360,5 +363,36 @@ describe("benchmark", () => {
     // Abaixo/acima da tabela clampa nos extremos (sem crash).
     expect(benchmark(-5)).toEqual(benchmark(-1));
     expect(benchmark(99)).toEqual(benchmark(12));
+  });
+});
+
+describe("passiveFeatBonus / playerCombatant (passivos da engine)", () => {
+  const sheet = (feats: string[]): Character =>
+    ({
+      name: "Hero",
+      level: 5,
+      perception: 10,
+      ac: 20,
+      maxHp: 50,
+      feats,
+    }) as unknown as Character;
+
+  it("Incredible Initiative soma +2 na iniciativa", () => {
+    const bonus = passiveFeatBonus(sheet(["Incredible Initiative", "Toughness"]), "initiative");
+    expect(bonus).toEqual({ total: 2, sources: ["Incredible Initiative"] });
+  });
+
+  it("sem o feat, bônus zero", () => {
+    expect(passiveFeatBonus(sheet(["Toughness"]), "initiative").total).toBe(0);
+  });
+
+  it("playerCombatant aplica o passivo: iniciativa mínima = 1 + perception + 2", () => {
+    // d20 mínimo 1: com o feat, init ≥ 13; sem, pode ser 11. Roda várias vezes
+    // e checa o PISO (determinístico o suficiente sem mockar RNG).
+    for (let i = 0; i < 50; i++) {
+      const withFeat = playerCombatant(sheet(["Incredible Initiative"]), 50);
+      expect(withFeat.initiative).toBeGreaterThanOrEqual(13);
+      expect(withFeat.initiative).toBeLessThanOrEqual(32);
+    }
   });
 });

@@ -75,12 +75,40 @@ function newCombatant(partial: Partial<Combatant> & Pick<Combatant, "name" | "ki
   };
 }
 
+/**
+ * Passivos de feats que a ENGINE aplica (regras-como-dados): o modelo nunca
+ * lembrava deles. Tabela pequena e explícita — cresce conforme a auditoria
+ * apontar. (Toughness NÃO entra: o Pathbuilder já soma o HP no export.)
+ */
+const PASSIVE_FEAT_EFFECTS: Record<string, { initiative?: number }> = {
+  "incredible initiative": { initiative: 2 },
+};
+
+/** Soma dos bônus passivos de um tipo dado pelos feats da ficha. */
+export function passiveFeatBonus(
+  character: Character,
+  kind: "initiative",
+): { total: number; sources: string[] } {
+  let total = 0;
+  const sources: string[] = [];
+  for (const feat of character.feats) {
+    const effect = PASSIVE_FEAT_EFFECTS[feat.toLowerCase().trim()];
+    const value = effect?.[kind];
+    if (value) {
+      total += value;
+      sources.push(feat);
+    }
+  }
+  return { total, sources };
+}
+
 /** Builds the player's combatant from the sheet + current HP. */
 export function playerCombatant(character: Character, currentHp: number): Combatant {
+  const passive = passiveFeatBonus(character, "initiative");
   return newCombatant({
     name: character.name,
     kind: "player",
-    initiative: d20() + character.perception,
+    initiative: d20() + character.perception + passive.total,
     ac: character.ac,
     maxHp: character.maxHp,
     currentHp,

@@ -33,6 +33,7 @@ import {
   isOffGuard,
   livingEnemy,
   mapPenalty,
+  passiveFeatBonus,
   playerCombatant,
   playerOf,
   rollDice,
@@ -851,9 +852,14 @@ async function executeTool(
       const order = combat.combatants
         .map((c) => `${c.name} (init ${c.initiative}, AC ${c.ac}, ${c.currentHp} HP)`)
         .join("; ");
+      // Passivos aplicados pela engine ficam visíveis no resumo (auditoria).
+      const passive = passiveFeatBonus(session.character, "initiative");
+      const passiveNote = passive.total
+        ? ` [+${passive.total} initiative from ${passive.sources.join(", ")}]`
+        : "";
       return {
-        content: `Combat started. Initiative order: ${order}`,
-        summaryLine: `- Combat begins (round 1). Initiative: ${order}.`,
+        content: `Combat started. Initiative order: ${order}${passiveNote}`,
+        summaryLine: `- Combat begins (round 1). Initiative: ${order}.${passiveNote}`,
       };
     }
     case "end_turn": {
