@@ -9,10 +9,12 @@ import { isValidDc, rollCheck } from "../dice/check.js";
 import {
   activityFrequency,
   activityRequirement,
+  itemRecord,
   itemTraits,
   lookupLocalRule,
   multiActionCost,
   officialConditions,
+  type RuleRecord,
 } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
 import {
@@ -304,6 +306,34 @@ const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "use_item",
+      description:
+        "Uses/consumes an item from the character's Equipment (potion, elixir, bomb, torch...). The ENGINE verifies the sheet, spends the real quantity, and resolves the real effect: a bomb is thrown as a Strike with the item's REAL statblock (pass `target`); a healing potion heals its listed dice automatically. Costs 2 actions in combat (draw + use). ALWAYS use this tool for items — never spend_actions or update_state.",
+      parameters: {
+        type: "object",
+        properties: {
+          item: {
+            type: "string",
+            description:
+              "The item's name as listed in Equipment, e.g. 'Healing Potion (Minor)' or \"Alchemist's Fire\".",
+          },
+          target: {
+            type: "string",
+            description:
+              "BOMBS/offensive items only: the id or name of the combatant being targeted.",
+          },
+          reason: {
+            type: "string",
+            description: "What the character does with the item.",
+          },
+        },
+        required: ["item", "reason"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "start_combat",
       description:
         "Begins a combat encounter. Call this ONCE when a fight starts. The engine adds the player, rolls initiative for everyone, and assigns real AC/HP by creature level. After this, resolve turns with roll_check (attacks), roll_damage, and end_turn.",
@@ -535,6 +565,22 @@ function titleCase(s: string): string {
   return s.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * Attack bonus for throwing a bomb: DEX + weapon proficiency (bombs are
+ * martial thrown weapons) + the item's own bonus. Sheets parsed before
+ * weaponProficiencies existed fall back to the best weapon attack.
+ */
+function bombAttackBonus(c: Character, record: RuleRecord): number {
+  const item = record.bonus ?? 0;
+  const cat = record.weaponCategory === "simple" ? "simple" : "martial";
+  const rank = c.weaponProficiencies?.[cat];
+  if (rank != null) {
+    const prof = rank > 0 ? c.level + rank * 2 : 0;
+    return c.abilityModifiers.dex + prof + item;
+  }
+  return Math.max(0, ...c.weapons.map((w) => w.attack)) + item;
+}
+
 /** Number of Sneak Attack dice (d6) the character deals, or 0 if they lack it. */
 function sneakAttackDice(session: Session): number {
   const c = session.character;
@@ -561,7 +607,9 @@ function enemyLevelFor(name: string): number {
   return DEFAULT_ENEMY_LEVEL;
 }
 
-async function executeTool(
+// Exportada para os testes unitários (use_item, guards) — o fluxo normal só a
+// chama via runRulesStage.
+export async function executeTool(
   session: Session,
   name: string,
   input: Record<string, unknown>,
@@ -888,26 +936,17 @@ async function executeTool(
       const you = playerOf(combat);
       if (!you || you.defeated) return { content: "No active player combatant.", isError: true };
       const reason = String(input.reason ?? "activity");
-      // Ação de ITEM só existe se o item existir (o modelo gastou 1 ação
-      // "bebendo" uma poção que não estava no inventário — a narração então
-      // mostrou o gole). Mesmo espírito do guard de cura: ficha manda.
+      // Uso de ITEM tem tool própria: use_item verifica a ficha, gasta a
+      // quantidade de verdade e resolve o efeito real. spend_actions para item
+      // criaria um caminho paralelo sem contador — redireciona sempre.
       const itemWord = reason.match(
         /\b(potion|elixir|tonic|flask|bomb|alchemical|acid|scroll|oil|talisman|antidote|antiplague)\b/i,
       )?.[0];
       if (itemWord) {
-        const family = /potion|elixir|tonic/i.test(itemWord)
-          ? /potion|elixir|tonic/i
-          : /flask|bomb|alchemical|acid/i.test(itemWord)
-            ? /flask|bomb|alchemical|acid/i
-            : new RegExp(itemWord, "i");
-        const has = session.character.equipment.some((e) => family.test(e.name));
-        if (!has) {
-          return {
-            content: `REJECTED: there is no "${itemWord}" item in the character's Equipment — this action does NOT happen and no action is spent. Resolve the rest of the turn without it.`,
-            isError: true,
-            summaryLine: `- ${reason}: FAILED — no such item in the character's Equipment; their hand finds nothing.`,
-          };
-        }
+        return {
+          content: `Use the use_item tool for items ("${itemWord}"): it checks the Equipment, spends the real quantity, and resolves the real effect. No action was spent here — retry with use_item.`,
+          isError: true,
+        };
       }
       // O dataset manda no custo quando o reason cita a atividade (o modelo
       // chamou spend_actions com 1 para Improvised Repair, que custa 3).
@@ -938,6 +977,185 @@ async function executeTool(
       return {
         content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.`,
         summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).`,
+      };
+    }
+    case "use_item": {
+      const itemName = String(input.item ?? "").trim();
+      const reason = String(input.reason ?? itemName);
+      if (!itemName) {
+        return { content: "Missing 'item': pass the Equipment item's name.", isError: true };
+      }
+      // Grounding: o item PRECISA estar no Equipment com quantidade > 0. A
+      // mão vazia é mostrada em ficção pelo narrador (summaryLine).
+      const equipment = session.character.equipment;
+      const key = itemName.toLowerCase();
+      const owned =
+        equipment.find((e) => e.name.toLowerCase() === key) ??
+        equipment.find(
+          (e) =>
+            key.includes(e.name.toLowerCase()) || e.name.toLowerCase().includes(key),
+        );
+      if (!owned || owned.qty <= 0) {
+        const carried =
+          equipment
+            .filter((e) => e.qty > 0)
+            .map((e) => (e.qty > 1 ? `${e.name} x${e.qty}` : e.name))
+            .join(", ") || "nothing";
+        return {
+          content: `REJECTED: no "${itemName}" in the character's Equipment (carried: ${carried}). It does NOT exist in their hands and nothing is spent. Resolve the turn without it.`,
+          isError: true,
+          summaryLine: `- Use ${itemName}: FAILED — no such item in the Equipment; their hand finds nothing.`,
+        };
+      }
+
+      const combat = session.state.combat;
+      const you = combat?.active ? playerOf(combat) : null;
+      const inCombat = !!you && !you.defeated;
+      const record = itemRecord(owned.name);
+      const traits = record?.traits ?? [];
+      const isBomb = traits.includes("bomb") && !!record?.damage;
+      // Tolera palavras entre a fórmula e "Hit Points" ("regain 1d8 healing
+      // Hit Points" — o tipo vem do @Damage do Foundry).
+      const healMatch = record
+        ? /(\d+)d(\d+)(?:\s*\+\s*(\d+))?[^.]{0,40}?(?:hit points|hp)\b/i.exec(record.text)
+        : null;
+      const isHealing =
+        !!healMatch && /potion|elixir|oil|healing/i.test(`${owned.name} ${traits.join(" ")}`);
+
+      // Custo RAW em combate: sacar (Interact) + usar. Itens sem mecânica
+      // própria (tocha, corda) cobram só o Interact.
+      const cost = inCombat ? (isBomb || isHealing ? 2 : 1) : 0;
+      if (inCombat && you!.actionsRemaining < cost) {
+        return {
+          content: `ILLEGAL: using ${owned.name} costs ${cost} action(s) (draw + use) but the player has only ${you!.actionsRemaining} left this turn. It does NOT happen.`,
+          isError: true,
+          summaryLine: `- Use ${owned.name}: NOT done — costs ${cost} action(s), only ${you!.actionsRemaining} left.`,
+        };
+      }
+      const consume = () => {
+        owned.qty -= 1;
+        if (owned.qty <= 0) equipment.splice(equipment.indexOf(owned), 1);
+      };
+      const qtyNote = () =>
+        owned.qty > 0 ? `${owned.qty} left` : `that was the last one`;
+
+      // BOMBA: Strike de arremesso com o statblock REAL do item (dataset) —
+      // não os stats da arma da ficha (bug do smoke de 2026-07-05).
+      if (isBomb) {
+        if (!inCombat || !input.target) {
+          return {
+            content: `"${owned.name}" is a bomb: in combat, pass 'target' and the engine resolves a real Strike with its statblock. Outside combat there is nothing to hit — don't consume it idly.`,
+            isError: true,
+          };
+        }
+        const target = findCombatant(combat!, String(input.target));
+        if (!target) {
+          const valid = combat!.combatants
+            .filter((c) => !c.defeated)
+            .map((c) => `"${c.name}"`)
+            .join(", ");
+          return {
+            content: `No combatant "${String(input.target)}". Valid targets: ${valid}. Retry use_item with one of these exact names.`,
+            isError: true,
+          };
+        }
+        you!.actionsRemaining -= cost;
+        const atkBonus = bombAttackBonus(session.character, record!);
+        const map = mapPenalty(you!.mapProgress, traits.includes("agile"));
+        const ac = effectiveAC(target);
+        const statusPen = attackStatusPenalty(you!);
+        const mapLabel = map ? `, MAP ${map}` : "";
+        const result = rollCheck(
+          `${reason} (${owned.name} vs AC ${ac}${mapLabel})`,
+          atkBonus + map + statusPen,
+          ac,
+        );
+        you!.mapProgress += 1;
+        const hit = result.degree === "success" || result.degree === "criticalSuccess";
+        const crit = result.degree === "criticalSuccess";
+        const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : result.degree === "criticalFailure" ? "CRITICAL MISS" : "MISS";
+        let damageLine = "";
+        let dmg: { amount: number; type: string } | null = null;
+        if (hit) {
+          const base = rollDice(record!.damage!.dice, parseDie(record!.damage!.die));
+          let amount = crit ? base * 2 : base;
+          if (record!.splash) amount += record!.splash;
+          dmg = { amount, type: record!.damage!.type };
+          const before = target.currentHp;
+          applyDamage(target, amount);
+          turnStruck.get(session)?.add(target.id);
+          let extra = "";
+          if (record!.persistent) {
+            const pcond = `persistent ${record!.persistent.type} damage ${record!.persistent.number}`;
+            if (!target.conditions.includes(pcond)) target.conditions.push(pcond);
+            extra = ` + ${pcond}`;
+          }
+          if (record!.splash) extra += ` (incl. ${record!.splash} splash)`;
+          const defeatedNote = target.defeated ? ` — ${target.name} DEFEATED` : "";
+          damageLine = ` for ${amount} ${dmg.type}${extra}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
+        }
+        consume(); // a bomba se foi mesmo errando o arremesso
+        result.attack = {
+          attacker: you!.name,
+          target: target.name,
+          attackerKind: "player",
+          outcome: crit ? "criticalHit" : hit ? "hit" : result.degree === "criticalFailure" ? "criticalMiss" : "miss",
+          damage: dmg?.amount ?? null,
+          damageType: dmg?.type ?? null,
+        };
+        emit({ type: "check", result });
+        let endNote = "";
+        if (combat!.active && combatStatus(combat!) !== "ongoing") {
+          combat!.active = false;
+          endNote = " Combat ends: VICTORY.";
+        }
+        emit({ type: "state", state: session.state });
+        return {
+          content: JSON.stringify({
+            ...result,
+            hit,
+            crit,
+            damage: dmg?.amount ?? 0,
+            targetHp: target.currentHp,
+            itemQtyLeft: owned.qty > 0 ? owned.qty : 0,
+            actionsLeft: you!.actionsRemaining,
+          }),
+          summaryLine: `- ${owned.name} thrown: ${you!.name} vs ${target.name}${map ? ` [MAP ${map}]` : ""} → ${verb}${damageLine}. Bomb spent (${qtyNote()}).${endNote}`,
+        };
+      }
+
+      // CURA: a engine rola a fórmula do texto do item e aplica capada.
+      if (isHealing) {
+        if (inCombat) you!.actionsRemaining -= cost;
+        const dice = Number(healMatch![1]);
+        const faces = Number(healMatch![2]);
+        const flat = healMatch![3] ? Number(healMatch![3]) : 0;
+        const healed = rollDice(dice, faces) + flat;
+        const s = session.state;
+        const before = s.currentHp;
+        s.currentHp = Math.min(session.character.maxHp, s.currentHp + healed);
+        if (combat) {
+          const pc = playerOf(combat);
+          if (pc) pc.currentHp = s.currentHp;
+        }
+        consume();
+        emit({ type: "state", state: s });
+        return {
+          content: `Consumed ${owned.name}: healed ${s.currentHp - before} HP (${before}→${s.currentHp}/${session.character.maxHp}). ${qtyNote()}.${inCombat ? ` ${you!.actionsRemaining} action(s) left.` : ""}`,
+          summaryLine: `- ${owned.name} consumed: heals ${s.currentHp - before} HP (${before}→${s.currentHp}/${session.character.maxHp}); ${qtyNote()}.`,
+        };
+      }
+
+      // Item sem mecânica própria: só CONSUMÍVEIS (trait do dataset) gastam
+      // quantidade — corda/tocha continuam no inventário.
+      if (inCombat) you!.actionsRemaining -= cost;
+      const isConsumable = traits.includes("consumable");
+      if (isConsumable) consume();
+      if (inCombat) emit({ type: "state", state: session.state });
+      const spentNote = isConsumable ? ` Consumed (${qtyNote()}).` : "";
+      return {
+        content: `Used ${owned.name}.${spentNote} No mechanical effect — narrate its use.`,
+        summaryLine: `- ${owned.name} used.${spentNote}`,
       };
     }
     case "lookup_rule": {
@@ -991,14 +1209,23 @@ async function executeTool(
         input.hpDelta > 0 &&
         combat?.active
       ) {
-        const healSource = session.character.equipment.some((e) =>
-          /potion|elixir|tonic|healer'?s (toolkit|kit|tools)|salve|balm|medicine/i.test(e.name),
-        );
-        if (!healSource) {
+        const gear = session.character.equipment;
+        // Toolkit habilita cura por HABILIDADE (Battle Medicine, RAW exige o
+        // healer's toolkit) → hpDelta permitido. Consumível bebível é papel do
+        // use_item (contador real). Nada dos dois → cura não existe.
+        const toolkit = gear.some((e) => /healer'?s (toolkit|kit|tools)/i.test(e.name));
+        const drinkable = gear.some((e) => /potion|elixir|tonic|salve|balm/i.test(e.name));
+        if (!toolkit && !drinkable) {
           return {
             content: `REJECTED: no healing source in the character's Equipment (no potion/elixir/healer's toolkit). In-combat healing needs a real item or ability — without one, ${session.character.name} does NOT heal. Resolve the rest of the turn without it.`,
             isError: true,
             summaryLine: `- Healing attempt: FAILED — no healing item in the character's Equipment; no HP recovered.`,
+          };
+        }
+        if (!toolkit) {
+          return {
+            content: `Use the use_item tool to heal with a consumable: it spends the real quantity and rolls the item's real dice. NOTHING was applied here — retry with use_item (e.g. {"item":"Healing Potion (Minor)","reason":"drink it"}). hpDelta is only for healing abilities backed by the sheet (Battle Medicine with a healer's toolkit, a spell).`,
+            isError: true,
           };
         }
       }

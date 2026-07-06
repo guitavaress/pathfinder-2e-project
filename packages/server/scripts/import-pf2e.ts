@@ -112,6 +112,14 @@ function cleanText(html: unknown): string {
         : "";
     })
     .replace(/@Localize\[[^\]]+\]/g, "")
+    // @Damage tem colchetes ANINHADOS (@Damage[1d8[healing]]) — o padrão
+    // genérico parava no 1º "]" e mutilava o texto ("you regain ] Hit
+    // Points"), perdendo a fórmula que a engine lê (use_item).
+    .replace(
+      /@Damage\[((?:[^\[\]]|\[[^\]]*\])*)\](\{([^}]*)\})?/g,
+      (_m, expr: string, _b, label?: string) =>
+        label ?? expr.replace(/\[([^\]]*)\]/g, " $1").trim(),
+    )
     .replace(/@(Check|Damage|Template)\[[^\]]*\](\{([^}]*)\})?/g, "$3")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")

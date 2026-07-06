@@ -227,6 +227,10 @@ export function parsePathbuilder(raw: unknown): Character {
     },
     classDc,
     acItemBonus: asNumber(acTotal.acItemBonus),
+    weaponProficiencies: {
+      simple: toRank(prof.simple),
+      martial: toRank(prof.martial),
+    },
     skills,
     lores,
     feats,
