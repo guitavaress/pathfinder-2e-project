@@ -1,8 +1,19 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Character, Combatant, GameState } from "@pf2e/shared";
-import { findSheetWeapon, resolveEnemyTurns } from "./agent.js";
+import {
+  commitFrequency,
+  findSheetWeapon,
+  frequencyLimit,
+  resolveEnemyTurns,
+} from "./agent.js";
 import { buildCombat } from "./combat.js";
 import type { Session } from "./sessions.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const hasGenerated = existsSync(join(here, "../../data/pf2e/generated"));
 
 /** Minimal combatant (deterministic — no RNG). */
 function mk(partial: Partial<Combatant> & Pick<Combatant, "name" | "kind">): Combatant {
@@ -41,6 +52,57 @@ function sessionWith(player: Combatant, ...enemies: Combatant[]): Session {
 }
 
 const noop = () => {};
+
+// Frequency lê o dataset gerado (gitignorado) — pulado em clone fresco.
+describe.skipIf(!hasGenerated)("frequency enforcement (requer generated/)", () => {
+  // Fixtures do dataset: "Sharpened Senses" = 1/round; "Chilling Paralysis" = 1/PT1H.
+  const freshSession = (combatActive: boolean): Session =>
+    ({
+      id: "t",
+      state: {
+        sessionId: "t",
+        currentHp: 10,
+        conditions: [],
+        flags: {},
+        combat: combatActive ? { active: true, round: 1, turnIndex: 0, combatants: [] } : null,
+      },
+    }) as unknown as Session;
+
+  it("once per round: 1º uso passa, 2º no mesmo turno é bloqueado", () => {
+    const s = freshSession(false);
+    const text = "I use Sharpened Senses to find the thief";
+    expect(frequencyLimit(s, text)).toBeNull();
+    commitFrequency(s, text);
+    const blocked = frequencyLimit(s, text);
+    expect(blocked?.isError).toBe(true);
+    expect(blocked?.content).toContain("Frequency 1/round");
+  });
+
+  it("sessão nova (turno novo) libera o uso de novo", () => {
+    const s1 = freshSession(false);
+    commitFrequency(s1, "Sharpened Senses");
+    expect(frequencyLimit(s1, "Sharpened Senses")?.isError).toBe(true);
+    // WeakMap por sessão: outra sessão/turno não herda o gasto.
+    expect(frequencyLimit(freshSession(false), "Sharpened Senses")).toBeNull();
+  });
+
+  it("período longo (1/hour): dentro do MESMO combate é bloqueado", () => {
+    const s = freshSession(true);
+    expect(frequencyLimit(s, "Chilling Paralysis on the guard")).toBeNull();
+    commitFrequency(s, "Chilling Paralysis on the guard");
+    expect(frequencyLimit(s, "I repeat Chilling Paralysis")?.isError).toBe(true);
+  });
+
+  it("período longo FORA de combate: engine não julga (tempo narrativo)", () => {
+    const s = freshSession(false);
+    commitFrequency(s, "Chilling Paralysis");
+    expect(frequencyLimit(s, "Chilling Paralysis")).toBeNull();
+  });
+
+  it("texto sem atividade com frequency → null", () => {
+    expect(frequencyLimit(freshSession(true), "I strike with my dagger")).toBeNull();
+  });
+});
 
 describe("findSheetWeapon", () => {
   const c = {

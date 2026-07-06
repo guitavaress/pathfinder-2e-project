@@ -6,7 +6,12 @@ import type {
 import type { AttackContext, Character, Combatant, Weapon } from "@pf2e/shared";
 import type { CheckResult, GameState } from "@pf2e/shared";
 import { isValidDc, rollCheck } from "../dice/check.js";
-import { itemTraits, lookupLocalRule, multiActionCost } from "../rules/dataset.js";
+import {
+  activityFrequency,
+  itemTraits,
+  lookupLocalRule,
+  multiActionCost,
+} from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
 import {
   applyDamage,
@@ -72,6 +77,62 @@ const turnStruck = new WeakMap<Session, Set<string>>();
  * Sudden Charge 2→1, Improvised Repair 3→0).
  */
 const turnActivityCharged = new WeakMap<Session, Set<string>>();
+/**
+ * Frequency "once per round/turn" (dataset): usos por TURNO do jogador —
+ * 1 mensagem = 1 turno completo neste engine. Resetado a cada runRulesStage.
+ */
+const turnFrequencyUsed = new WeakMap<Session, Map<string, number>>();
+/**
+ * Frequency de períodos longos (PT1H, day...): a engine só consegue julgar
+ * dentro do MESMO combate (o tempo narrativo fora dele é fluido). Resetado
+ * quando um combate novo começa.
+ */
+const combatFrequencyUsed = new WeakMap<Session, Map<string, number>>();
+
+/** Store de frequency para um `per` do dataset (null = engine não julga). */
+function frequencyStore(session: Session, per: string): Map<string, number> | null {
+  const perTurn = per === "round" || per === "turn";
+  const holder = perTurn ? turnFrequencyUsed : combatFrequencyUsed;
+  if (!perTurn && !session.state.combat?.active) return null;
+  let map = holder.get(session);
+  if (!map) {
+    map = new Map();
+    holder.set(session, map);
+  }
+  return map;
+}
+
+/**
+ * Peek: a atividade citada no texto estourou sua Frequency? Retorna o erro
+ * educativo, ou null. O uso só é gravado por `commitFrequency` — chamado
+ * DEPOIS de todas as outras validações passarem (uma rejeição de custo não
+ * pode queimar o limite).
+ */
+export function frequencyLimit(session: Session, text: string): ToolOutcome | null {
+  const freq = activityFrequency(text);
+  if (!freq) return null;
+  const store = frequencyStore(session, freq.per);
+  if (!store) return null;
+  if ((store.get(freq.name) ?? 0) >= freq.max) {
+    const scope =
+      freq.per === "round" || freq.per === "turn" ? "this turn" : "this fight";
+    const label = `Frequency ${freq.max}/${freq.per}`;
+    return {
+      content: `ILLEGAL: "${titleCase(freq.name)}" was already used ${scope} (${label}). It does NOT happen — do something else or end the turn.`,
+      isError: true,
+      summaryLine: `- ${titleCase(freq.name)}: NOT used — ${label} already spent ${scope}.`,
+    };
+  }
+  return null;
+}
+
+/** Grava o uso de uma atividade com Frequency (par do `frequencyLimit`). */
+export function commitFrequency(session: Session, text: string): void {
+  const freq = activityFrequency(text);
+  if (!freq) return;
+  const store = frequencyStore(session, freq.per);
+  store?.set(freq.name, (store.get(freq.name) ?? 0) + 1);
+}
 
 /**
  * O jogador caiu a 0 HP: entra em dying 1 (2 se foi crit) + wounded acumulado,
@@ -500,6 +561,15 @@ async function executeTool(
             summaryLine: `- ${titleCase(skill)} Strike: NOT taken — costs ${cost}, only ${attacker.actionsRemaining} action(s) left.`,
           };
         }
+        // Frequency do dataset ("once per round"): peek antes, commit depois
+        // de todas as validações — só o que acontece de fato queima o limite.
+        // `activity && cost === 0` = rolagem seguinte do MESMO uso (Twin Feint,
+        // 2 Strikes): não conta como um segundo uso.
+        if (attacker.kind === "player" && !(activity && cost === 0)) {
+          const freqBlock = frequencyLimit(session, `${reason} ${skill}`);
+          if (freqBlock) return freqBlock;
+          commitFrequency(session, `${reason} ${skill}`);
+        }
         if (activity && cost > 0) chargedSet?.add(activity.name);
 
         // Agile from DATA, not from the model: when the player's weapon is on
@@ -640,6 +710,13 @@ async function executeTool(
           ? 0
           : Math.max(skillActivity.cost, skillBase)
         : skillBase;
+      // Frequency: peek antes de cobrar; rolagem seguinte do mesmo uso
+      // (skillCost 0 com atividade já cobrada) não conta de novo.
+      const skillFreqCounts = !(skillActivity && skillCost === 0);
+      if (skillFreqCounts) {
+        const freqBlock = frequencyLimit(session, `${reason} ${skill}`);
+        if (freqBlock) return freqBlock;
+      }
       if (combat?.active && skillCost > 0) {
         const you = playerOf(combat);
         if (you && !you.defeated) {
@@ -655,6 +732,7 @@ async function executeTool(
           emit({ type: "state", state: session.state });
         }
       }
+      if (skillFreqCounts) commitFrequency(session, `${reason} ${skill}`);
       const result = rollCheck(`${reason} (${skill} vs DC ${dc})`, modifier, dc);
       emit({ type: "check", result });
       return {
@@ -707,6 +785,8 @@ async function executeTool(
       const combat = buildCombat([player, ...makeEnemies()]);
       // This message is the player's turn: give them a full set of actions.
       if (player.actionsRemaining < 3) player.actionsRemaining = 3;
+      // Combate novo zera os limites de Frequency de período longo (1/hour...).
+      combatFrequencyUsed.set(session, new Map());
       session.state.combat = combat;
       emit({ type: "state", state: session.state });
       const order = combat.combatants
@@ -768,6 +848,9 @@ async function executeTool(
       // chamou spend_actions com 1 para Improvised Repair, que custa 3).
       const spendActivity = multiActionCost(reason);
       const spendCharged = turnActivityCharged.get(session);
+      // Frequency ("once per round"): peek antes de cobrar, commit após.
+      const spendFreqBlock = frequencyLimit(session, reason);
+      if (spendFreqBlock) return spendFreqBlock;
       const cost =
         spendActivity && !spendCharged?.has(spendActivity.name)
           ? Math.max(spendActivity.cost, clampActionCost(input.actions))
@@ -783,6 +866,7 @@ async function executeTool(
       // não pode transformar a próxima tentativa em custo reduzido).
       if (spendActivity) spendCharged?.add(spendActivity.name);
       you.actionsRemaining -= cost;
+      commitFrequency(session, reason);
       emit({ type: "state", state: session.state });
       return {
         content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.`,
@@ -1101,6 +1185,7 @@ async function runRulesStage(
   // 3 actions (and enemies reset MAP) before resolving this turn's Strikes.
   turnStruck.set(session, new Set());
   turnActivityCharged.set(session, new Set());
+  turnFrequencyUsed.set(session, new Map());
   if (session.state.combat?.active) {
     beginPlayerRound(session.state.combat);
     emit({ type: "state", state: session.state });
