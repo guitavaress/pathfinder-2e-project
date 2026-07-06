@@ -180,7 +180,31 @@ function makeCharacter(s: Scenario): unknown {
         isInventor: false,
         grade: "",
       },
+      // 2ª arma + escudo: a engine agora VALIDA Requirements pela ficha
+      // (Double Slice exige duas armas; Reactive Shield/Raise a Shield exigem
+      // escudo) — o template precisa suportar os feats que testa.
+      {
+        name: "Shortsword",
+        qty: 1,
+        prof: "martial",
+        die: "d6",
+        pot: 0,
+        str: "",
+        mat: null,
+        display: "Shortsword",
+        runes: [],
+        damageType: "P",
+        attack: 13,
+        damageBonus: 4,
+        extraDamage: [],
+        increasedDice: false,
+        isInventor: false,
+        grade: "",
+      },
     ];
+    const equipment = (b.equipment ?? []) as unknown[][];
+    equipment.push(["Steel Shield", 1]);
+    b.equipment = equipment;
     b.specials = [];
   }
   // Isola o feat sob teste (ficha só com ele + formato Pathbuilder).
