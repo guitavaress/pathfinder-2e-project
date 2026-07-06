@@ -283,6 +283,41 @@ export function activityFrequency(
   return null;
 }
 
+let requirementTexts: Map<string, string> | null = null;
+
+/**
+ * Requirements clause of a feat/action named in free text ("Requirements You
+ * are wielding two melee weapons."). Same trigger convention as
+ * `multiActionCost`: the model naming the activity. The engine validates only
+ * a small whitelist of patterns it can answer from the sheet.
+ */
+export function activityRequirement(
+  text: string,
+): { name: string; requirement: string } | null {
+  if (!requirementTexts) {
+    requirementTexts = new Map();
+    for (const r of load()) {
+      if (
+        (r.category === "feats" || r.category === "actions") &&
+        r.name.length >= 6 &&
+        r.actionType &&
+        r.actionType !== "passive"
+      ) {
+        const m = /Requirements\s+([^.;]+)[.;]/.exec(r.text);
+        if (m?.[1]) {
+          const key = r.name.toLowerCase();
+          if (!requirementTexts.has(key)) requirementTexts.set(key, m[1].trim());
+        }
+      }
+    }
+  }
+  const t = text.toLowerCase();
+  for (const [name, requirement] of requirementTexts) {
+    if (t.includes(name)) return { name, requirement };
+  }
+  return null;
+}
+
 let conditionNames: Set<string> | null = null;
 
 /**

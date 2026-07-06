@@ -8,6 +8,7 @@ import type { CheckResult, GameState } from "@pf2e/shared";
 import { isValidDc, rollCheck } from "../dice/check.js";
 import {
   activityFrequency,
+  activityRequirement,
   itemTraits,
   lookupLocalRule,
   multiActionCost,
@@ -125,6 +126,36 @@ export function frequencyLimit(session: Session, text: string): ToolOutcome | nu
     };
   }
   return null;
+}
+
+/**
+ * Requirements de atividade (validação LEVE): só padrões que a ficha responde
+ * de graça — duas armas empunhadas, escudo. O resto passa sem julgamento
+ * (empunhadura/postura são estado que a engine não rastreia).
+ */
+export function requirementBlocked(session: Session, text: string): ToolOutcome | null {
+  const found = activityRequirement(text);
+  if (!found) return null;
+  const req = found.requirement.toLowerCase();
+  const c = session.character;
+  let missing = "";
+  if (/wielding two (melee )?weapons|two weapons, (one|each) in (a different|each) hand/.test(req)) {
+    if (c.weapons.length < 2) {
+      missing = `two wielded weapons (the sheet lists ${c.weapons.length ? `only "${c.weapons.map((w) => w.name).join('", "')}"` : "none"})`;
+    }
+  } else if (/wielding a shield|shield is raised|have a shield raised/.test(req)) {
+    const hasShield =
+      c.armor.some((a) => /shield/i.test(a.name)) ||
+      c.equipment.some((e) => /shield/i.test(e.name));
+    if (!hasShield) missing = "a shield (none on the sheet)";
+  }
+  if (!missing) return null;
+  const pretty = titleCase(found.name);
+  return {
+    content: `ILLEGAL: "${pretty}" requires ${found.requirement} — the character lacks ${missing}. It does NOT happen and no action is spent. Do something the sheet supports.`,
+    isError: true,
+    summaryLine: `- ${pretty}: NOT possible — requires ${found.requirement}.`,
+  };
 }
 
 /**
@@ -585,11 +616,13 @@ async function executeTool(
             summaryLine: `- ${titleCase(skill)} Strike: NOT taken — costs ${cost}, only ${attacker.actionsRemaining} action(s) left.`,
           };
         }
-        // Frequency do dataset ("once per round"): peek antes, commit depois
-        // de todas as validações — só o que acontece de fato queima o limite.
+        // Requirements + Frequency do dataset: peek antes, commit depois de
+        // todas as validações — só o que acontece de fato queima o limite.
         // `activity && cost === 0` = rolagem seguinte do MESMO uso (Twin Feint,
         // 2 Strikes): não conta como um segundo uso.
         if (attacker.kind === "player" && !(activity && cost === 0)) {
+          const reqBlock = requirementBlocked(session, `${reason} ${skill}`);
+          if (reqBlock) return reqBlock;
           const freqBlock = frequencyLimit(session, `${reason} ${skill}`);
           if (freqBlock) return freqBlock;
           commitFrequency(session, `${reason} ${skill}`);
@@ -734,10 +767,12 @@ async function executeTool(
           ? 0
           : Math.max(skillActivity.cost, skillBase)
         : skillBase;
-      // Frequency: peek antes de cobrar; rolagem seguinte do mesmo uso
-      // (skillCost 0 com atividade já cobrada) não conta de novo.
+      // Requirements + Frequency: peek antes de cobrar; rolagem seguinte do
+      // mesmo uso (skillCost 0 com atividade já cobrada) não conta de novo.
       const skillFreqCounts = !(skillActivity && skillCost === 0);
       if (skillFreqCounts) {
+        const reqBlock = requirementBlocked(session, `${reason} ${skill}`);
+        if (reqBlock) return reqBlock;
         const freqBlock = frequencyLimit(session, `${reason} ${skill}`);
         if (freqBlock) return freqBlock;
       }
@@ -872,7 +907,9 @@ async function executeTool(
       // chamou spend_actions com 1 para Improvised Repair, que custa 3).
       const spendActivity = multiActionCost(reason);
       const spendCharged = turnActivityCharged.get(session);
-      // Frequency ("once per round"): peek antes de cobrar, commit após.
+      // Requirements + Frequency: peek antes de cobrar, commit após.
+      const spendReqBlock = requirementBlocked(session, reason);
+      if (spendReqBlock) return spendReqBlock;
       const spendFreqBlock = frequencyLimit(session, reason);
       if (spendFreqBlock) return spendFreqBlock;
       const cost =

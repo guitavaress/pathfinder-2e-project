@@ -8,6 +8,7 @@ import {
   findSheetWeapon,
   frequencyLimit,
   isOfficialCondition,
+  requirementBlocked,
   resolveEnemyTurns,
 } from "./agent.js";
 import { buildCombat } from "./combat.js";
@@ -102,6 +103,37 @@ describe.skipIf(!hasGenerated)("frequency enforcement (requer generated/)", () =
 
   it("texto sem atividade com frequency → null", () => {
     expect(frequencyLimit(freshSession(true), "I strike with my dagger")).toBeNull();
+  });
+});
+
+describe.skipIf(!hasGenerated)("requirementBlocked (requer generated/)", () => {
+  const weapon = (name: string) => ({ name, attack: 10, die: "d6", damageBonus: 0, damageType: "S" });
+  const sessionWithSheet = (weapons: string[], equipment: string[] = []): Session =>
+    ({
+      character: {
+        weapons: weapons.map(weapon),
+        armor: [],
+        equipment: equipment.map((name) => ({ name, qty: 1 })),
+      },
+    }) as unknown as Session;
+
+  it("Double Slice com 1 arma → bloqueado; com 2 → passa", () => {
+    const one = requirementBlocked(sessionWithSheet(["Longsword"]), "I use Double Slice");
+    expect(one?.isError).toBe(true);
+    expect(one?.content).toContain("Double Slice");
+    expect(requirementBlocked(sessionWithSheet(["Longsword", "Shortsword"]), "I use Double Slice")).toBeNull();
+  });
+
+  it("Raise a Shield sem escudo → bloqueado; com escudo no Equipment → passa", () => {
+    expect(requirementBlocked(sessionWithSheet(["Longsword"]), "Raise a Shield")?.isError).toBe(true);
+    expect(
+      requirementBlocked(sessionWithSheet(["Longsword"], ["Steel Shield"]), "Raise a Shield"),
+    ).toBeNull();
+  });
+
+  it("requirement que a engine não julga (postura/estado) → passa", () => {
+    // "Twin Feint" exige duas armas? Não — sem requirement dos padrões → null.
+    expect(requirementBlocked(sessionWithSheet(["Dagger"]), "I strike with my dagger")).toBeNull();
   });
 });
 
