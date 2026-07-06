@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Combatant, GameState } from "@pf2e/shared";
-import { resolveEnemyTurns } from "./agent.js";
+import type { Character, Combatant, GameState } from "@pf2e/shared";
+import { findSheetWeapon, resolveEnemyTurns } from "./agent.js";
 import { buildCombat } from "./combat.js";
 import type { Session } from "./sessions.js";
 
@@ -41,6 +41,32 @@ function sessionWith(player: Combatant, ...enemies: Combatant[]): Session {
 }
 
 const noop = () => {};
+
+describe("findSheetWeapon", () => {
+  const c = {
+    weapons: [
+      { name: "Dagger", attack: 13, die: "d4", damageBonus: 0, damageType: "P" },
+      { name: "Shortbow", attack: 13, die: "d6", damageBonus: 0, damageType: "P" },
+    ],
+  } as unknown as Character;
+
+  it("casa por nome exato (case-insensitive)", () => {
+    expect(findSheetWeapon(c, "dagger")?.name).toBe("Dagger");
+  });
+
+  it("casa quando a referência CONTÉM o nome ('my trusty dagger')", () => {
+    expect(findSheetWeapon(c, "my trusty dagger strike")?.name).toBe("Dagger");
+  });
+
+  it("casa quando o nome contém a referência ('shortb')", () => {
+    expect(findSheetWeapon(c, "shortb")?.name).toBe("Shortbow");
+  });
+
+  it("null para arma que não está na ficha", () => {
+    expect(findSheetWeapon(c, "greatsword")).toBeNull();
+    expect(findSheetWeapon(c, "")).toBeNull();
+  });
+});
 
 describe("resolveEnemyTurns", () => {
   it("cada inimigo vivo faz 2 Strikes contra o jogador", () => {

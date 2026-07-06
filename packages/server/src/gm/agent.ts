@@ -3,10 +3,10 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
-import type { AttackContext, Combatant } from "@pf2e/shared";
+import type { AttackContext, Character, Combatant, Weapon } from "@pf2e/shared";
 import type { CheckResult, GameState } from "@pf2e/shared";
 import { isValidDc, rollCheck } from "../dice/check.js";
-import { lookupLocalRule, multiActionCost } from "../rules/dataset.js";
+import { itemTraits, lookupLocalRule, multiActionCost } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
 import {
   applyDamage,
@@ -146,7 +146,7 @@ const TOOLS: ChatCompletionTool[] = [
           agile: {
             type: "boolean",
             description:
-              "ATTACKS ONLY: true if the weapon has the agile trait (MAP -4/-8 instead of -5/-10). Look it up if unsure.",
+              "ATTACKS ONLY: true if the weapon has the agile trait (MAP -4/-8 instead of -5/-10). For weapons on the character sheet the engine reads the trait from the rules data and IGNORES this — only pass it for weapons the sheet doesn't list (improvised, unarmed).",
           },
           actions: {
             type: "number",
@@ -329,6 +329,19 @@ interface ToolOutcome {
   endedTurn?: boolean;
 }
 
+/** Finds the sheet weapon a roll's skill/weapon name refers to (null if none). */
+export function findSheetWeapon(c: Character, ref: string): Weapon | null {
+  const key = ref.toLowerCase().trim();
+  if (!key) return null;
+  return (
+    c.weapons.find((w) => w.name.toLowerCase() === key) ??
+    c.weapons.find((w) => key.includes(w.name.toLowerCase())) ??
+    (key.length >= 3
+      ? (c.weapons.find((w) => w.name.toLowerCase().includes(key)) ?? null)
+      : null)
+  );
+}
+
 /** Attack bonus for a Strike: the player's weapon bonus, or the enemy's benchmark. */
 function combatAttackModifier(
   session: Session,
@@ -489,7 +502,19 @@ async function executeTool(
         }
         if (activity && cost > 0) chargedSet?.add(activity.name);
 
-        const agile = input.agile === true;
+        // Agile from DATA, not from the model: when the player's weapon is on
+        // the sheet, its traits come from equipment.json and the model's
+        // `agile` param is ignored. The param only counts for weapons the
+        // engine can't identify (improvised, unarmed variants).
+        let agile = input.agile === true;
+        let agileSource = "model";
+        if (attacker.kind === "player") {
+          const sheetWeapon = findSheetWeapon(session.character, skill);
+          if (sheetWeapon) {
+            agile = itemTraits(sheetWeapon.name).includes("agile");
+            agileSource = "sheet";
+          }
+        }
         const baseMod = combatAttackModifier(session, attacker, skill);
         const map = mapPenalty(attacker.mapProgress, agile);
         // Conditions as real mechanics: off-guard −2 AC, frightened −N to
@@ -516,7 +541,7 @@ async function executeTool(
             : critMiss
               ? "criticalMiss"
               : "miss";
-        const mapNote = map ? ` [MAP ${map}]` : "";
+        const mapNote = map ? ` [MAP ${map}${agile ? ` agile:${agileSource}` : ""}]` : "";
 
         // On a hit, roll and apply damage automatically (no separate tool call).
         let damageLine = "";
