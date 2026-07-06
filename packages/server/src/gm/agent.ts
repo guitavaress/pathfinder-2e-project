@@ -13,6 +13,7 @@ import {
   itemTraits,
   lookupLocalRule,
   multiActionCost,
+  namedActivity,
   officialConditions,
   type RuleRecord,
 } from "../rules/dataset.js";
@@ -1284,6 +1285,22 @@ export async function executeTool(
         };
       }
 
+      // Target explícito que NÃO resolveu para um combatente ativo (combate
+      // já fechou, alvo morto): nunca cair no estado do jogador — o -12
+      // mirado no "Bandit" recém-morto drenava o HP do Ferro (bateria
+      // 2026-07-06, Dual-Handed Assault).
+      if (targetRef) {
+        const isSelf =
+          targetRef.toLowerCase().includes(session.character.name.toLowerCase()) ||
+          /^(player|me|self|myself)$/i.test(targetRef.trim());
+        if (!isSelf) {
+          return {
+            content: `NOTHING was changed: no active combatant "${targetRef}" (the fight may already be over — the engine had applied all Strike damage). Do not re-apply damage. update_state without a target only touches the PLAYER's own state.`,
+            isError: true,
+          };
+        }
+      }
+
       // Default: the player's persistent state.
       if (typeof input.hpDelta === "number") {
         s.currentHp = Math.max(
@@ -1526,6 +1543,7 @@ async function runRulesStage(
   const consulted: string[] = [];
   let anyTool = false;
   let endedTurn = false;
+  let mechanicalResolved = false;
 
   /** One rules-model exchange: executes any tool calls, returns how many. */
   const runIteration = async (iterLabel: string): Promise<number> => {
@@ -1562,6 +1580,14 @@ async function runRulesStage(
       );
       if (outcome.summaryLine) summaryLines.push(outcome.summaryLine);
       if (outcome.endedTurn) endedTurn = true;
+      if (
+        !outcome.isError &&
+        ["roll_check", "use_item", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
+          tc.function.name,
+        )
+      ) {
+        mechanicalResolved = true;
+      }
       if (tc.function.name === "lookup_rule" && !outcome.isError) {
         consulted.push(outcome.content.split("\n")[0]!.slice(0, 80));
       }
@@ -1594,6 +1620,26 @@ async function runRulesStage(
       });
       for (let i = 0; i < 3; i++) {
         if ((await runIteration(`recheck${i}`)) === 0) break;
+      }
+    }
+  }
+
+  // SECOND CHANCE fora de combate (escada de escalação: o prompt "atividades
+  // nunca são narração pura" reincidiu — Goblin Song na bateria 2026-07-06):
+  // o jogador invocou uma atividade COM regras e nada mecânico foi resolvido.
+  if (!session.state.combat?.active && !mechanicalResolved) {
+    const lastUser = [...session.messages]
+      .reverse()
+      .find((m) => m.role === "user");
+    const invoked =
+      typeof lastUser?.content === "string" ? namedActivity(lastUser.content) : null;
+    if (invoked) {
+      messages.push({
+        role: "user",
+        content: `[ENGINE CHECK] The player invoked "${invoked}", which has RULES (an action, usually with a check), but you resolved NOTHING mechanically. Resolve it now: roll_check with its listed skill vs a real DC (lookup_rule first if unsure) and apply any effect with update_state. Only if it truly cannot apply in this scene, answer in one line why.`,
+      });
+      for (let i = 0; i < 2; i++) {
+        if ((await runIteration(`activity-recheck${i}`)) === 0) break;
       }
     }
   }

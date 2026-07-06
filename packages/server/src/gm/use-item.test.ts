@@ -141,3 +141,28 @@ describe.skipIf(!hasGenerated)("use_item (requer generated/)", () => {
     expect(s.character.equipment[0]!.qty).toBe(1);
   });
 });
+
+describe("update_state com target fantasma (combate fechado)", () => {
+  it("hpDelta mirado num inimigo pós-combate NÃO drena o jogador", async () => {
+    // Caso real da bateria 2026-07-06 (Dual-Handed Assault): o golpe matou o
+    // Bandit, o combate auto-fechou, e o update_state atrasado do modelo
+    // caía no estado do JOGADOR (65→53).
+    const s = mkSession([], { combat: true });
+    s.state.combat!.active = false;
+    const out = await executeTool(
+      s,
+      "update_state",
+      { hpDelta: -12, target: "Giant Rat" },
+      noop,
+    );
+    expect(out.isError).toBe(true);
+    expect(s.state.currentHp).toBe(50); // intocado
+  });
+
+  it("target que É o jogador continua aplicando (dano fora de combate)", async () => {
+    const s = mkSession([]);
+    const out = await executeTool(s, "update_state", { hpDelta: -5, target: "Hero" }, noop);
+    expect(out.isError).toBeUndefined();
+    expect(s.state.currentHp).toBe(45);
+  });
+});

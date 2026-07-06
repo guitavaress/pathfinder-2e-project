@@ -283,6 +283,36 @@ export function activityFrequency(
   return null;
 }
 
+let activeNames: Map<string, string> | null = null;
+
+/**
+ * An ACTIVE feat/action (actionType "action", cost ≥ 1) named inside free
+ * text — used by the engine to notice the player invoked something with
+ * rules that the model resolved as pure narration (Goblin Song case).
+ * Returns the canonical name, or null. Names < 6 chars are skipped.
+ */
+export function namedActivity(text: string): string | null {
+  if (!activeNames) {
+    activeNames = new Map();
+    for (const r of load()) {
+      if (
+        (r.category === "feats" || r.category === "actions") &&
+        r.actionType === "action" &&
+        (r.actionCost ?? 0) >= 1 &&
+        r.name.length >= 6
+      ) {
+        const key = r.name.toLowerCase();
+        if (!activeNames.has(key)) activeNames.set(key, r.name);
+      }
+    }
+  }
+  const t = text.toLowerCase();
+  for (const [key, name] of activeNames) {
+    if (t.includes(key)) return name;
+  }
+  return null;
+}
+
 let requirementTexts: Map<string, string> | null = null;
 
 /**

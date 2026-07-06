@@ -6,6 +6,7 @@ import {
   activityFrequency,
   itemRecord,
   itemTraits,
+  namedActivity,
   officialConditions,
 } from "./dataset.js";
 
@@ -63,6 +64,17 @@ describe.skipIf(!hasGenerated)("dataset (requer generated/)", () => {
 
     it("null quando o texto não cita atividade com frequency", () => {
       expect(activityFrequency("I attack with my dagger")).toBeNull();
+    });
+  });
+
+  describe("namedActivity", () => {
+    it("detecta uma atividade ativa citada na mensagem do jogador", () => {
+      expect(namedActivity("Here at the tavern, I use Goblin Song.")).toBe("Goblin Song");
+      expect(namedActivity("I try Battle Medicine on my ally")).toBe("Battle Medicine");
+    });
+
+    it("null para mensagem sem atividade nomeada", () => {
+      expect(namedActivity("I walk into the tavern and order an ale")).toBeNull();
     });
   });
 
