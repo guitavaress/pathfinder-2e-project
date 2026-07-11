@@ -9,16 +9,21 @@ import {
   benchmark,
   buildCombat,
   clampActionCost,
+  classifyEncounter,
   combatStatus,
   conditionValueIn,
   conditionValue,
+  creatureXp,
   effectiveAC,
+  encounterBudget,
   findCombatant,
   hasCombatantNamed,
   isOffGuard,
   livingEnemy,
   mapPenalty,
+  partySizeOf,
   passiveFeatBonus,
+  planEncounter,
   playerCombatant,
   setValuedCondition,
   tickEndOfRound,
@@ -375,6 +380,123 @@ describe("benchmark", () => {
     // Abaixo/acima da tabela clampa nos extremos (sem crash).
     expect(benchmark(-5)).toEqual(benchmark(-1));
     expect(benchmark(99)).toEqual(benchmark(12));
+  });
+});
+
+describe("orçamento de encontro (GM Core, party de 1)", () => {
+  it("creatureXp: os 9 deltas RAW; abaixo de PL-4 = 0; acima de PL+4 = proibido", () => {
+    const partyLevel = 5;
+    const expected = [10, 15, 20, 30, 40, 60, 80, 120, 160];
+    for (let delta = -4; delta <= 4; delta++) {
+      expect(creatureXp(partyLevel + delta, partyLevel)).toBe(expected[delta + 4]);
+    }
+    expect(creatureXp(0, 5)).toBe(0); // PL-5: não conta
+    expect(creatureXp(10, 5)).toBeNull(); // PL+5: nunca entra
+  });
+
+  it("encounterBudget: party 4 = tabela RAW; party 1 = 1× ajuste; escala nos dois sentidos", () => {
+    expect(encounterBudget("trivial", 4)).toBe(40);
+    expect(encounterBudget("low", 4)).toBe(60);
+    expect(encounterBudget("moderate", 4)).toBe(80);
+    expect(encounterBudget("severe", 4)).toBe(120);
+    expect(encounterBudget("extreme", 4)).toBe(160);
+    expect(encounterBudget("trivial", 1)).toBe(10);
+    expect(encounterBudget("low", 1)).toBe(15);
+    expect(encounterBudget("moderate", 1)).toBe(20);
+    expect(encounterBudget("severe", 1)).toBe(30);
+    expect(encounterBudget("extreme", 1)).toBe(40);
+    expect(encounterBudget("moderate", 2)).toBe(40);
+    expect(encounterBudget("severe", 5)).toBe(150);
+  });
+
+  it("classifyEncounter: menor dificuldade que cobre o XP", () => {
+    expect(classifyEncounter(10, 1)).toBe("trivial");
+    expect(classifyEncounter(20, 1)).toBe("moderate");
+    expect(classifyEncounter(28, 1)).toBe("severe");
+    expect(classifyEncounter(40, 1)).toBe("extreme");
+    expect(classifyEncounter(999, 1)).toBe("extreme");
+  });
+
+  it("partySizeOf: player + allies, nunca menos que 1", () => {
+    expect(
+      partySizeOf([
+        mkCombatant({ name: "Hero", kind: "player" }),
+        mkCombatant({ name: "Guide", kind: "ally" }),
+        mkCombatant({ name: "Rat", kind: "enemy" }),
+      ]),
+    ).toBe(2);
+    expect(partySizeOf([])).toBe(1);
+  });
+
+  it("planEncounter corta criatura a criatura o que estoura (caso real 2026-07-11)", () => {
+    // PC level 5 solo, extreme (40 XP): 3× thug lvl 1 (10 cada) + hound lvl 2 (15)
+    // = 45 XP → só 3 thugs + NADA de hound? Não: 10+10+10=30, hound 15 estoura
+    // (45 > 40) → hound fica de fora.
+    const plan = planEncounter(
+      [
+        { name: "Thug", level: 1, count: 3 },
+        { name: "Scavenger Hound", level: 2, count: 1 },
+      ],
+      0,
+      { partyLevel: 5, partySize: 1, difficulty: "extreme" },
+    );
+    expect(plan.accepted).toEqual([{ name: "Thug", level: 1, count: 3 }]);
+    expect(plan.trimmedOver).toEqual([{ name: "Scavenger Hound", level: 2, count: 1 }]);
+    expect(plan.totalXp).toBe(30);
+    expect(plan.budget).toBe(40);
+    expect(plan.classified).toBe("severe");
+    expect(plan.fits).toBe(false);
+  });
+
+  it("planEncounter: PL+5 é proibido mesmo em extreme", () => {
+    const plan = planEncounter(
+      [
+        { name: "Dragon", level: 10, count: 1 },
+        { name: "Kobold", level: 1, count: 1 },
+      ],
+      0,
+      { partyLevel: 5, partySize: 1, difficulty: "extreme" },
+    );
+    expect(plan.droppedForbidden).toEqual([{ name: "Dragon", level: 10, count: 1 }]);
+    expect(plan.accepted).toEqual([{ name: "Kobold", level: 1, count: 1 }]);
+  });
+
+  it("planEncounter anti-vazio: combate novo nunca começa sem inimigo", () => {
+    // Única criatura declarada não cabe (lvl 5 = 40 XP > moderate 20) →
+    // rebaixada para o maior level que caiba (lvl 3 = 20 XP).
+    const plan = planEncounter([{ name: "Ogre", level: 5, count: 1 }], 0, {
+      partyLevel: 5,
+      partySize: 1,
+      difficulty: "moderate",
+    });
+    expect(plan.accepted).toEqual([{ name: "Ogre", level: 3, count: 1 }]);
+    expect(plan.downleveled).toEqual({ name: "Ogre", from: 5, to: 3 });
+    expect(plan.trimmedOver).toEqual([]); // o rebaixado saiu da lista de cortes
+    expect(plan.totalXp).toBe(20);
+  });
+
+  it("planEncounter: reforços partem do XP já em campo e não ganham anti-vazio", () => {
+    // Campo já com 30 XP; reforço de 15 estoura extreme 40 → nada entra.
+    const plan = planEncounter([{ name: "Hound", level: 2, count: 1 }], 30, {
+      partyLevel: 5,
+      partySize: 1,
+      difficulty: "extreme",
+    });
+    expect(plan.accepted).toEqual([]);
+    expect(plan.trimmedOver).toEqual([{ name: "Hound", level: 2, count: 1 }]);
+    expect(plan.totalXp).toBe(30);
+  });
+
+  it("planEncounter: criaturas PL-5 custam 0 e entram todas (trivial)", () => {
+    const plan = planEncounter([{ name: "Rat", level: -1, count: 8 }], 0, {
+      partyLevel: 5,
+      partySize: 1,
+      difficulty: "moderate",
+    });
+    expect(plan.accepted).toEqual([{ name: "Rat", level: -1, count: 8 }]);
+    expect(plan.totalXp).toBe(0);
+    expect(plan.classified).toBe("trivial");
+    expect(plan.fits).toBe(true);
   });
 });
 

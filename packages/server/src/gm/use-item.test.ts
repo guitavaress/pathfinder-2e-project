@@ -144,20 +144,23 @@ describe.skipIf(!hasGenerated)("use_item (requer generated/)", () => {
 
 describe("start_combat re-chamado (play-test 2026-07-11)", () => {
   it("nomes saem sanitizados e o 2º start_combat com escape diferente NÃO duplica", async () => {
+    // Composição DENTRO do orçamento extreme solo (2×10 + 15 = 35/40 XP) —
+    // o alvo deste teste é o dedupe de escape, não o corte por orçamento.
     const s = mkSession([]);
     await executeTool(
       s,
       "start_combat",
       {
+        difficulty: "extreme",
         enemies: [
-          { name: 'Scavenger Scavenger\\" (Thug)', count: 3, level: 1 },
+          { name: 'Scavenger Scavenger\\" (Thug)', count: 2, level: 1 },
           { name: "Scavenger Hound", count: 1, level: 2 },
         ],
       },
       noop,
     );
     const combat = s.state.combat!;
-    expect(combat.combatants).toHaveLength(5); // Hero + 3 thugs + hound
+    expect(combat.combatants).toHaveLength(4); // Hero + 2 thugs + hound
     for (const c of combat.combatants) {
       expect(c.name).not.toMatch(/[\\"]/);
     }
@@ -168,14 +171,15 @@ describe("start_combat re-chamado (play-test 2026-07-11)", () => {
       s,
       "start_combat",
       {
+        difficulty: "extreme",
         enemies: [
-          { name: 'Scavenger Scavenger" (Thug)', count: 3, level: 2 },
+          { name: 'Scavenger Scavenger" (Thug)', count: 2, level: 2 },
           { name: "Scavenger Hound", count: 1, level: 1 },
         ],
       },
       noop,
     );
-    expect(s.state.combat!.combatants).toHaveLength(5);
+    expect(s.state.combat!.combatants).toHaveLength(4);
     expect(out.content).toContain("already active");
   });
 });

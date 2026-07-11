@@ -50,6 +50,151 @@ export function benchmark(level: number): Benchmark {
   return BENCHMARKS[idx]!;
 }
 
+/**
+ * GM Core encounter building, as DATA. The RAW tables assume a party of 4;
+ * the engine computes the budget for the REAL party (today: a solo player,
+ * where a single on-level creature is already an EXTREME encounter) and
+ * trims whatever the model declares beyond it.
+ */
+export type EncounterDifficulty = "trivial" | "low" | "moderate" | "severe" | "extreme";
+
+export const ENCOUNTER_DIFFICULTIES: readonly EncounterDifficulty[] = [
+  "trivial",
+  "low",
+  "moderate",
+  "severe",
+  "extreme",
+];
+
+// XP of one creature by (creature level - party level), delta -4 .. +4.
+const CREATURE_XP_BY_DELTA = [10, 15, 20, 30, 40, 60, 80, 120, 160];
+
+/**
+ * XP cost of a creature vs the party level. Below PL-4 → 0 (doesn't count);
+ * above PL+4 → null (forbidden at ANY difficulty — never enters play).
+ */
+export function creatureXp(creatureLevel: number, partyLevel: number): number | null {
+  const delta = creatureLevel - partyLevel;
+  if (delta < -4) return 0;
+  if (delta > 4) return null;
+  return CREATURE_XP_BY_DELTA[delta + 4]!;
+}
+
+// { base budget for a party of 4, adjustment per character more/fewer }.
+const ENCOUNTER_BUDGETS: Record<EncounterDifficulty, { base: number; adjust: number }> = {
+  trivial: { base: 40, adjust: 10 },
+  low: { base: 60, adjust: 15 },
+  moderate: { base: 80, adjust: 20 },
+  severe: { base: 120, adjust: 30 },
+  extreme: { base: 160, adjust: 40 },
+};
+
+/** XP budget for a difficulty and party size (party of 1 ⇒ trivial 10 .. extreme 40). */
+export function encounterBudget(difficulty: EncounterDifficulty, partySize: number): number {
+  const { base, adjust } = ENCOUNTER_BUDGETS[difficulty];
+  return Math.max(adjust, base + (partySize - 4) * adjust);
+}
+
+/** Lowest difficulty whose budget covers `totalXp` ("extreme" when none does) — audit label. */
+export function classifyEncounter(totalXp: number, partySize: number): EncounterDifficulty {
+  for (const d of ENCOUNTER_DIFFICULTIES) {
+    if (totalXp <= encounterBudget(d, partySize)) return d;
+  }
+  return "extreme";
+}
+
+/** Party size is COMPUTED (player + allies), never assumed — solo today, maybe not later. */
+export function partySizeOf(combatants: Combatant[]): number {
+  return Math.max(
+    1,
+    combatants.filter((c) => c.kind === "player" || c.kind === "ally").length,
+  );
+}
+
+export interface EnemySpec {
+  name: string;
+  level: number;
+  count: number;
+}
+
+export interface EncounterPlan {
+  accepted: EnemySpec[];
+  /** Above party level +4 — forbidden at any difficulty. */
+  droppedForbidden: EnemySpec[];
+  /** Legal creatures that didn't fit the XP budget. */
+  trimmedOver: EnemySpec[];
+  /** Set when the anti-empty rule replaced the only creature with a weaker one. */
+  downleveled?: { name: string; from: number; to: number };
+  totalXp: number;
+  budget: number;
+  requested: EncounterDifficulty;
+  classified: EncounterDifficulty;
+  /** True when everything the model declared entered play as declared. */
+  fits: boolean;
+}
+
+/**
+ * Fits the declared enemies into the XP budget, creature by creature in the
+ * order given. `existingXp` is 0 for a new combat, or the XP already on the
+ * field for reinforcements (defeated enemies INCLUDED — one encounter, one
+ * budget; that is what blocks the model from spawning endless waves).
+ */
+export function planEncounter(
+  specs: EnemySpec[],
+  existingXp: number,
+  opts: { partyLevel: number; partySize: number; difficulty: EncounterDifficulty },
+): EncounterPlan {
+  const budget = encounterBudget(opts.difficulty, opts.partySize);
+  const accepted: EnemySpec[] = [];
+  const droppedForbidden: EnemySpec[] = [];
+  const trimmedOver: EnemySpec[] = [];
+  let totalXp = existingXp;
+
+  for (const spec of specs) {
+    const xp = creatureXp(spec.level, opts.partyLevel);
+    if (xp === null) {
+      droppedForbidden.push({ ...spec });
+      continue;
+    }
+    let fit = 0;
+    for (let i = 0; i < spec.count; i++) {
+      if (totalXp + xp <= budget) {
+        totalXp += xp;
+        fit++;
+      }
+    }
+    if (fit > 0) accepted.push({ ...spec, count: fit });
+    if (fit < spec.count) trimmedOver.push({ ...spec, count: spec.count - fit });
+  }
+
+  // A narratively declared NEW combat must never start empty: down-level the
+  // first creature to the strongest level whose XP still fits the budget.
+  let downleveled: EncounterPlan["downleveled"];
+  if (accepted.length === 0 && existingXp === 0 && specs.length > 0) {
+    const first = specs[0]!;
+    let level = opts.partyLevel + 4;
+    while ((creatureXp(level, opts.partyLevel) ?? Infinity) > budget) level--;
+    downleveled = { name: first.name, from: first.level, to: level };
+    accepted.push({ name: first.name, level, count: 1 });
+    totalXp += creatureXp(level, opts.partyLevel)!;
+    // The replaced creature is no longer "cut" — drop one from its list.
+    const cutList = droppedForbidden[0]?.name === first.name ? droppedForbidden : trimmedOver;
+    if (cutList[0] && --cutList[0].count <= 0) cutList.shift();
+  }
+
+  return {
+    accepted,
+    droppedForbidden,
+    trimmedOver,
+    downleveled,
+    totalXp,
+    budget,
+    requested: opts.difficulty,
+    classified: classifyEncounter(totalXp, opts.partySize),
+    fits: droppedForbidden.length === 0 && trimmedOver.length === 0 && !downleveled,
+  };
+}
+
 /** MAP for the next Strike: 0 → -0, 1 → -5/-4 (agile), 2+ → -10/-8 (agile). */
 export function mapPenalty(progress: number, agile = false): number {
   if (progress <= 0) return 0;

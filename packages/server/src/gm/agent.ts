@@ -29,7 +29,10 @@ import {
   conditionValueIn,
   setValuedCondition,
   combatStatus,
+  creatureXp,
   effectiveAC,
+  ENCOUNTER_DIFFICULTIES,
+  encounterBudget,
   enemyCombatant,
   findCombatant,
   hasCombatantNamed,
@@ -37,10 +40,15 @@ import {
   livingEnemy,
   mapPenalty,
   passiveFeatBonus,
+  planEncounter,
   playerCombatant,
   playerOf,
+  partySizeOf,
   rollDice,
   tickEndOfRound,
+  type EncounterDifficulty,
+  type EncounterPlan,
+  type EnemySpec,
 } from "./combat.js";
 import { loadLore, loadWorld } from "./lore.js";
 import {
@@ -358,6 +366,12 @@ const TOOLS: ChatCompletionTool[] = [
               required: ["name"],
             },
           },
+          difficulty: {
+            type: "string",
+            enum: ["trivial", "low", "moderate", "severe", "extreme"],
+            description:
+              "Intended encounter difficulty (default 'moderate'). Use 'severe'/'extreme' ONLY for climactic boss moments. The engine enforces the PF2e XP budget for the REAL party size and trims anything over it — 'extreme' is the hard ceiling.",
+          },
         },
         required: ["enemies"],
       },
@@ -608,6 +622,35 @@ function enemyLevelFor(name: string): number {
   return DEFAULT_ENEMY_LEVEL;
 }
 
+/** Difficulty declared by the model; anything unrecognized falls back to "moderate". */
+function parseDifficulty(v: unknown): EncounterDifficulty {
+  const s = String(v ?? "").toLowerCase().trim();
+  return (ENCOUNTER_DIFFICULTIES as readonly string[]).includes(s)
+    ? (s as EncounterDifficulty)
+    : "moderate";
+}
+
+/** Budget-cut annotations for the mechanical summary (audit trail). */
+function budgetNotes(plan: EncounterPlan): string {
+  const parts: string[] = [];
+  if (plan.trimmedOver.length) {
+    const cut = plan.trimmedOver.map((s) => `${s.count}× ${s.name}`).join(", ");
+    parts.push(`[budget: dropped ${cut} — over ${plan.requested} ${plan.budget} XP for this party]`);
+  }
+  if (plan.droppedForbidden.length) {
+    const cut = plan.droppedForbidden
+      .map((s) => `${s.name} (level ${s.level} > party level +4)`)
+      .join(", ");
+    parts.push(`[forbidden: ${cut}]`);
+  }
+  if (plan.downleveled) {
+    parts.push(
+      `[budget: ${plan.downleveled.name} weakened from level ${plan.downleveled.from} to ${plan.downleveled.to} to fit]`,
+    );
+  }
+  return parts.length ? ` ${parts.join(" ")}` : "";
+}
+
 // Exportada para os testes unitários (use_item, guards) — o fluxo normal só a
 // chama via runRulesStage.
 export async function executeTool(
@@ -851,20 +894,29 @@ export async function executeTool(
     }
     case "start_combat": {
       const raw = Array.isArray(input.enemies) ? input.enemies : [];
-      const makeEnemies = (): Combatant[] => {
+      const specs: EnemySpec[] = [];
+      for (const e of raw as Record<string, unknown>[]) {
+        // Escape debris from the model's broken JSON (`Scavenger\" (Thug)`)
+        // must not leak into combatant names — it also breaks dedupe.
+        const eName =
+          String(e?.name ?? "Enemy")
+            .replace(/[\\"]/g, "")
+            .replace(/\s+/g, " ")
+            .trim() || "Enemy";
+        const rawCount = Number(e?.count ?? 1);
+        const count = Number.isFinite(rawCount) ? Math.max(1, Math.min(8, rawCount)) : 1;
+        const rawLevel = Number(e?.level);
+        const level =
+          e?.level != null && Number.isFinite(rawLevel) ? rawLevel : enemyLevelFor(eName);
+        specs.push({ name: eName, level, count });
+      }
+      const difficulty = parseDifficulty(input.difficulty);
+      const partyLevel = session.character.level;
+      const instantiate = (accepted: EnemySpec[]): Combatant[] => {
         const out: Combatant[] = [];
-        for (const e of raw as Record<string, unknown>[]) {
-          // Escape debris from the model's broken JSON (`Scavenger\" (Thug)`)
-          // must not leak into combatant names — it also breaks dedupe.
-          const eName =
-            String(e?.name ?? "Enemy")
-              .replace(/[\\"]/g, "")
-              .replace(/\s+/g, " ")
-              .trim() || "Enemy";
-          const count = Math.max(1, Math.min(8, Number(e?.count ?? 1)));
-          const level = e?.level != null ? Number(e.level) : enemyLevelFor(eName);
-          for (let i = 0; i < count; i++) {
-            out.push(enemyCombatant(count > 1 ? `${eName} ${i + 1}` : eName, level));
+        for (const s of accepted) {
+          for (let i = 0; i < s.count; i++) {
+            out.push(enemyCombatant(s.count > 1 ? `${s.name} ${i + 1}` : s.name, s.level));
           }
         }
         return out;
@@ -874,21 +926,35 @@ export async function executeTool(
       // Instead let genuinely new foes join as reinforcements.
       const existing = session.state.combat;
       if (existing?.active) {
-        const added: Combatant[] = [];
-        for (const foe of makeEnemies()) {
-          // Skip foes already in the fight (fuzzy match) so a re-issued
-          // start_combat with a slightly different name can't spawn a duplicate.
-          if (!hasCombatantNamed(existing, foe.name)) {
-            existing.combatants.push(foe);
-            added.push(foe);
-          }
+        // Dedupe FIRST (fuzzy) so a re-issued start_combat with a slightly
+        // different name can't spawn a duplicate NOR spend encounter budget.
+        const novel = specs.filter((s) => !hasCombatantNamed(existing, s.name));
+        const partySize = partySizeOf(existing.combatants);
+        // One encounter, one budget: DEFEATED enemies still count, so the
+        // model can't escalate the same fight in endless waves.
+        let existingXp = 0;
+        for (const c of existing.combatants) {
+          if (c.kind !== "enemy") continue;
+          existingXp += creatureXp(c.level ?? DEFAULT_ENEMY_LEVEL, partyLevel) ?? 0;
         }
+        const plan = planEncounter(novel, existingXp, { partyLevel, partySize, difficulty });
+        const added = instantiate(plan.accepted);
         if (added.length) {
+          existing.combatants.push(...added);
           existing.combatants.sort((a, b) => b.initiative - a.initiative);
           emit({ type: "state", state: session.state });
+          const names = added.map((c) => c.name).join(", ");
+          const note = `Encounter now: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`;
           return {
-            content: `Combat already active; reinforcements joined: ${added.map((c) => c.name).join(", ")}.`,
-            summaryLine: `- Reinforcements join the fight: ${added.map((c) => c.name).join(", ")}.`,
+            content: `Combat already active; reinforcements joined: ${names}. ${note}${budgetNotes(plan)}`,
+            summaryLine: `- Reinforcements join the fight: ${names}. ${note}${budgetNotes(plan)}`,
+          };
+        }
+        if (novel.length) {
+          // Everything new was cut by the budget — nothing joins.
+          return {
+            content: `Reinforcements would exceed the encounter budget (${plan.requested} ${plan.budget} XP for this party): none joined. Resolve the current foes.`,
+            summaryLine: "- Reinforcements held back by the encounter budget: none joined.",
           };
         }
         return {
@@ -897,7 +963,9 @@ export async function executeTool(
       }
 
       const player = playerCombatant(session.character, session.state.currentHp);
-      const combat = buildCombat([player, ...makeEnemies()]);
+      const partySize = partySizeOf([player]);
+      const plan = planEncounter(specs, 0, { partyLevel, partySize, difficulty });
+      const combat = buildCombat([player, ...instantiate(plan.accepted)]);
       // This message is the player's turn: give them a full set of actions.
       if (player.actionsRemaining < 3) player.actionsRemaining = 3;
       // Combate novo zera os limites de Frequency de período longo (1/hour...).
@@ -912,9 +980,12 @@ export async function executeTool(
       const passiveNote = passive.total
         ? ` [+${passive.total} initiative from ${passive.sources.join(", ")}]`
         : "";
+      const note = specs.length
+        ? ` Encounter: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`
+        : "";
       return {
-        content: `Combat started. Initiative order: ${order}${passiveNote}`,
-        summaryLine: `- Combat begins (round 1). Initiative: ${order}.${passiveNote}`,
+        content: `Combat started.${note} Initiative order: ${order}${passiveNote}${budgetNotes(plan)}`,
+        summaryLine: `- Combat begins (round 1).${note} Initiative: ${order}.${passiveNote}${budgetNotes(plan)}`,
       };
     }
     case "end_turn": {
