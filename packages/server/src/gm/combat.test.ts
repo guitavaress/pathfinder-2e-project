@@ -354,6 +354,18 @@ describe("hasCombatantNamed", () => {
     expect(hasCombatantNamed(combat, "Clockwork Scout")).toBe(false);
     expect(hasCombatantNamed(combat, "")).toBe(false);
   });
+
+  it("variantes de escape quebrado do modelo casam (play-test 2026-07-11)", () => {
+    // O 12B nomeou `Scavenger\" (Thug)` num turno e `Scavenger" (Thug)` no
+    // seguinte — o dedupe deixou passar e o encontro dobrou de tamanho.
+    const c = buildCombat([
+      mkCombatant({ name: 'Scavenger Scavenger\\" (Thug) 1', kind: "enemy" }),
+    ]);
+    expect(hasCombatantNamed(c, 'Scavenger Scavenger" (Thug) 1')).toBe(true);
+    expect(hasCombatantNamed(c, "Scavenger Scavenger (Thug) 1")).toBe(true);
+    // Dígito diferente continua sendo OUTRO combatente.
+    expect(hasCombatantNamed(c, 'Scavenger Scavenger" (Thug) 2')).toBe(false);
+  });
 });
 
 describe("benchmark", () => {

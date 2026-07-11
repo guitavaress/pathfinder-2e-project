@@ -854,7 +854,13 @@ export async function executeTool(
       const makeEnemies = (): Combatant[] => {
         const out: Combatant[] = [];
         for (const e of raw as Record<string, unknown>[]) {
-          const eName = String(e?.name ?? "Enemy");
+          // Escape debris from the model's broken JSON (`Scavenger\" (Thug)`)
+          // must not leak into combatant names — it also breaks dedupe.
+          const eName =
+            String(e?.name ?? "Enemy")
+              .replace(/[\\"]/g, "")
+              .replace(/\s+/g, " ")
+              .trim() || "Enemy";
           const count = Math.max(1, Math.min(8, Number(e?.count ?? 1)));
           const level = e?.level != null ? Number(e.level) : enemyLevelFor(eName);
           for (let i = 0; i < count; i++) {

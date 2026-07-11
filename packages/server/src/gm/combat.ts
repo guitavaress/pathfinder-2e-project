@@ -225,11 +225,17 @@ export function clampActionCost(v: unknown, fallback = 1): number {
   return Math.min(3, Math.max(fallback === 0 ? 0 : 1, Math.round(n)));
 }
 
-/** Normalizes a name for fuzzy matching: lowercase, no parenthetical, collapsed spaces. */
+/**
+ * Normalizes a name for fuzzy matching: lowercase, no parenthetical, no
+ * punctuation (a model's broken JSON escaping produces variants like
+ * `Scavenger\" (Thug)` vs `Scavenger" (Thug)` that must match), collapsed
+ * spaces. Digits are kept — "Thug 1" and "Thug 2" are different combatants.
+ */
 export function normalizeName(name: string): string {
   return name
     .toLowerCase()
     .replace(/\([^)]*\)/g, "")
+    .replace(/[^\p{L}\p{N} ]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

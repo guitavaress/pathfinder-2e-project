@@ -142,6 +142,44 @@ describe.skipIf(!hasGenerated)("use_item (requer generated/)", () => {
   });
 });
 
+describe("start_combat re-chamado (play-test 2026-07-11)", () => {
+  it("nomes saem sanitizados e o 2º start_combat com escape diferente NÃO duplica", async () => {
+    const s = mkSession([]);
+    await executeTool(
+      s,
+      "start_combat",
+      {
+        enemies: [
+          { name: 'Scavenger Scavenger\\" (Thug)', count: 3, level: 1 },
+          { name: "Scavenger Hound", count: 1, level: 2 },
+        ],
+      },
+      noop,
+    );
+    const combat = s.state.combat!;
+    expect(combat.combatants).toHaveLength(5); // Hero + 3 thugs + hound
+    for (const c of combat.combatants) {
+      expect(c.name).not.toMatch(/[\\"]/);
+    }
+
+    // O modelo re-declara o MESMO encontro com escape/level diferentes:
+    // tudo deve ser reconhecido como duplicata — nenhum "reforço" entra.
+    const out = await executeTool(
+      s,
+      "start_combat",
+      {
+        enemies: [
+          { name: 'Scavenger Scavenger" (Thug)', count: 3, level: 2 },
+          { name: "Scavenger Hound", count: 1, level: 1 },
+        ],
+      },
+      noop,
+    );
+    expect(s.state.combat!.combatants).toHaveLength(5);
+    expect(out.content).toContain("already active");
+  });
+});
+
 describe("update_state com target fantasma (combate fechado)", () => {
   it("hpDelta mirado num inimigo pós-combate NÃO drena o jogador", async () => {
     // Caso real da bateria 2026-07-06 (Dual-Handed Assault): o golpe matou o
