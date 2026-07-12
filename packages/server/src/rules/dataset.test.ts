@@ -4,10 +4,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   activityFrequency,
+  creatureRecord,
   itemRecord,
   itemTraits,
   namedActivity,
   officialConditions,
+  spellRecord,
 } from "./dataset.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -86,6 +88,97 @@ describe.skipIf(!hasGenerated)("dataset (requer generated/)", () => {
       expect(set.has("off-guard")).toBe(true);
       expect(set.has("dying")).toBe(true);
       expect(set.has("companion: cat")).toBe(false);
+    });
+  });
+
+  describe("creatureRecord (bestiary com statblock)", () => {
+    it("Giant Rat: statblock real completo", () => {
+      const rec = creatureRecord("Giant Rat");
+      expect(rec?.name).toBe("Giant Rat");
+      expect(rec?.level).toBe(-1);
+      const sb = rec?.statblock;
+      expect(sb).toMatchObject({ ac: 15, hp: 8, perception: 5 });
+      expect(sb?.saves).toEqual({ fortitude: 6, reflex: 7, will: 3 });
+      const jaws = sb?.attacks[0];
+      expect(jaws?.name).toBe("Jaws");
+      expect(jaws?.bonus).toBe(7);
+      expect(jaws?.damage).toEqual([{ formula: "1d6+1", type: "piercing" }]);
+      expect(jaws?.traits).toContain("agile");
+      expect(jaws?.traits).toContain("finesse");
+    });
+
+    it("Goblin Warrior: 2 ataques (ranged marcado) e reaction na abilitiesList", () => {
+      const sb = creatureRecord("Goblin Warrior")?.statblock;
+      const names = sb?.attacks.map((a) => a.name);
+      expect(names).toEqual(["Dogslicer", "Shortbow"]);
+      expect(sb?.attacks[0]?.rangeIncrement).toBeUndefined();
+      expect(sb?.attacks[1]?.rangeIncrement).toBe(60);
+      // Contrato de dados do PR3 (reactions): a habilidade vem estruturada.
+      const scuttle = sb?.abilitiesList.find((a) => a.name === "Goblin Scuttle");
+      expect(scuttle?.actionType).toBe("reaction");
+    });
+
+    it("Goblin War Chanter: spellcasting estruturado (contrato do PR4)", () => {
+      const casting = creatureRecord("Goblin War Chanter")?.statblock?.spellcasting;
+      expect(casting?.[0]?.dc).toBe(17);
+      expect(casting?.[0]?.tradition).toBe("occult");
+      expect(casting?.[0]?.spells.length).toBeGreaterThan(0);
+    });
+
+    it("normaliza sufixo de instância, plural e parêntese", () => {
+      expect(creatureRecord("Goblin Warrior 2")?.name).toBe("Goblin Warrior");
+      expect(creatureRecord("Giant Rats")?.name).toBe("Giant Rat");
+      expect(creatureRecord("Rat Swarm (Large)")?.name).toBe("Rat Swarm");
+    });
+
+    it("nome decorado resolve pelo match mais específico contido na query", () => {
+      expect(creatureRecord("elite Goblin Warrior")?.name).toBe("Goblin Warrior");
+    });
+
+    it("deslize morfológico do modelo faz ponte (Skeleton → Skeletal Champion)", () => {
+      // Caso real da bateria 2026-07-12: o 12B declarou "Skeleton Champion".
+      expect(creatureRecord("Skeleton Champion")?.name).toBe("Skeletal Champion");
+      // A ponte exige prefixo ≥6 — typos curtos NÃO ligam.
+      expect(creatureRecord("Goblin Warier")).toBeNull();
+    });
+
+    it("genérico NUNCA liga a um NPC específico nem cruza categoria", () => {
+      // "Thug" não pode virar "Scarlet Triad Thug" (level 7).
+      expect(creatureRecord("Thug")).toBeNull();
+      // Spell homônimo jamais vira statblock de inimigo.
+      expect(creatureRecord("Fireball")).toBeNull();
+      expect(creatureRecord("zzz-not-a-creature")).toBeNull();
+    });
+  });
+
+  describe("spellRecord (magias com mecânica estruturada)", () => {
+    it("Fireball: save reflex basic, 6d6 fire, heighten +2d6, área", () => {
+      const s = spellRecord("Fireball")?.spell;
+      expect(s?.rank).toBe(3);
+      expect(s?.cantrip).toBe(false);
+      expect(s?.castActions).toBe("2");
+      expect(s?.defense).toEqual({ save: "reflex", basic: true });
+      expect(s?.damage).toEqual([{ formula: "6d6", type: "fire", kinds: ["damage"] }]);
+      expect(s?.heighten).toEqual({ interval: 1, add: ["2d6"] });
+      expect(s?.area).toBe("20-foot burst");
+    });
+
+    it("Ignition: cantrip de ataque com heighten +1d4", () => {
+      const s = spellRecord("Ignition")?.spell;
+      expect(s?.cantrip).toBe(true);
+      expect(s?.attack).toBe(true);
+      expect(s?.damage[0]?.formula).toBe("2d4");
+      expect(s?.heighten).toEqual({ interval: 1, add: ["1d4"] });
+    });
+
+    it("Heal: kinds distingue cura de dano", () => {
+      const s = spellRecord("Heal")?.spell;
+      expect(s?.damage[0]?.kinds).toContain("healing");
+    });
+
+    it("nome desconhecido/categoria errada → null", () => {
+      expect(spellRecord("Giant Rat")).toBeNull();
+      expect(spellRecord("zzz-not-a-spell")).toBeNull();
     });
   });
 });

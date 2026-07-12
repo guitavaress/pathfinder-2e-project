@@ -9,13 +9,16 @@ import { isValidDc, rollCheck } from "../dice/check.js";
 import {
   activityFrequency,
   activityRequirement,
+  creatureRecord,
   itemRecord,
   itemTraits,
   lookupLocalRule,
   multiActionCost,
   namedActivity,
   officialConditions,
+  spellRecord,
   type RuleRecord,
+  type SpellMechanics,
 } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
 import {
@@ -45,10 +48,13 @@ import {
   playerOf,
   partySizeOf,
   rollDice,
+  strikeProfileFrom,
   tickEndOfRound,
+  tickPersistentDamage,
   type EncounterDifficulty,
   type EncounterPlan,
   type EnemySpec,
+  type StrikeProfile,
 } from "./combat.js";
 import { loadLore, loadWorld } from "./lore.js";
 import {
@@ -102,6 +108,9 @@ const turnFrequencyUsed = new WeakMap<Session, Map<string, number>>();
  * quando um combate novo começa.
  */
 const combatFrequencyUsed = new WeakMap<Session, Map<string, number>>();
+/** Inimigos (por id) que já conjuraram neste combate — casters gastam a melhor
+ *  magia UMA vez por luta (política determinística; o 12B nunca decide). */
+const combatEnemyCasts = new WeakMap<Session, Set<string>>();
 
 /** Store de frequency para um `per` do dataset (null = engine não julga). */
 function frequencyStore(session: Session, per: string): Map<string, number> | null {
@@ -343,6 +352,58 @@ const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "rest",
+      description:
+        "Rests to recover, with the REAL PF2e rules (the engine computes the healing — NEVER invent HP with update_state). kind 'overnight' = a full night's sleep: heals CON modifier × level HP, restores ALL spell slots and focus points, removes fatigued and reduces drained/doomed by 1. kind 'treat_wounds' = 10 minutes of first aid: Medicine check (requires trained Medicine AND a healer's toolkit in the Equipment) healing 2d8 HP on a success, 4d8 on a critical. ALWAYS call this when the player rests, sleeps, camps, treats wounds, or asks to recover HP outside combat.",
+      parameters: {
+        type: "object",
+        properties: {
+          kind: {
+            type: "string",
+            enum: ["overnight", "treat_wounds"],
+            description:
+              "'overnight' for sleeping/camping through the night; 'treat_wounds' for a 10-minute Medicine treatment.",
+          },
+          reason: {
+            type: "string",
+            description: "What the character does to rest.",
+          },
+        },
+        required: ["kind"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cast_spell",
+      description:
+        "Casts a spell from the character's sheet. The ENGINE validates the spell is known, spends the real spell slot (or focus point; cantrips are free and auto-heightened), charges the cast actions, and resolves the REAL effect from the rules data: spell attack vs the target's AC, or the target's ACTUAL save vs the character's spell DC, with structured damage/healing (heightened by rank). ALWAYS use this tool for spells — never roll_check/spend_actions/update_state.",
+      parameters: {
+        type: "object",
+        properties: {
+          spell: {
+            type: "string",
+            description: "The spell's name as on the sheet, e.g. 'Fireball', 'Ignition'.",
+          },
+          target: {
+            type: "string",
+            description:
+              "Offensive single-target spells: the combatant's id or name. Area spells (Fireball) may omit it to hit every enemy.",
+          },
+          rank: {
+            type: "number",
+            description:
+              "Slot rank to cast at, for heightening (spontaneous casters). Defaults to the spell's own rank. Ignored for cantrips (auto-heightened).",
+          },
+        },
+        required: ["spell"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "start_combat",
       description:
         "Begins a combat encounter. Call this ONCE when a fight starts. The engine adds the player, rolls initiative for everyone, and assigns real AC/HP by creature level. After this, resolve turns with roll_check (attacks), roll_damage, and end_turn.",
@@ -355,11 +416,15 @@ const TOOLS: ChatCompletionTool[] = [
             items: {
               type: "object",
               properties: {
-                name: { type: "string", description: "Creature name, e.g. 'Clockwork Sentinel'." },
+                name: {
+                  type: "string",
+                  description:
+                    "Creature name EXACTLY as it appears in the scene/player's message (e.g. the scene says 'goblin war chanter' → pass 'Goblin War Chanter'; NEVER substitute a similar creature you know, like 'Goblin Warrior'). Real PF2e names get the OFFICIAL statblock (AC/HP/saves/real attacks) and the official level overrides your estimate; invented names get generic level-based stats.",
+                },
                 level: {
                   type: "number",
                   description:
-                    "Creature level — ALWAYS estimate and pass this, it drives AC/HP/attack. Guide: mundane townsperson/clerk/merchant = -1 to 0; trained guard/thug = 1-2; veteran/soldier = 3-4; elite/leader = 5-7; boss/monster = 8+. If omitted, the engine assumes a weak commoner (level 0).",
+                    "Creature level — matters only for creatures NOT in the bestiary (unnamed thugs, custom NPCs); official creatures use their real level. Guide: mundane townsperson/clerk/merchant = -1 to 0; trained guard/thug = 1-2; veteran/soldier = 3-4; elite/leader = 5-7; boss/monster = 8+. If omitted, the engine assumes a weak commoner (level 0).",
                 },
                 count: { type: "number", description: "How many of this creature (default 1)." },
               },
@@ -504,7 +569,7 @@ export function findSheetWeapon(c: Character, ref: string): Weapon | null {
   );
 }
 
-/** Attack bonus for a Strike: the player's weapon bonus, or the enemy's benchmark. */
+/** Attack bonus for a Strike: the player's weapon bonus, or the enemy's real/benchmark attack. */
 function combatAttackModifier(
   session: Session,
   attacker: Combatant,
@@ -515,7 +580,7 @@ function combatAttackModifier(
     if (mod !== null) return mod;
     return session.character.weapons[0]?.attack ?? session.character.perception;
   }
-  return benchmark(attacker.level ?? 0).attack;
+  return strikeProfileFor(attacker).bonus;
 }
 
 const DAMAGE_TYPE_NAMES: Record<string, string> = {
@@ -570,9 +635,16 @@ function rollDamage(
     }
   }
 
-  const b = benchmark(attacker?.level ?? 0).damage;
-  const type = input.damageType ? String(input.damageType) : "damage";
-  return { amount: dbl(rollDice(b.dice, b.faces) + b.bonus), type };
+  // Inimigo (ou fallback): statblock real quando houver, senão benchmark —
+  // strikeProfileFor decide. Soma todas as entradas de dano do ataque.
+  const profile = attacker
+    ? strikeProfileFor(attacker)
+    : strikeProfileFrom(undefined, 0);
+  const amount = profile.damage.reduce((sum, d) => sum + rollFormula(d.formula), 0);
+  const type = input.damageType
+    ? String(input.damageType)
+    : (profile.damage[0]?.type ?? "damage");
+  return { amount: dbl(amount), type };
 }
 
 /** Title-cases a weapon/skill name for the summary ("dagger" → "Dagger"). */
@@ -615,11 +687,84 @@ function sneakAttackDice(session: Session): number {
  */
 const DEFAULT_ENEMY_LEVEL = 0;
 
-/** Resolves an enemy's level from the bestiary by name, else a low default. */
-function enemyLevelFor(name: string): number {
-  const rec = lookupLocalRule(name);
-  if (rec && typeof rec.level === "number") return rec.level;
-  return DEFAULT_ENEMY_LEVEL;
+/**
+ * Resolves a creature by name against the bestiary (statblock records only —
+ * a same-named feat/spell can never stat an enemy). Returns the record plus
+ * the level to use (record's official level, else the low default).
+ */
+function resolveCreature(name: string): { record: RuleRecord | null; level: number } {
+  const record = creatureRecord(name);
+  if (record && typeof record.level === "number") {
+    return { record, level: record.level };
+  }
+  return { record: null, level: DEFAULT_ENEMY_LEVEL };
+}
+
+/**
+ * The strike an enemy combatant uses, re-resolved from the bestiary via its
+ * stable `sourceName` (real attack name/bonus/damage/agile), else benchmark.
+ */
+function strikeProfileFor(c: Combatant): StrikeProfile {
+  const rec = c.sourceName ? creatureRecord(c.sourceName) : null;
+  return strikeProfileFrom(rec?.statblock, c.level ?? 0);
+}
+
+/**
+ * Custo em ações de uma conjuração a partir do time.value cru do dataset:
+ * "2" → 2; "1 to 3" → 2 (meio-termo do Heal); "reaction"/"free" → 0;
+ * "1 minute"+ → 3 (turno inteiro; fora de combate é só narrativa).
+ */
+function castActionCost(raw: string | undefined): number {
+  const s = (raw ?? "").toLowerCase().trim();
+  if (!s) return 2;
+  if (/reaction|free/.test(s)) return 0;
+  if (/minute|hour|day/.test(s)) return 3;
+  const m = /^(\d)/.exec(s);
+  if (m) return Math.max(1, Math.min(3, Number(m[1])));
+  return 2;
+}
+
+/**
+ * Rola o dano/cura de uma magia no rank de conjuração: fórmula base + os
+ * passos de heightening ("+2d6 por rank" do Fireball, "+1d4" do cantrip).
+ */
+function rollSpellDamage(
+  mech: SpellMechanics,
+  castRank: number,
+): { total: number; type: string } {
+  const steps = mech.heighten
+    ? Math.max(0, Math.floor((castRank - mech.rank) / mech.heighten.interval))
+    : 0;
+  let total = 0;
+  let type = "";
+  mech.damage.forEach((d, i) => {
+    total += rollFormula(d.formula);
+    const add = mech.heighten?.add[i];
+    if (add) for (let s = 0; s < steps; s++) total += rollFormula(add);
+    if (!type && d.type && d.type !== "untyped") type = d.type;
+  });
+  return { total, type };
+}
+
+/** Devolve o slot/focus cobrado quando a conjuração acabou rejeitada. */
+function refundSpellResource(
+  session: Session,
+  isCantrip: boolean,
+  isFocus: boolean,
+  castRank: number,
+): void {
+  if (isCantrip) return;
+  if (isFocus) {
+    const used = session.state.focusPointsUsed ?? 0;
+    session.state.focusPointsUsed = Math.max(0, used - 1);
+    return;
+  }
+  const rankKey = String(castRank);
+  const used = session.state.spellSlotsUsed?.[rankKey] ?? 0;
+  session.state.spellSlotsUsed = {
+    ...(session.state.spellSlotsUsed ?? {}),
+    [rankKey]: Math.max(0, used - 1),
+  };
 }
 
 /** Difficulty declared by the model; anything unrecognized falls back to "moderate". */
@@ -892,9 +1037,368 @@ export async function executeTool(
         summaryLine: `- ${checkReason(result.label)}: ${DEGREE_EN[result.degree]}.`,
       };
     }
+    case "rest": {
+      const kind = String(input.kind ?? "").toLowerCase().trim();
+      const combat = session.state.combat;
+      if (combat?.active) {
+        return {
+          content:
+            "ILLEGAL: cannot rest during combat. Resolve or leave the fight first (end_combat when the story moves past it).",
+          isError: true,
+        };
+      }
+      const c = session.character;
+
+      if (kind === "overnight") {
+        // RAW: descanso noturno cura CON (mín. 1) × nível; prepara magias de
+        // novo (slots/focus); remove fatigued; drained/doomed caem 1 por dia.
+        const conMod = c.abilityModifiers.con;
+        const heal = Math.max(1, conMod) * c.level;
+        const before = session.state.currentHp;
+        session.state.currentHp = Math.min(c.maxHp, before + heal);
+        session.state.spellSlotsUsed = undefined;
+        session.state.focusPointsUsed = undefined;
+        let conds = session.state.conditions.filter((x) => !/^fatigued$/i.test(x));
+        const drained = conditionValueIn(conds, "drained");
+        if (drained > 0) conds = setValuedCondition(conds, "drained", drained - 1);
+        const doomed = conditionValueIn(conds, "doomed");
+        if (doomed > 0) conds = setValuedCondition(conds, "doomed", doomed - 1);
+        session.state.conditions = conds;
+        emit({ type: "state", state: session.state });
+        const gained = session.state.currentHp - before;
+        const slotsNote = c.spellcasting.length ? " Spell slots and focus points restored." : "";
+        return {
+          content: `Overnight rest (8h): healed ${gained} HP (CON ${conMod >= 0 ? "+" : ""}${conMod} × level ${c.level}): ${before}→${session.state.currentHp}/${c.maxHp}.${slotsNote} Fatigued removed; drained/doomed reduced by 1. A full night passes in the story.`,
+          summaryLine: `- A full night's rest: ${session.character.name} recovers ${gained} HP (${before}→${session.state.currentHp}) and wakes with renewed strength. The night passes.`,
+        };
+      }
+
+      if (kind === "treat_wounds") {
+        // RAW: Medicine treinado + healer's toolkit; DC 15 → 2d8 (crit 4d8),
+        // crit falha causa 1d8. Sem relógio de jogo, o custo de tempo (10 min
+        // + 1h de imunidade) vai para a narração.
+        const med = c.skills["medicine"];
+        if (!med || med.rank < 1) {
+          return {
+            content: `REJECTED: Treat Wounds requires TRAINED Medicine — ${c.name} is untrained. No HP recovered. Overnight rest ('overnight') is the alternative.`,
+            isError: true,
+            summaryLine: `- Treat Wounds: FAILED — ${c.name} lacks the medical training.`,
+          };
+        }
+        const toolkit = c.equipment.some((e) => /healer'?s (toolkit|kit|tools)/i.test(e.name));
+        if (!toolkit) {
+          return {
+            content: `REJECTED: Treat Wounds requires a healer's toolkit and there is none in the Equipment. No HP recovered. Overnight rest ('overnight') is the alternative.`,
+            isError: true,
+            summaryLine: `- Treat Wounds: FAILED — no healer's toolkit in the pack.`,
+          };
+        }
+        const result = rollCheck(`Treat Wounds: Medicine check (DC 15)`, med.modifier, 15);
+        emit({ type: "check", result });
+        const before = session.state.currentHp;
+        let note: string;
+        if (result.degree === "criticalSuccess") {
+          const heal = rollDice(4, 8);
+          session.state.currentHp = Math.min(c.maxHp, before + heal);
+          note = `expert work: recovers ${session.state.currentHp - before} HP (${before}→${session.state.currentHp})`;
+        } else if (result.degree === "success") {
+          const heal = rollDice(2, 8);
+          session.state.currentHp = Math.min(c.maxHp, before + heal);
+          note = `recovers ${session.state.currentHp - before} HP (${before}→${session.state.currentHp})`;
+        } else if (result.degree === "criticalFailure") {
+          const dmg = rollDice(1, 8);
+          session.state.currentHp = Math.max(0, before - dmg);
+          note = `botched treatment: takes ${dmg} damage (${before}→${session.state.currentHp})`;
+        } else {
+          note = "the wounds resist treatment; no HP recovered";
+        }
+        emit({ type: "state", state: session.state });
+        return {
+          content: `Treat Wounds (${DEGREE_EN[result.degree]}): ${note}. Ten minutes pass; these wounds can only be treated again after an hour of story time.`,
+          summaryLine: `- Treat Wounds (ten careful minutes): ${note}.`,
+        };
+      }
+
+      return {
+        content: `Unknown rest kind "${kind}". Use 'overnight' (night's sleep) or 'treat_wounds' (10-minute Medicine treatment).`,
+        isError: true,
+      };
+    }
+    case "cast_spell": {
+      const spellInput = String(input.spell ?? "").trim();
+      if (!spellInput) {
+        return { content: "Missing 'spell': pass the spell's name.", isError: true };
+      }
+      const c = session.character;
+
+      // Grounding: a magia PRECISA estar na ficha (nome exato → contido).
+      const key = spellInput.toLowerCase();
+      let entry = c.spellcasting.find((e) =>
+        e.spells.some((s) => s.toLowerCase() === key),
+      );
+      let sheetName = entry?.spells.find((s) => s.toLowerCase() === key);
+      if (!entry) {
+        for (const e of c.spellcasting) {
+          const m = e.spells.find(
+            (s) => s.toLowerCase().includes(key) || key.includes(s.toLowerCase()),
+          );
+          if (m) {
+            entry = e;
+            sheetName = m;
+            break;
+          }
+        }
+      }
+      if (!entry || !sheetName) {
+        const known =
+          c.spellcasting.flatMap((e) => e.spells).join(", ") || "none — not a caster";
+        return {
+          content: `REJECTED: "${spellInput}" is not on the character's sheet (known spells: ${known}). Nothing is cast and nothing is spent.`,
+          isError: true,
+          summaryLine: `- Cast ${spellInput}: FAILED — not a spell they know.`,
+        };
+      }
+
+      const mech = spellRecord(sheetName)?.spell;
+      // Rank na ficha (spellsByRank) manda; senão o rank base do dataset.
+      let sheetRank: number | null = null;
+      if (entry.spellsByRank) {
+        for (const [rank, list] of Object.entries(entry.spellsByRank)) {
+          if (list.some((s) => s.toLowerCase() === sheetName!.toLowerCase())) {
+            sheetRank = Number(rank);
+            break;
+          }
+        }
+      }
+      const baseRank = mech?.rank ?? sheetRank ?? 1;
+      const isCantrip = mech?.cantrip === true || sheetRank === 0;
+      const isFocus = entry.type.toLowerCase().includes("focus");
+
+      // Cantrips auto-heighten para metade do nível (arredondado para cima).
+      let castRank = isCantrip ? Math.ceil(c.level / 2) : baseRank;
+      if (!isCantrip && input.rank != null && Number.isFinite(Number(input.rank))) {
+        castRank = Math.max(baseRank, Math.min(10, Math.round(Number(input.rank))));
+      }
+
+      // Slot/focus: a engine cobra o recurso REAL (sem dado de slots na ficha
+      // antiga, cobra às cegas mas não bloqueia — ausência honesta).
+      let resourceNote = "";
+      if (isCantrip) {
+        resourceNote = " (cantrip, no slot)";
+      } else if (isFocus) {
+        const max = c.focusPoints ?? 0;
+        const used = session.state.focusPointsUsed ?? 0;
+        if (max > 0 && used >= max) {
+          return {
+            content: `REJECTED: no Focus Points left (${used}/${max} spent — Refocus restores 1). The spell is NOT cast.`,
+            isError: true,
+            summaryLine: `- Cast ${sheetName}: FAILED — no focus left.`,
+          };
+        }
+        session.state.focusPointsUsed = used + 1;
+        resourceNote = max > 0 ? ` (focus ${used + 1}/${max})` : " (focus)";
+      } else {
+        const rankKey = String(castRank);
+        const slotsMax = entry.slots?.[rankKey];
+        const used = session.state.spellSlotsUsed?.[rankKey] ?? 0;
+        if (slotsMax != null && used >= slotsMax) {
+          const left = Object.entries(entry.slots ?? {})
+            .map(([r, max]) => {
+              const u = session.state.spellSlotsUsed?.[r] ?? 0;
+              return max - u > 0 ? `rank ${r}: ${max - u}` : "";
+            })
+            .filter(Boolean)
+            .join(", ");
+          return {
+            content: `REJECTED: no rank-${castRank} spell slots left (${used}/${slotsMax} spent today). Slots remaining: ${left || "none"}. The spell is NOT cast.`,
+            isError: true,
+            summaryLine: `- Cast ${sheetName}: FAILED — no rank-${castRank} slots left.`,
+          };
+        }
+        session.state.spellSlotsUsed = {
+          ...(session.state.spellSlotsUsed ?? {}),
+          [rankKey]: used + 1,
+        };
+        resourceNote =
+          slotsMax != null
+            ? ` (slot ${used + 1}/${slotsMax} rank ${castRank})`
+            : ` (rank ${castRank} slot)`;
+      }
+
+      // Custo de ações em combate (fora de combate não conta).
+      const combat = session.state.combat;
+      const you = combat?.active ? playerOf(combat) : null;
+      const inCombat = !!you && !you.defeated;
+      const cost = castActionCost(mech?.castActions);
+      if (inCombat && you!.actionsRemaining < cost) {
+        // Recurso NÃO pode ficar cobrado numa conjuração ilegal — devolve.
+        refundSpellResource(session, isCantrip, isFocus, castRank);
+        return {
+          content: `ILLEGAL: casting ${sheetName} costs ${cost} action(s) but the player has only ${you!.actionsRemaining} left this turn. It does NOT happen (the slot was not spent).`,
+          isError: true,
+          summaryLine: `- Cast ${sheetName}: NOT done — costs ${cost}, only ${you!.actionsRemaining} action(s) left.`,
+        };
+      }
+      if (inCombat) you!.actionsRemaining -= cost;
+
+      const castLabel = `${sheetName}${castRank > baseRank || isCantrip ? ` (rank ${castRank})` : ""}`;
+
+      // Sem mecânica estruturada: gasto real + efeito narrado (utility spells).
+      if (!mech || (mech.damage.length === 0 && !mech.attack && !mech.defense)) {
+        emit({ type: "state", state: session.state });
+        return {
+          content: `${sheetName} is cast${resourceNote}. No structured combat effect — narrate its utility effect faithfully (text: ${spellRecord(sheetName)?.text.slice(0, 300) ?? "see rules"}).`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}.`,
+        };
+      }
+
+      const parts: string[] = [];
+
+      // CURA (kinds inclui "healing") sem alvo inimigo → cura o personagem.
+      const isHealing = mech.damage.some((d) => d.kinds.includes("healing"));
+      const targetRef = String(input.target ?? "").trim();
+      const enemyTarget =
+        inCombat && targetRef ? findCombatant(combat!, targetRef) : null;
+      if (isHealing && (!enemyTarget || enemyTarget.kind !== "enemy")) {
+        const amount = rollSpellDamage(mech, castRank);
+        const before = session.state.currentHp;
+        session.state.currentHp = Math.min(c.maxHp, before + amount.total);
+        if (you) you.currentHp = session.state.currentHp;
+        emit({ type: "state", state: session.state });
+        return {
+          content: `${sheetName} heals ${amount.total} HP${resourceNote}: ${before}→${session.state.currentHp}/${c.maxHp}.`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}: heals ${amount.total} (${before}→${session.state.currentHp} HP).`,
+        };
+      }
+
+      if (!inCombat) {
+        emit({ type: "state", state: session.state });
+        return {
+          content: `${sheetName} is cast${resourceNote} (no combat active — narrate the effect).`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}.`,
+        };
+      }
+
+      // ATAQUE de magia: rola contra a AC real do alvo, com MAP (é um ataque).
+      if (mech.attack) {
+        const target = enemyTarget;
+        if (!target || target.kind !== "enemy" || target.defeated) {
+          refundSpellResource(session, isCantrip, isFocus, castRank);
+          if (you) you.actionsRemaining += cost;
+          return {
+            content: `Missing/invalid 'target' for the attack spell ${sheetName} (nothing was spent). Pass the enemy's id or name.`,
+            isError: true,
+          };
+        }
+        const map = mapPenalty(you!.mapProgress);
+        const ac = effectiveAC(target);
+        const result = rollCheck(
+          `${sheetName} spell attack: ${c.name} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`,
+          (entry.attack ?? 0) + map,
+          ac,
+        );
+        you!.mapProgress += 1;
+        const crit = result.degree === "criticalSuccess";
+        const hit = crit || result.degree === "success";
+        let dmgNote = "";
+        if (hit) {
+          const dmg = rollSpellDamage(mech, castRank);
+          const amount = crit ? dmg.total * 2 : dmg.total;
+          const before = target.currentHp;
+          applyDamage(target, amount);
+          dmgNote = ` for ${amount} ${dmg.type || "damage"}; ${target.name} ${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""}`;
+        }
+        result.attack = {
+          attacker: c.name,
+          target: target.name,
+          attackerKind: "player",
+          outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
+          damage: hit ? null : null,
+          damageType: mech.damage[0]?.type ?? null,
+        };
+        emit({ type: "check", result });
+        parts.push(
+          `${crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS"}${dmgNote}`,
+        );
+      } else if (mech.defense?.save) {
+        // SAVE: cada alvo rola o save REAL (bestiary) contra o spell DC.
+        if (entry.dc == null) {
+          refundSpellResource(session, isCantrip, isFocus, castRank);
+          if (you) you.actionsRemaining += cost;
+          return {
+            content: `REJECTED: the sheet has no spell DC for ${entry.name} — cannot resolve ${sheetName} (nothing was spent).`,
+            isError: true,
+          };
+        }
+        const targets =
+          enemyTarget && enemyTarget.kind === "enemy" && !enemyTarget.defeated
+            ? [enemyTarget]
+            : mech.area
+              ? combat!.combatants.filter((x) => x.kind === "enemy" && !x.defeated)
+              : [];
+        if (targets.length === 0) {
+          refundSpellResource(session, isCantrip, isFocus, castRank);
+          if (you) you.actionsRemaining += cost;
+          return {
+            content: `Missing/invalid 'target' for ${sheetName} (nothing was spent). Pass the enemy's id or name${mech.area ? ", or none to hit every enemy in the area" : ""}.`,
+            isError: true,
+          };
+        }
+        const saveKey = mech.defense.save as "fortitude" | "reflex" | "will";
+        for (const target of targets) {
+          // Save real do statblock; sem statblock, aproximação por nível
+          // (percepção do benchmark) — visível no label para auditoria.
+          const saveMod =
+            target.saves?.[saveKey] ?? benchmark(target.level ?? 0).perception;
+          const approx = target.saves ? "" : " approx";
+          const result = rollCheck(
+            `${sheetName}: ${target.name} ${saveKey}${approx} save vs ${c.name}'s spell DC ${entry.dc}`,
+            saveMod,
+            entry.dc,
+          );
+          emit({ type: "check", result });
+          const dmg = rollSpellDamage(mech, castRank);
+          const mult =
+            result.degree === "criticalFailure"
+              ? 2
+              : result.degree === "failure"
+                ? 1
+                : result.degree === "success" && mech.defense.basic
+                  ? 0.5
+                  : 0;
+          const amount = Math.floor(dmg.total * mult);
+          if (amount > 0) {
+            const before = target.currentHp;
+            applyDamage(target, amount);
+            parts.push(
+              `${target.name} ${DEGREE_EN[result.degree]} → takes ${amount} ${dmg.type || "damage"} (${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""})`,
+            );
+          } else {
+            parts.push(`${target.name} ${DEGREE_EN[result.degree]} → unharmed`);
+          }
+        }
+      }
+
+      // Auto-close no wipe (mesmo padrão do Strike).
+      let endNote = "";
+      if (combat!.active && combatStatus(combat!) !== "ongoing") {
+        combat!.active = false;
+        endNote =
+          combatStatus(combat!) === "victory"
+            ? " Combat ends: VICTORY."
+            : " Combat ends: DEFEAT.";
+      }
+      emit({ type: "state", state: session.state });
+      return {
+        content: `${castLabel} cast${resourceNote} (${cost} action${cost > 1 ? "s" : ""}): ${parts.join("; ")}.${endNote} Actions left: ${you!.actionsRemaining}.`,
+        summaryLine: `- Casts ${castLabel}${resourceNote}: ${parts.join("; ")}.${endNote}`,
+      };
+    }
     case "start_combat": {
       const raw = Array.isArray(input.enemies) ? input.enemies : [];
       const specs: EnemySpec[] = [];
+      const recordsBySpecName = new Map<string, RuleRecord>();
+      const levelOverrides: string[] = [];
       for (const e of raw as Record<string, unknown>[]) {
         // Escape debris from the model's broken JSON (`Scavenger\" (Thug)`)
         // must not leak into combatant names — it also breaks dedupe.
@@ -905,9 +1409,24 @@ export async function executeTool(
             .trim() || "Enemy";
         const rawCount = Number(e?.count ?? 1);
         const count = Number.isFinite(rawCount) ? Math.max(1, Math.min(8, rawCount)) : 1;
+        // Regras como dados: quando o bestiary conhece a criatura, o nível
+        // OFICIAL vence o palpite do modelo (e os stats virão do statblock).
+        const resolved = resolveCreature(eName);
         const rawLevel = Number(e?.level);
-        const level =
-          e?.level != null && Number.isFinite(rawLevel) ? rawLevel : enemyLevelFor(eName);
+        const modelLevel =
+          e?.level != null && Number.isFinite(rawLevel) ? rawLevel : null;
+        let level: number;
+        if (resolved.record) {
+          level = resolved.level;
+          recordsBySpecName.set(eName, resolved.record);
+          if (modelLevel != null && modelLevel !== level) {
+            levelOverrides.push(
+              `${resolved.record.name} is level ${level} (bestiary) — model said ${modelLevel}`,
+            );
+          }
+        } else {
+          level = modelLevel ?? DEFAULT_ENEMY_LEVEL;
+        }
         specs.push({ name: eName, level, count });
       }
       const difficulty = parseDifficulty(input.difficulty);
@@ -915,12 +1434,28 @@ export async function executeTool(
       const instantiate = (accepted: EnemySpec[]): Combatant[] => {
         const out: Combatant[] = [];
         for (const s of accepted) {
+          const record = recordsBySpecName.get(s.name);
+          // Statblock real só quando o nível aceito É o oficial: se o orçamento
+          // de XP rebaixou a criatura (anti-empty), stats reais mentiriam.
+          const sb =
+            record?.statblock && record.level === s.level
+              ? {
+                  ...record.statblock,
+                  sourceName: record.name,
+                  traits: record.traits ?? [],
+                }
+              : undefined;
           for (let i = 0; i < s.count; i++) {
-            out.push(enemyCombatant(s.count > 1 ? `${s.name} ${i + 1}` : s.name, s.level));
+            out.push(
+              enemyCombatant(s.count > 1 ? `${s.name} ${i + 1}` : s.name, s.level, sb),
+            );
           }
         }
         return out;
       };
+      const bestiaryNote = levelOverrides.length
+        ? ` [${levelOverrides.join("; ")}]`
+        : "";
 
       // Combat already running: do NOT restart (that would wipe HP/initiative).
       // Instead let genuinely new foes join as reinforcements.
@@ -946,7 +1481,7 @@ export async function executeTool(
           const names = added.map((c) => c.name).join(", ");
           const note = `Encounter now: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`;
           return {
-            content: `Combat already active; reinforcements joined: ${names}. ${note}${budgetNotes(plan)}`,
+            content: `Combat already active; reinforcements joined: ${names}. ${note}${budgetNotes(plan)}${bestiaryNote}`,
             summaryLine: `- Reinforcements join the fight: ${names}. ${note}${budgetNotes(plan)}`,
           };
         }
@@ -968,8 +1503,10 @@ export async function executeTool(
       const combat = buildCombat([player, ...instantiate(plan.accepted)]);
       // This message is the player's turn: give them a full set of actions.
       if (player.actionsRemaining < 3) player.actionsRemaining = 3;
-      // Combate novo zera os limites de Frequency de período longo (1/hour...).
+      // Combate novo zera os limites de Frequency de período longo (1/hour...)
+      // e o registro de conjurações inimigas.
       combatFrequencyUsed.set(session, new Map());
+      combatEnemyCasts.set(session, new Set());
       session.state.combat = combat;
       emit({ type: "state", state: session.state });
       const order = combat.combatants
@@ -984,7 +1521,7 @@ export async function executeTool(
         ? ` Encounter: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`
         : "";
       return {
-        content: `Combat started.${note} Initiative order: ${order}${passiveNote}${budgetNotes(plan)}`,
+        content: `Combat started.${note} Initiative order: ${order}${passiveNote}${budgetNotes(plan)}${bestiaryNote}`,
         summaryLine: `- Combat begins (round 1).${note} Initiative: ${order}.${passiveNote}${budgetNotes(plan)}`,
       };
     }
@@ -1279,9 +1816,23 @@ export async function executeTool(
         };
       }
 
+      // Cura via hpDelta FORA de combate: era livre ("descanso") e o modelo
+      // inventou +15 no play-test 2026-07-12 — agora existe a tool `rest` com
+      // os valores REAIS (overnight/Treat Wounds), então o caminho livre fecha.
+      if (
+        typeof input.hpDelta === "number" &&
+        input.hpDelta > 0 &&
+        !combat?.active
+      ) {
+        return {
+          content:
+            "REJECTED: healing must come from a REAL source — NOTHING was applied. Use the rest tool for recovery (kind 'overnight' heals CON × level and restores spells; kind 'treat_wounds' rolls a real Medicine check), use_item for potions/elixirs, or cast_spell for healing spells. Retry with the right tool.",
+          isError: true,
+        };
+      }
+
       // Cura EM COMBATE exige uma fonte real na ficha (regras-como-dados): o
       // modelo curou o jogador com uma "poção" que não existia no inventário.
-      // Fora de combate o descanso continua livre (regra RAW já ensinada).
       if (
         typeof input.hpDelta === "number" &&
         input.hpDelta > 0 &&
@@ -1413,6 +1964,298 @@ export async function executeTool(
  * MAP, applying HP loss. Returns the summary lines. Ends combat on the player's
  * defeat. This runs automatically at the end of the player's turn.
  */
+/**
+ * Reações de Strike que a ENGINE resolve (whitelist por nome canônico do
+ * dataset — "regras como dados"): só o que tem mecânica 100% suportada entra.
+ * Goblin Scuttle e afins (movimento) ficam narrativos num engine sem grid;
+ * Shield Block fica de fora até termos hardness estruturado.
+ */
+const STRIKE_REACTIONS = new Set(["reactive strike", "attack of opportunity"]);
+
+/** O que uma tool do jogador provoca (gatilhos RAW aproximados sem grid). */
+export function reactionTriggerOf(
+  toolName: string,
+  input: Record<string, unknown>,
+): "manipulate" | "move" | null {
+  // Conjurar (trait manipulate na esmagadora maioria) e usar item provocam.
+  if (toolName === "use_item" || toolName === "cast_spell") return "manipulate";
+  if (toolName === "spend_actions") {
+    const reason = String(input.reason ?? "");
+    // Step (5 ft cuidadoso) NÃO provoca — todo o resto de movimento sim.
+    if (/\bstep\b/i.test(reason)) return null;
+    if (/\b(stride|move|moving|dash|run|charge|approach|retreat|reposition|withdraw|flee|climb|leap|jump)\b/i.test(reason)) {
+      return "move";
+    }
+  }
+  return null;
+}
+
+/**
+ * Dispara as reações dos inimigos vivos com Reactive Strike/AoO no statblock
+ * e reação disponível: um Strike fora do turno (consome a reação). Linhas
+ * extras para o resumo numerado.
+ */
+export function triggerEnemyReactions(
+  session: Session,
+  emit: (e: StreamEvent) => void,
+): string[] {
+  const combat = session.state.combat;
+  if (!combat?.active) return [];
+  const player = playerOf(combat);
+  if (!player || player.defeated) return [];
+
+  const lines: string[] = [];
+  for (const enemy of combat.combatants) {
+    if (enemy.kind !== "enemy" || enemy.defeated || !enemy.reactionAvailable) continue;
+    if (!enemy.sourceName) continue;
+    const sb = creatureRecord(enemy.sourceName)?.statblock;
+    const reaction = sb?.abilitiesList.find(
+      (a) => a.actionType === "reaction" && STRIKE_REACTIONS.has(a.name.toLowerCase()),
+    );
+    if (!reaction) continue;
+    enemy.reactionAvailable = false;
+    lines.push(
+      strikeAtPlayer(session, enemy, player, strikeProfileFor(enemy), emit, {
+        reactionName: reaction.name,
+      }),
+    );
+    if (player.defeated) break;
+  }
+
+  if (lines.length && combatStatus(combat) === "defeat") {
+    combat.active = false;
+    lines.push("- Combat ends: DEFEAT — you fall.");
+    emit({ type: "state", state: session.state });
+  }
+  return lines;
+}
+
+/**
+ * Ticka o dano persistente de todos os combatentes (engine, sem modelo) e
+ * devolve as linhas player-safe do resumo. Fecha o combate se o tick decidir
+ * a luta e põe o jogador em dying quando ele cai queimando/sangrando.
+ */
+function applyPersistentTicks(
+  session: Session,
+  emit: (e: StreamEvent) => void,
+): string[] {
+  const combat = session.state.combat;
+  if (!combat?.active) return [];
+  const ticks = tickPersistentDamage(combat);
+  if (ticks.length === 0) return [];
+
+  const lines: string[] = [];
+  for (const t of ticks) {
+    const c = t.combatant;
+    let downNote = "";
+    if (c.kind === "player") {
+      session.state.currentHp = c.currentHp;
+      if (c.defeated) downNote = ` — ${enterDying(session, false)}`;
+    }
+    const fate = t.ended || c.defeated ? "it ends" : "it continues";
+    lines.push(
+      `- Persistent ${t.type} damage: ${c.name} takes ${t.amount} (${t.before}→${t.after} HP)${downNote}; ${fate}.`,
+    );
+  }
+
+  const status = combatStatus(combat);
+  if (status !== "ongoing") {
+    combat.active = false;
+    lines.push(
+      status === "defeat"
+        ? "- Combat ends: DEFEAT — you fall."
+        : "- Combat ends: VICTORY.",
+    );
+  }
+  emit({ type: "state", state: session.state });
+  return lines;
+}
+
+/**
+ * Um Strike de inimigo contra o jogador — usado pelo turno inimigo E pelas
+ * reações (Reactive Strike). Usa o MAP corrente do inimigo (RAW: o MAP só
+ * reseta no começo do turno DELE, então a reação fora do turno herda o
+ * acumulado), aplica dano/persistente e devolve a linha player-safe.
+ */
+function strikeAtPlayer(
+  session: Session,
+  enemy: Combatant,
+  player: Combatant,
+  profile: StrikeProfile,
+  emit: (e: StreamEvent) => void,
+  opts: { reactionName?: string } = {},
+): string {
+  const strikeName = profile.label === "Strike" ? "Strike" : `${profile.label} Strike`;
+  const map = mapPenalty(enemy.mapProgress, profile.agile);
+  const mapTag = map ? ` [MAP ${map}${profile.agile ? " agile" : ""}]` : "";
+  // Same condition math as player Strikes (off-guard/frightened both ways).
+  const ac = effectiveAC(player);
+  const reactionTag = opts.reactionName ? `Reaction (${opts.reactionName}): ` : "";
+  const label = `${reactionTag}${enemy.name} ${strikeName} vs ${player.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
+  const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(enemy), ac);
+  enemy.mapProgress += 1;
+  const crit = result.degree === "criticalSuccess";
+  const hit = crit || result.degree === "success";
+  let dmgLine = "";
+  let amount: number | null = null;
+  if (hit) {
+    // Soma todas as entradas de dano do ataque; crit dobra o total.
+    const parts = profile.damage.map((d) => ({
+      type: d.type,
+      rolled: rollFormula(d.formula),
+    }));
+    amount = parts.reduce((sum, p) => sum + p.rolled, 0);
+    if (crit) amount *= 2;
+    const before = player.currentHp;
+    applyDamage(player, amount);
+    session.state.currentHp = player.currentHp;
+    // Dano persistente do ataque (dados do statblock) vira condição no
+    // hit; mesmo tipo não empilha (mantém a existente).
+    let persistentNote = "";
+    for (const p of profile.persistent) {
+      const already = player.conditions.some((x) =>
+        new RegExp(`^persistent\\s+${p.type}\\s+damage`, "i").test(x.trim()),
+      );
+      if (already) continue;
+      const cond = `persistent ${p.type} damage ${p.formula}`;
+      player.conditions = [...player.conditions, cond];
+      session.state.conditions = [...session.state.conditions, cond];
+      persistentNote += ` + persistent ${p.type} damage`;
+    }
+    const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
+    const typeNote =
+      parts.length === 1 && parts[0]!.type
+        ? ` ${parts[0]!.type}`
+        : parts.length > 1
+          ? ` (${parts.map((p) => `${crit ? p.rolled * 2 : p.rolled} ${p.type || "damage"}`).join(" + ")})`
+          : "";
+    dmgLine = ` for ${amount}${typeNote}${persistentNote}; ${player.name} ${before}→${player.currentHp} HP${down}`;
+  }
+  const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
+  result.attack = {
+    attacker: enemy.name,
+    target: player.name,
+    attackerKind: "enemy",
+    outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
+    damage: amount,
+    damageType: profile.damage[0]?.type || null,
+  };
+  emit({ type: "check", result });
+  const line = `- ${reactionTag}${enemy.name} ${strikeName} vs ${player.name}${mapTag} → ${verb}${dmgLine}.`;
+  emit({ type: "state", state: session.state });
+  return line;
+}
+
+/**
+ * Turno de conjuração de um inimigo caster — política DETERMINÍSTICA (o 12B
+ * nunca decide): 1x por combate, a magia DANOSA estruturada de maior rank do
+ * statblock; o jogador rola o save REAL da ficha contra o spell DC oficial
+ * (ou a magia ataca vs AC). Retorna a linha, ou null se não conjurou.
+ */
+function enemySpellTurn(
+  session: Session,
+  enemy: Combatant,
+  player: Combatant,
+  emit: (e: StreamEvent) => void,
+): string | null {
+  if (!enemy.sourceName) return null;
+  const casting = creatureRecord(enemy.sourceName)?.statblock?.spellcasting;
+  if (!casting?.length) return null;
+  const done = combatEnemyCasts.get(session);
+  if (!done || done.has(enemy.id)) return null;
+
+  let pick: {
+    dc: number;
+    attack: number;
+    name: string;
+    rank: number;
+    mech: SpellMechanics;
+  } | null = null;
+  for (const entry of casting) {
+    for (const sp of entry.spells) {
+      const mech = spellRecord(sp.name)?.spell;
+      if (!mech) continue;
+      const damaging = mech.damage.some(
+        (d) => d.kinds.includes("damage") && !d.kinds.includes("healing"),
+      );
+      if (!damaging || (!mech.defense?.save && !mech.attack)) continue;
+      if (!pick || sp.rank > pick.rank) {
+        pick = { dc: entry.dc, attack: entry.attack, name: sp.name, rank: sp.rank, mech };
+      }
+    }
+  }
+  if (!pick) return null;
+  done.add(enemy.id);
+
+  const castRank = Math.max(pick.mech.rank, pick.rank);
+  const dmg = rollSpellDamage(pick.mech, castRank);
+
+  if (pick.mech.defense?.save) {
+    const saveKey = pick.mech.defense.save as "fortitude" | "reflex" | "will";
+    const mod = session.character.saves[saveKey];
+    const result = rollCheck(
+      `${pick.name} (${enemy.name}): ${player.name} ${saveKey} save vs spell DC ${pick.dc}`,
+      mod,
+      pick.dc,
+    );
+    emit({ type: "check", result });
+    // Basic save; saves não-basic com dano usam os mesmos multiplicadores
+    // (aproximação honesta — o efeito extra fica para a narração).
+    const mult =
+      result.degree === "criticalFailure"
+        ? 2
+        : result.degree === "failure"
+          ? 1
+          : result.degree === "success"
+            ? 0.5
+            : 0;
+    const amount = Math.floor(dmg.total * mult);
+    let downNote = "";
+    const before = player.currentHp;
+    if (amount > 0) {
+      applyDamage(player, amount);
+      session.state.currentHp = player.currentHp;
+      if (player.defeated) downNote = ` — ${enterDying(session, result.degree === "criticalFailure")}`;
+    }
+    emit({ type: "state", state: session.state });
+    const dmgNote =
+      amount > 0
+        ? ` takes ${amount} ${dmg.type || "damage"} (${before}→${player.currentHp} HP)${downNote}`
+        : " is unharmed";
+    return `- ${enemy.name} casts ${pick.name}: ${player.name} ${saveKey} save ${DEGREE_EN[result.degree]} →${dmgNote}.`;
+  }
+
+  // Spell attack contra a AC do jogador (sem MAP: primeira ação do turno).
+  const ac = effectiveAC(player);
+  const result = rollCheck(
+    `${pick.name} spell attack: ${enemy.name} vs ${player.name} (AC ${ac})`,
+    pick.attack + attackStatusPenalty(enemy),
+    ac,
+  );
+  const crit = result.degree === "criticalSuccess";
+  const hit = crit || result.degree === "success";
+  let dmgLine = "";
+  if (hit) {
+    const amount = crit ? dmg.total * 2 : dmg.total;
+    const before = player.currentHp;
+    applyDamage(player, amount);
+    session.state.currentHp = player.currentHp;
+    const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
+    dmgLine = ` for ${amount} ${dmg.type || "damage"}; ${player.name} ${before}→${player.currentHp} HP${down}`;
+  }
+  result.attack = {
+    attacker: enemy.name,
+    target: player.name,
+    attackerKind: "enemy",
+    outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
+    damage: hit ? dmg.total : null,
+    damageType: dmg.type || null,
+  };
+  emit({ type: "check", result });
+  emit({ type: "state", state: session.state });
+  return `- ${enemy.name} casts ${pick.name} at ${player.name} → ${crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS"}${dmgLine}.`;
+}
+
 export function resolveEnemyTurns(
   session: Session,
   emit: (e: StreamEvent) => void,
@@ -1434,43 +2277,20 @@ export function resolveEnemyTurns(
   const order = [...slower, ...faster];
 
   for (const enemy of order) {
+    // Turno DELE começa: MAP reseta agora (a reação fora de turno herda o
+    // acumulado — RAW).
     enemy.mapProgress = 0;
-    const b = benchmark(enemy.level ?? 0);
-    for (let strike = 0; strike < 2; strike++) {
+    // Caster conjura sua melhor magia (2 ações) e fica com 1 Strike; os
+    // demais fazem os 2 Strikes de sempre.
+    const castLine = enemySpellTurn(session, enemy, player, emit);
+    if (castLine) lines.push(castLine);
+    if (player.defeated) break;
+    // Statblock real (via sourceName) quando houver; senão benchmark do nível.
+    const profile = strikeProfileFor(enemy);
+    const strikes = castLine ? 1 : 2;
+    for (let strike = 0; strike < strikes; strike++) {
       if (player.defeated) break;
-      const map = mapPenalty(enemy.mapProgress);
-      // Same condition math as player Strikes (off-guard/frightened both ways).
-      const ac = effectiveAC(player);
-      const label = `${enemy.name} Strike vs ${player.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
-      const result = rollCheck(label, b.attack + map + attackStatusPenalty(enemy), ac);
-      enemy.mapProgress += 1;
-      const crit = result.degree === "criticalSuccess";
-      const hit = crit || result.degree === "success";
-      let dmgLine = "";
-      let amount: number | null = null;
-      if (hit) {
-        amount = rollDice(b.damage.dice, b.damage.faces) + b.damage.bonus;
-        if (crit) amount *= 2;
-        const before = player.currentHp;
-        applyDamage(player, amount);
-        session.state.currentHp = player.currentHp;
-        const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
-        dmgLine = ` for ${amount}; ${player.name} ${before}→${player.currentHp} HP${down}`;
-      }
-      const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
-      result.attack = {
-        attacker: enemy.name,
-        target: player.name,
-        attackerKind: "enemy",
-        outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
-        damage: amount,
-        damageType: null,
-      };
-      emit({ type: "check", result });
-      lines.push(
-        `- ${enemy.name} Strike vs ${player.name}${map ? ` [MAP ${map}]` : ""} → ${verb}${dmgLine}.`,
-      );
-      emit({ type: "state", state: session.state });
+      lines.push(strikeAtPlayer(session, enemy, player, profile, emit));
     }
     if (player.defeated) break;
   }
@@ -1617,6 +2437,8 @@ async function runRulesStage(
   // returns a player-safe `summaryLine`; we keep them in call order so the
   // narrator sees an explicit hit/miss/damage story, not just "failure".
   const summaryLines: string[] = [];
+  /** Linhas de reação inimiga aguardando aviso ao rules model (pós tool results). */
+  const pendingReactionNotices: string[] = [];
   const consulted: string[] = [];
   let anyTool = false;
   let endedTurn = false;
@@ -1657,9 +2479,17 @@ async function runRulesStage(
       );
       if (outcome.summaryLine) summaryLines.push(outcome.summaryLine);
       if (outcome.endedTurn) endedTurn = true;
+      // Reações inimigas (engine): manipulate (use_item) e movimento provocam
+      // Reactive Strike/AoO de quem tem a reação no statblock e ela disponível.
+      // (Aviso ao modelo só DEPOIS do loop — tool results têm que vir direto.)
+      if (!outcome.isError && reactionTriggerOf(tc.function.name, args)) {
+        const reactionLines = triggerEnemyReactions(session, emit);
+        summaryLines.push(...reactionLines);
+        pendingReactionNotices.push(...reactionLines);
+      }
       if (
         !outcome.isError &&
-        ["roll_check", "use_item", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
+        ["roll_check", "use_item", "cast_spell", "rest", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
           tc.function.name,
         )
       ) {
@@ -1674,6 +2504,15 @@ async function runRulesStage(
         tool_call_id: tc.id,
         content: outcome.content,
       });
+    }
+    // Reações disparadas nesta iteração: o rules model precisa saber (o resumo
+    // numerado vai só para o narrador). Depois dos tool results, protocolo OK.
+    if (pendingReactionNotices.length) {
+      messages.push({
+        role: "user",
+        content: `[ENGINE] Enemy reaction(s) already resolved by the engine — account for them, do NOT re-roll:\n${pendingReactionNotices.join("\n")}`,
+      });
+      pendingReactionNotices.length = 0;
     }
     return toolCalls.length;
   };
@@ -1731,6 +2570,10 @@ async function runRulesStage(
   const tookTurn = endedTurn || (you ? you.actionsRemaining < 3 : false);
   if (combat?.active && enemiesAlive && tookTurn) {
     summaryLines.push(...resolveEnemyTurns(session, emit));
+    // Dano persistente ticka no fim da rodada (dano → flat check DC 15).
+    if (combat.active) {
+      summaryLines.push(...applyPersistentTicks(session, emit));
+    }
     // End-of-round upkeep: off-guard expires, frightened N decrements.
     if (combat.active) {
       tickEndOfRound(combat);
@@ -1832,6 +2675,45 @@ function buildMechanicalSummary(
 }
 
 /**
+ * Linha de estado ABSOLUTO do personagem para o narrador — "estado nunca
+ * mente" aplicado à vida/consciência. Promovida a código após o play-test de
+ * 2026-07-12: o prompt já proibia (regra DYING AND DEATH) e o narrador ainda
+ * manteve o jogador num "limbo pós-morte" por 3 turnos DEPOIS do resumo dizer
+ * STABILIZES. Só menciona números de HP quando o personagem está mal —
+ * repetir HP saudável todo turno fazia o narrador inventar dores fantasma.
+ */
+export function playerStateLine(session: Session): string {
+  const name = session.character.name;
+  const conds = session.state.conditions;
+  const hp = session.state.currentHp;
+  const max = session.character.maxHp;
+  if (conds.some((c) => /^dead$/i.test(c))) {
+    return `[PLAYER STATE: ${name} is DEAD. Their story has ended — narrate aftermath only.]`;
+  }
+  const dying = conditionValueIn(conds, "dying");
+  if (dying > 0 || conds.some((c) => /^unconscious$/i.test(c))) {
+    return `[PLAYER STATE: ${name} is UNCONSCIOUS and DYING ${dying || 1} — NOT dead. They cannot act, speak, or perceive clearly; do not kill them or wake them yourself.]`;
+  }
+  const hurt = hp <= Math.ceil(max * 0.25) ? ` They are badly hurt (${hp}/${max} HP) but standing.` : "";
+  return `[PLAYER STATE: ${name} is ALIVE, conscious and able to act.${hurt} NEVER narrate them as dead, dying, unconscious, or drifting in any void/afterlife/limbo.]`;
+}
+
+/**
+ * Apara um texto interrompido no meio da frase (max_tokens) até o último
+ * terminador de frase. Sem frase completa nenhuma, devolve o texto como veio
+ * (parcial é melhor que vazio).
+ */
+export function trimToCompleteSentence(text: string): string {
+  const t = text.trimEnd();
+  if (/[.!?…]["”'’*)\]]*$/.test(t)) return t;
+  let cut = -1;
+  const re = /[.!?…]["”'’*)\]]*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) cut = m.index + m[0].length;
+  return cut > 0 ? t.slice(0, cut) : t;
+}
+
+/**
  * STAGE 2 — Narrative: the narrative model writes the scene (streaming),
  * consistent with the mechanical summary. No tools. Appends the narration to
  * the history.
@@ -1862,11 +2744,14 @@ async function runNarrativeStage(
   // The turn's results go in a FINAL user message, not the system prompt:
   // small models follow the most recent context far more reliably, and this is
   // the one block the narration must not contradict. Not persisted to history.
+  // A linha de PLAYER STATE fecha o modo de falha do limbo: vida/consciência
+  // do personagem SEMPRE explícitas, mesmo em turno sem rolagem.
+  const stateLine = playerStateLine(session);
   const resultsMessage: ChatCompletionMessageParam = {
     role: "user",
     content: mechanical
-      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. These lines are COMPLETE: if the player's message declared an item, attack, or ability that does NOT appear below, it DID NOT HAPPEN — the engine rejected or ignored it (usually the item isn't in their Equipment). Show its absence in-fiction ("your hand finds no such flask in your pack") instead of narrating it working. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}`
-      : "[GM ENGINE] No roll was needed and NO mechanical effect happened (no damage, no healing, no item consumed). Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot, and do NOT narrate items/abilities taking mechanical effect.",
+      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. These lines are COMPLETE: if the player's message declared an item, attack, or ability that does NOT appear below, it DID NOT HAPPEN — the engine rejected or ignored it (usually the item isn't in their Equipment). Show its absence in-fiction ("your hand finds no such flask in your pack") instead of narrating it working. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}\n${stateLine}`
+      : `[GM ENGINE] No roll was needed and NO mechanical effect happened (no damage, no healing, no item consumed). Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot, and do NOT narrate items/abilities taking mechanical effect.\n${stateLine}`,
   };
 
   const inCombat = session.state.combat?.active === true;
@@ -1888,14 +2773,62 @@ async function runNarrativeStage(
   });
 
   let narration = "";
+  let finishReason: string | null = null;
   for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content;
+    const choice = chunk.choices[0];
+    const delta = choice?.delta?.content;
     if (delta) {
       narration += delta;
       emit({ type: "delta", text: delta });
     }
+    if (choice?.finish_reason) finishReason = choice.finish_reason;
   }
-  session.messages.push({ role: "assistant", content: narration });
+
+  // Truncado pelo max_tokens no MEIO da frase (play-test 2026-07-12: o corte
+  // comeu justamente o crit que derrubou o jogador): UMA continuação curta
+  // fecha o pensamento. Se ainda assim terminar quebrado, o histórico guarda
+  // só até a última frase completa — lixo truncado não vira contexto.
+  if (finishReason === "length" && narration.trim()) {
+    console.log("[GM][narrative] truncated by max_tokens — requesting a short wrap-up");
+    try {
+      const cont = await client.chat.completions.create({
+        model: NARRATIVE_MODEL,
+        messages: [
+          narrativeSystem,
+          ...session.messages.slice(-NARRATIVE_CONTEXT_MESSAGES),
+          resultsMessage,
+          { role: "assistant", content: narration },
+          {
+            role: "user",
+            content:
+              "[GM ENGINE] Your narration was CUT OFF mid-sentence by a length limit. Continue EXACTLY from where it stopped and wrap the scene up within TWO short sentences. Do not repeat anything already written and do not start a new paragraph of events.",
+          },
+        ],
+        stream: true,
+        temperature: inCombat ? 0.4 : 0.6,
+        max_tokens: 110,
+        top_p: 0.9,
+        ...NO_REASONING,
+      });
+      for await (const chunk of cont) {
+        const delta = chunk.choices[0]?.delta?.content;
+        if (delta) {
+          narration += delta;
+          emit({ type: "delta", text: delta });
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[GM][narrative] wrap-up call failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  session.messages.push({
+    role: "assistant",
+    content: trimToCompleteSentence(narration),
+  });
 }
 
 /**

@@ -37,12 +37,15 @@ Your job: given the player's action, resolve ONLY the mechanics — never narrat
 - Degrees for a Strike: critical success = critical hit, success = hit, failure/critical failure = miss. Trust the tool's result.
 - Activities: resolve them by their real rules. Example — Twin Feint is a 2-action activity: TWO Strikes with two melee weapons; the target is off-guard ONLY against the SECOND. EXACT sequence: (1) 1st \`roll_check\` FIRST, with the target NOT yet off-guard; (2) THEN \`update_state\` with \`target\` = the enemy and \`addConditions: ["off-guard"]\`; (3) THEN the 2nd \`roll_check\`. NEVER apply off-guard before the first Strike. Twin Feint does NOT call for a Deception roll — that is the separate Feint action. Look up any feat/activity you are unsure of with \`lookup_rule\` first.
 - Do NOT roll for enemies and do NOT call \`start_combat\` for their turn — after the player acts, the engine resolves every living enemy's Strikes against the player automatically.
+- REACTIONS are engine-resolved too: when the player uses an item or moves, enemies whose statblock has Reactive Strike get a free out-of-turn Strike automatically (you'll see an [ENGINE] note). NEVER roll a reaction yourself and never re-roll one the engine reported.
 - Use \`update_state\` with a \`target\` to set/clear conditions (off-guard, frightened N, etc.) on any combatant. Call \`end_turn\` only when the player deliberately passes or ends with actions to spare (so the enemies get to act).
 - ENDING A FIGHT: kills end combat automatically. For every OTHER ending — enemies flee, surrender, are spared or subdued, or the player disengages and the story moves on — you MUST call \`end_combat\` with a short reason. A "CURRENT COMBAT" block that no longer matches the fiction means you forgot this call.
 - Apply consequences with \`update_state\`: when the character TAKES damage (trap, failed save vs a hazard) call \`update_state\` with a negative \`hpDelta\`; when a condition is gained/lost (e.g., frightened, sickened, off-guard) use \`addConditions\`/\`removeConditions\`. This keeps HP and conditions correct across turns. Example: player fails the trap save -> \`update_state({ hpDelta: -8, addConditions: ["sickened 1"] })\`.
 - \`hpDelta\` is ONLY for real mechanical effects (traps, hazards, poisons, rest). The engine ALREADY applies all Strike damage in combat — NEVER duplicate a hit with \`update_state\`, and NEVER charge HP for narrative flavor (exertion, stress, a long walk).
 - Overnight rest: when the character sleeps a full night, call \`update_state\` with a POSITIVE \`hpDelta\` = Constitution modifier × level (minimum 1 × level) — both are on the sheet; the engine clamps at max HP. Without this call the character does NOT heal.
 - \`addConditions\` is ONLY for real PF2e conditions (off-guard, frightened N, prone, grabbed, sickened N…). NEVER store story facts (companions, promises, loot, goals) as conditions — those live in the narrative, not in mechanics.
+- REST/RECOVERY: whenever the player rests, sleeps, camps, treats wounds, or asks to recover HP, call \`rest\` (kind 'overnight' or 'treat_wounds') — the ENGINE computes the real healing (CON × level overnight; a real Medicine check for Treat Wounds) and restores spell slots. NEVER grant recovery HP with \`update_state\` and never invent a healing number.
+- SPELLS: whenever the player casts a spell, call \`cast_spell\` with the spell's sheet name (and \`target\` for offensive spells; omit target on area spells like Fireball to hit every enemy). The ENGINE validates it is known, spends the real slot/focus (cantrips are free and auto-heightened), charges the cast actions, and resolves attack vs AC or the target's REAL save vs the spell DC with structured damage/healing. Do NOT use roll_check/spend_actions/update_state for spells, and NEVER invent a spell that is not on the sheet. Enemy casters are engine-resolved on their turn — never roll their spells.
 - ITEMS: whenever the player uses an item (potion, elixir, bomb, torch…), call \`use_item\` with the item's Equipment name. The ENGINE checks the sheet, spends the real quantity, and resolves the real effect: a bomb (pass \`target\`) is thrown as a Strike with the item's REAL statblock; a healing potion heals its listed dice automatically. In combat it costs 2 actions (draw + use). Do NOT use \`spend_actions\` or \`update_state\` for items — and if the sheet doesn't carry the item, \`use_item\` will say so: resolve the REST of the declared actions normally and don't invent the item.
 - If the action needs NO check (simple talk, trivial observation, free/open movement, or any action whose risky method the player did NOT declare), don't roll anything.
 - DOWNTIME and skill ACTIVITIES from feats (Train Animal, Earn Income, Sow Rumor, Bonded Animal, crafting, performances aimed at an effect…) are NEVER pure narration: they resolve with a \`roll_check\` using the listed skill and a real DC, and their outcome follows the degree rolled. If the activity changes state (healing, items, money), also call \`update_state\`.
@@ -73,6 +76,7 @@ export const NARRATIVE_SYSTEM_PROMPT = `You are the GM NARRATOR of a solo Pathfi
   - The results include the player's Strikes AND the enemies' Strikes back at the player. If a line says an enemy HIT the player (e.g. "Administrator Strike vs Jão → HIT for 20"), then the player VISIBLY takes that blow and is wounded — you must NOT omit the player getting hurt or gloss over their HP dropping. A turn where the player took heavy damage must read like the player got hurt.
   - Do not invent extra blows, wounds, misses, or deaths the results didn't state.
 - DYING AND DEATH: if the results say the player is DYING/unconscious, narrate from their fading, fragmentary perspective — they cannot act, speak, or perceive clearly; do NOT kill them or wake them up yourself. If the results say they STABILIZE, they wake battered exactly as stated. If the results say they DIE, narrate the definitive end with weight — no miraculous saves, no "somehow you survive".
+- The [PLAYER STATE] line in the results is ABSOLUTE and overrides everything — the previous narration, the mood, and the player's own words. If it says ALIVE and conscious, the character is awake in the real scene RIGHT NOW: no voids, no limbos, no afterlives, no "drifting between worlds" — even if earlier turns described fading senses. A player asking "am I dead?" while the state says ALIVE gets an in-fiction answer that they are alive.
 - NEVER invent or explain rules/action-economy yourself (do not say things like "resolved as a single action" or "you have one action left"). If the player asks a state question (HP, actions, who's up), answer plainly and correctly FROM the mechanical results (e.g. it may say "Player has 1 of 3 actions unused"), phrased naturally — never make up a number.
 
 # Revealing the world (setting vs. secrets)
@@ -114,11 +118,24 @@ export function characterSheetBlock(c: Character): string {
     .filter(Boolean)
     .join(" ");
   const spells = c.spellcasting
-    .map(
-      (sc) =>
-        `${sc.tradition} (${sc.type}${sc.dc != null ? ` DC ${sc.dc}` : ""}): ${sc.spells.join(", ") || "—"}`,
-    )
+    .map((sc) => {
+      const byRank = sc.spellsByRank
+        ? Object.entries(sc.spellsByRank)
+            .sort(([a], [b]) => Number(a) - Number(b))
+            .map(
+              ([rank, list]) =>
+                `${rank === "0" ? "cantrips" : `rank ${rank}`}${
+                  rank !== "0" && sc.slots?.[rank] != null
+                    ? ` [${sc.slots[rank]} slots/day]`
+                    : ""
+                }: ${list.join(", ")}`,
+            )
+            .join("; ")
+        : sc.spells.join(", ") || "—";
+      return `${sc.tradition} (${sc.type}${sc.dc != null ? ` DC ${sc.dc}` : ""}${sc.attack != null ? `, attack ${fmt(sc.attack)}` : ""}) — ${byRank}`;
+    })
     .join(" | ");
+  const focus = c.focusPoints ? ` | Focus Points: ${c.focusPoints}` : "";
 
   const lines = [
     "# Player character",
@@ -135,7 +152,7 @@ export function characterSheetBlock(c: Character): string {
     armor ? `Armor: ${armor}` : "",
     c.classFeatures.length ? `Class features: ${c.classFeatures.join(", ")}` : "",
     `Feats: ${c.feats.join(", ") || "—"}`,
-    spells ? `Spells: ${spells}` : "",
+    spells ? `Spells: ${spells}${focus}` : "",
     c.equipment.length
       ? `Equipment: ${c.equipment.map((e) => (e.qty > 1 ? `${e.name} x${e.qty}` : e.name)).join(", ")}`
       : "Equipment: — (nothing beyond weapons/armor)",

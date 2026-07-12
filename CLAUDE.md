@@ -45,15 +45,29 @@ npx tsx scripts/feat-audit/run-feat-tests.ts     # roda a bateria (--side/--arch
 ## Arquitetura do turno (GM)
 
 `runTurn` = 2 estágios com o MESMO modelo residente (contextos separados):
-1. **Rules** (`runRulesStage`): tool loop (roll_check, start_combat, end_combat,
-   end_turn, spend_actions, use_item, update_state, lookup_rule, get_character) →
-   resumo mecânico determinístico. Em combate: 1 mensagem do jogador = 1 turno
-   completo (3 ações; engine cobra custos, aplica dano, resolve o revide inimigo em
-   código, roda dying/recovery checks quando o jogador cai). `start_combat` impõe o
-   **orçamento de XP do encontro** (GM Core) para o tamanho REAL da party
-   (`planEncounter` em combat.ts — solo: moderate 20 XP, teto extreme 40): corta
-   excedente criatura a criatura, nunca começa combate vazio, PL+5 nunca entra e
-   inimigos derrotados seguem contando contra reforços (anti-onda).
+1. **Rules** (`runRulesStage`): tool loop (roll_check, cast_spell, rest,
+   start_combat, end_combat, end_turn, spend_actions, use_item, update_state,
+   lookup_rule, get_character) → resumo mecânico determinístico. `rest` cura
+   com as regras reais (overnight: CON×nível + slots/focus; Treat Wounds:
+   Medicine check DC 15 com toolkit) — cura inventada via `update_state` é
+   rejeitada dentro e fora de combate. Em combate: 1 mensagem do
+   jogador = 1 turno completo (3 ações; engine cobra custos, aplica dano, resolve
+   o revide inimigo em código, roda dying/recovery checks quando o jogador cai).
+   Inimigos nomeados usam o **statblock oficial do bestiary** (`creatureRecord` —
+   AC/HP/saves/ataques reais; nível oficial vence o palpite do modelo; nome
+   genérico/inventado cai no benchmark por nível). Dano persistente ticka no fim
+   da rodada (dano → flat check DC 15, `tickPersistentDamage`). **Reações**
+   (Reactive Strike/AoO do statblock) disparam em código quando o jogador usa
+   item/conjura/se move e consomem `reactionAvailable`. `cast_spell` valida a
+   magia na ficha, gasta slot/focus real (cantrip auto-heightened) e resolve
+   spell attack vs AC ou save REAL do alvo vs DC com dano estruturado
+   (`spellRecord`); inimigo caster conjura 1x por combate, deterministicamente.
+   `start_combat` impõe o **orçamento de XP do encontro** (GM Core) para o
+   tamanho REAL da party (`planEncounter` em combat.ts — solo: moderate 20 XP,
+   teto extreme 40): corta excedente criatura a criatura, nunca começa combate
+   vazio, PL+5 nunca entra, inimigos derrotados seguem contando contra reforços
+   (anti-onda) e criatura rebaixada pelo orçamento perde o statblock (stats não
+   mentem).
 2. **Narrative** (`runNarrativeStage`): narra o resumo (streaming), temperatura
    menor em combate, sem tools.
 

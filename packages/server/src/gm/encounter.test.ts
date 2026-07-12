@@ -1,7 +1,13 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Character, Combatant } from "@pf2e/shared";
 import { executeTool } from "./agent.js";
 import type { Session } from "./sessions.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const hasGenerated = existsSync(join(here, "../../data/pf2e/generated"));
 
 const noop = () => {};
 
@@ -58,10 +64,11 @@ describe("start_combat com orçamento de encontro (party de 1, PC level 5)", () 
 
   it("default moderate + anti-vazio: 1 inimigo on-level é rebaixado, nunca combate vazio", async () => {
     const s = mkSession();
+    // Nome inventado (fora do bestiary): o nível declarado pelo modelo vale.
     const out = await executeTool(
       s,
       "start_combat",
-      { enemies: [{ name: "Ogre", level: 5, count: 1 }] },
+      { enemies: [{ name: "Cinzalto Enforcer", level: 5, count: 1 }] },
       noop,
     );
     // lvl 5 = 40 XP > moderate solo 20 → rebaixado para lvl 3 (20 XP).
@@ -70,6 +77,29 @@ describe("start_combat com orçamento de encontro (party de 1, PC level 5)", () 
     expect(foes[0]!.level).toBe(3);
     expect(out.summaryLine).toContain("weakened from level 5 to 3");
   });
+
+  it.skipIf(!hasGenerated)(
+    "bestiary: nível oficial vence o palpite do modelo e o statblock real entra",
+    async () => {
+    const s = mkSession();
+    const out = await executeTool(
+      s,
+      "start_combat",
+      { enemies: [{ name: "Giant Rat", level: 5, count: 1 }] },
+      noop,
+    );
+    const foes = enemies(s);
+    expect(foes).toHaveLength(1);
+    // Nível oficial (-1) vence o "5" do modelo; stats reais: AC 15, 8 HP.
+    expect(foes[0]!.level).toBe(-1);
+    expect(foes[0]!.sourceName).toBe("Giant Rat");
+    expect(foes[0]!.ac).toBe(15);
+    expect(foes[0]!.maxHp).toBe(8);
+    expect(foes[0]!.saves).toEqual({ fortitude: 6, reflex: 7, will: 3 });
+    // A divergência de nível fica auditável no content da tool.
+    expect(out.content).toContain("model said 5");
+    },
+  );
 
   it("PL+5 nunca entra, mesmo em extreme", async () => {
     const s = mkSession();
