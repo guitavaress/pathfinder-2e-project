@@ -47,6 +47,20 @@ interface RuleRecord {
   actionType: string | null;
   /** Foundry system.actions.value: 1 | 2 | 3 (null p/ reaction/free/passive). */
   actionCost: number | null;
+  /** Foundry system.frequency: limite de uso ("once per round/day"...). per: "round"|"turn"|"day"|"PT1H"|... */
+  frequency?: { max: number; per: string };
+  /** Armas (inclui bombas): dano estruturado de system.damage. */
+  damage?: { dice: number; die: string; type: string };
+  /** Dano persistente embutido (system.damage.persistent — ex.: alchemist's fire). */
+  persistent?: { number: number; faces: number | null; type: string };
+  /** Splash damage (system.splashDamage.value) quando > 0. */
+  splash?: number;
+  /** Bônus de item no ataque (system.bonus.value) quando != 0. */
+  bonus?: number;
+  /** Alcance em pés (system.range) para armas de arremesso/distância. */
+  range?: number;
+  /** Categoria de proficiência da ARMA: "simple" | "martial" | "advanced" | "unarmed". */
+  weaponCategory?: string;
 }
 
 /** Mapeia o `type` do documento Foundry para a nossa categoria. */
@@ -98,6 +112,14 @@ function cleanText(html: unknown): string {
         : "";
     })
     .replace(/@Localize\[[^\]]+\]/g, "")
+    // @Damage tem colchetes ANINHADOS (@Damage[1d8[healing]]) — o padrão
+    // genérico parava no 1º "]" e mutilava o texto ("you regain ] Hit
+    // Points"), perdendo a fórmula que a engine lê (use_item).
+    .replace(
+      /@Damage\[((?:[^\[\]]|\[[^\]]*\])*)\](\{([^}]*)\})?/g,
+      (_m, expr: string, _b, label?: string) =>
+        label ?? expr.replace(/\[([^\]]*)\]/g, " $1").trim(),
+    )
     .replace(/@(Check|Damage|Template)\[[^\]]*\](\{([^}]*)\})?/g, "$3")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
@@ -142,6 +164,56 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
   const actionCost =
     typeof actionsObj.value === "number" ? actionsObj.value : null;
 
+  // Frequency ("once per round/day"): {max, per} — per pode ser palavra ("round",
+  // "day") ou duração ISO-8601 ("PT1H"). Só grava quando o doc declara.
+  const freqObj = (system.frequency ?? {}) as Record<string, unknown>;
+  const frequency =
+    typeof freqObj.max === "number" && typeof freqObj.per === "string"
+      ? { max: freqObj.max, per: freqObj.per }
+      : undefined;
+
+  // Statblock estruturado de ARMAS (inclui bombas alquímicas): dano, splash,
+  // persistente, bônus de item, alcance e categoria de proficiência. A engine
+  // usa isso em vez de pedir ao modelo para interpretar a prosa.
+  let damage: RuleRecord["damage"];
+  let persistent: RuleRecord["persistent"];
+  let splash: number | undefined;
+  let bonus: number | undefined;
+  let range: number | undefined;
+  let weaponCategory: string | undefined;
+  if (type === "weapon") {
+    const dmg = (system.damage ?? {}) as Record<string, unknown>;
+    if (typeof dmg.die === "string" && typeof dmg.dice === "number" && dmg.die) {
+      damage = {
+        dice: dmg.dice,
+        die: dmg.die,
+        type: typeof dmg.damageType === "string" ? dmg.damageType : "",
+      };
+    }
+    const pers = (dmg.persistent ?? null) as Record<string, unknown> | null;
+    if (pers && typeof pers.number === "number" && typeof pers.type === "string") {
+      persistent = {
+        number: pers.number,
+        faces: typeof pers.faces === "number" ? pers.faces : null,
+        type: pers.type,
+      };
+    }
+    const splashObj = (system.splashDamage ?? {}) as Record<string, unknown>;
+    if (typeof splashObj.value === "number" && splashObj.value > 0) {
+      splash = splashObj.value;
+    }
+    const bonusObj = (system.bonus ?? {}) as Record<string, unknown>;
+    if (typeof bonusObj.value === "number" && bonusObj.value !== 0) {
+      bonus = bonusObj.value;
+    }
+    if (typeof system.range === "number" && system.range > 0) {
+      range = system.range;
+    }
+    if (typeof system.category === "string" && system.category) {
+      weaponCategory = system.category;
+    }
+  }
+
   return {
     name,
     category,
@@ -154,6 +226,15 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
     source,
     actionType,
     actionCost,
+    // Opcionais ficam `undefined` quando ausentes → JSON.stringify os omite
+    // (evita inflar os 26k registros com nulls).
+    frequency,
+    damage,
+    persistent,
+    splash,
+    bonus,
+    range,
+    weaponCategory,
   };
 }
 

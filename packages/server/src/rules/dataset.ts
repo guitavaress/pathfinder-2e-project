@@ -19,6 +19,20 @@ export interface RuleRecord {
   actionType?: string | null;
   /** Number of actions (1|2|3) when actionType is "action". */
   actionCost?: number | null;
+  /** Use limit ("once per round/day"): per is "round"|"turn"|"day"|ISO-8601 ("PT1H"). */
+  frequency?: { max: number; per: string };
+  /** Weapons (incl. alchemical bombs): structured damage from the Foundry doc. */
+  damage?: { dice: number; die: string; type: string };
+  /** Built-in persistent damage (e.g. alchemist's fire). */
+  persistent?: { number: number; faces: number | null; type: string };
+  /** Splash damage value, when > 0. */
+  splash?: number;
+  /** Item bonus to attack rolls, when != 0. */
+  bonus?: number;
+  /** Range in feet for thrown/ranged weapons. */
+  range?: number;
+  /** Weapon proficiency category: "simple" | "martial" | "advanced" | "unarmed". */
+  weaponCategory?: string;
 }
 
 interface SeedAction {
@@ -187,4 +201,177 @@ export function multiActionCost(
     if (t.includes(name)) return { name, cost };
   }
   return null;
+}
+
+let equipmentByName: Map<string, RuleRecord> | null = null;
+
+/** Strips rune/quality prefixes so "+1 Striking Dagger" matches "Dagger". */
+function baseItemName(name: string): string {
+  return normalize(
+    name.replace(/^\+\d+\s+/, "").replace(/^(striking|greater striking|major striking)\s+/i, ""),
+  );
+}
+
+/**
+ * Finds an equipment record by item name (exact → rune-stripped → the dataset
+ * variant convention "Name (Lesser)" → substring). Backbone of the engine's
+ * item grounding: traits, real damage, splash, range all come from here.
+ */
+export function itemRecord(name: string): RuleRecord | null {
+  if (!equipmentByName) {
+    equipmentByName = new Map();
+    for (const r of load()) {
+      if (r.category !== "equipment") continue;
+      const key = normalize(r.name);
+      if (!equipmentByName.has(key)) equipmentByName.set(key, r);
+    }
+  }
+  const q = baseItemName(name);
+  if (!q) return null;
+  const exact = equipmentByName.get(q) ?? equipmentByName.get(normalize(name));
+  if (exact) return exact;
+  // Variant convention: consumables come as "Alchemist's Fire (Lesser)" etc.
+  // A bare "alchemist's fire" should hit the weakest variant.
+  for (const variant of ["lesser", "minor", "moderate", "greater", "major"]) {
+    const v = equipmentByName.get(`${q} (${variant})`);
+    if (v) return v;
+  }
+  // Substring, preferring the shortest (most specific) name.
+  let best: RuleRecord | null = null;
+  let bestLen = Infinity;
+  for (const [n, r] of equipmentByName) {
+    if ((n.includes(q) || q.includes(n)) && n.length < bestLen) {
+      best = r;
+      bestLen = n.length;
+    }
+  }
+  return best;
+}
+
+/** Traits of an equipment item (empty when unknown). */
+export function itemTraits(name: string): string[] {
+  return itemRecord(name)?.traits ?? [];
+}
+
+let frequencies: Map<string, { max: number; per: string }> | null = null;
+
+/**
+ * Use-limit of a feat/action mentioned in free text ("Frequency once per
+ * round"), keyed the same way as `multiActionCost`: the model naming the
+ * activity in `reason`/`skill` is the trigger. Names < 6 chars are skipped.
+ */
+export function activityFrequency(
+  text: string,
+): { name: string; max: number; per: string } | null {
+  if (!frequencies) {
+    frequencies = new Map();
+    for (const r of load()) {
+      if (
+        (r.category === "feats" || r.category === "actions") &&
+        r.frequency &&
+        r.name.length >= 6
+      ) {
+        const key = r.name.toLowerCase();
+        if (!frequencies.has(key)) frequencies.set(key, r.frequency);
+      }
+    }
+  }
+  const t = text.toLowerCase();
+  for (const [name, f] of frequencies) {
+    if (t.includes(name)) return { name, ...f };
+  }
+  return null;
+}
+
+let activeNames: Map<string, string> | null = null;
+
+/**
+ * An ACTIVE feat/action (actionType "action", cost ≥ 1) named inside free
+ * text — used by the engine to notice the player invoked something with
+ * rules that the model resolved as pure narration (Goblin Song case).
+ * Returns the canonical name, or null. Names < 6 chars are skipped.
+ */
+export function namedActivity(text: string): string | null {
+  if (!activeNames) {
+    activeNames = new Map();
+    for (const r of load()) {
+      if (
+        (r.category === "feats" || r.category === "actions") &&
+        r.actionType === "action" &&
+        (r.actionCost ?? 0) >= 1 &&
+        r.name.length >= 6
+      ) {
+        const key = r.name.toLowerCase();
+        if (!activeNames.has(key)) activeNames.set(key, r.name);
+      }
+    }
+  }
+  const t = text.toLowerCase();
+  for (const [key, name] of activeNames) {
+    if (t.includes(key)) return name;
+  }
+  return null;
+}
+
+let requirementTexts: Map<string, string> | null = null;
+
+/**
+ * Requirements clause of a feat/action named in free text ("Requirements You
+ * are wielding two melee weapons."). Same trigger convention as
+ * `multiActionCost`: the model naming the activity. The engine validates only
+ * a small whitelist of patterns it can answer from the sheet.
+ */
+export function activityRequirement(
+  text: string,
+): { name: string; requirement: string } | null {
+  if (!requirementTexts) {
+    requirementTexts = new Map();
+    for (const r of load()) {
+      if (
+        (r.category === "feats" || r.category === "actions") &&
+        r.name.length >= 6 &&
+        r.actionType &&
+        r.actionType !== "passive"
+      ) {
+        const m = /Requirements\s+([^.;]+)[.;]/.exec(r.text);
+        if (m?.[1]) {
+          const key = r.name.toLowerCase();
+          if (!requirementTexts.has(key)) requirementTexts.set(key, m[1].trim());
+        }
+      }
+    }
+  }
+  const t = text.toLowerCase();
+  for (const [name, requirement] of requirementTexts) {
+    if (t.includes(name)) return { name, requirement };
+  }
+  return null;
+}
+
+let conditionNames: Set<string> | null = null;
+
+/**
+ * The official PF2e condition names (lowercase) from conditions.json — the
+ * whitelist `update_state` validates against. Falls back to a hardcoded core
+ * set when the generated dataset is absent (seed mode).
+ */
+export function officialConditions(): Set<string> {
+  if (!conditionNames) {
+    conditionNames = new Set(
+      load()
+        .filter((r) => r.category === "conditions")
+        .map((r) => r.name.toLowerCase()),
+    );
+    if (conditionNames.size === 0) {
+      conditionNames = new Set([
+        "blinded", "clumsy", "concealed", "confused", "controlled", "dazzled",
+        "deafened", "doomed", "drained", "dying", "encumbered", "enfeebled",
+        "fascinated", "fatigued", "fleeing", "frightened", "grabbed", "hidden",
+        "immobilized", "invisible", "off-guard", "paralyzed", "persistent damage",
+        "petrified", "prone", "quickened", "restrained", "sickened", "slowed",
+        "stunned", "stupefied", "unconscious", "wounded",
+      ]);
+    }
+  }
+  return conditionNames;
 }

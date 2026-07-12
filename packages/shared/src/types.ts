@@ -138,6 +138,13 @@ export const CharacterSchema = z.object({
   classDc: z.number().int(),
   /** AC item bonus (from armor/shield). */
   acItemBonus: z.number().int(),
+  /** Weapon proficiency ranks (0-4) — drives bomb/improvised attack math. */
+  weaponProficiencies: z
+    .object({
+      simple: ProficiencyRankSchema,
+      martial: ProficiencyRankSchema,
+    })
+    .optional(),
   skills: z.record(z.string(), SkillSchema),
   lores: z.array(LoreSchema),
   feats: z.array(z.string()),

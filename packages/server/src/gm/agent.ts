@@ -3,10 +3,20 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
-import type { AttackContext, Combatant } from "@pf2e/shared";
+import type { AttackContext, Character, Combatant, Weapon } from "@pf2e/shared";
 import type { CheckResult, GameState } from "@pf2e/shared";
 import { isValidDc, rollCheck } from "../dice/check.js";
-import { lookupLocalRule, multiActionCost } from "../rules/dataset.js";
+import {
+  activityFrequency,
+  activityRequirement,
+  itemRecord,
+  itemTraits,
+  lookupLocalRule,
+  multiActionCost,
+  namedActivity,
+  officialConditions,
+  type RuleRecord,
+} from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
 import {
   applyDamage,
@@ -19,17 +29,26 @@ import {
   conditionValueIn,
   setValuedCondition,
   combatStatus,
+  creatureXp,
   effectiveAC,
+  ENCOUNTER_DIFFICULTIES,
+  encounterBudget,
   enemyCombatant,
   findCombatant,
   hasCombatantNamed,
   isOffGuard,
   livingEnemy,
   mapPenalty,
+  passiveFeatBonus,
+  planEncounter,
   playerCombatant,
   playerOf,
+  partySizeOf,
   rollDice,
   tickEndOfRound,
+  type EncounterDifficulty,
+  type EncounterPlan,
+  type EnemySpec,
 } from "./combat.js";
 import { loadLore, loadWorld } from "./lore.js";
 import {
@@ -72,6 +91,115 @@ const turnStruck = new WeakMap<Session, Set<string>>();
  * Sudden Charge 2→1, Improvised Repair 3→0).
  */
 const turnActivityCharged = new WeakMap<Session, Set<string>>();
+/**
+ * Frequency "once per round/turn" (dataset): usos por TURNO do jogador —
+ * 1 mensagem = 1 turno completo neste engine. Resetado a cada runRulesStage.
+ */
+const turnFrequencyUsed = new WeakMap<Session, Map<string, number>>();
+/**
+ * Frequency de períodos longos (PT1H, day...): a engine só consegue julgar
+ * dentro do MESMO combate (o tempo narrativo fora dele é fluido). Resetado
+ * quando um combate novo começa.
+ */
+const combatFrequencyUsed = new WeakMap<Session, Map<string, number>>();
+
+/** Store de frequency para um `per` do dataset (null = engine não julga). */
+function frequencyStore(session: Session, per: string): Map<string, number> | null {
+  const perTurn = per === "round" || per === "turn";
+  const holder = perTurn ? turnFrequencyUsed : combatFrequencyUsed;
+  if (!perTurn && !session.state.combat?.active) return null;
+  let map = holder.get(session);
+  if (!map) {
+    map = new Map();
+    holder.set(session, map);
+  }
+  return map;
+}
+
+/**
+ * Peek: a atividade citada no texto estourou sua Frequency? Retorna o erro
+ * educativo, ou null. O uso só é gravado por `commitFrequency` — chamado
+ * DEPOIS de todas as outras validações passarem (uma rejeição de custo não
+ * pode queimar o limite).
+ */
+export function frequencyLimit(session: Session, text: string): ToolOutcome | null {
+  const freq = activityFrequency(text);
+  if (!freq) return null;
+  const store = frequencyStore(session, freq.per);
+  if (!store) return null;
+  if ((store.get(freq.name) ?? 0) >= freq.max) {
+    const scope =
+      freq.per === "round" || freq.per === "turn" ? "this turn" : "this fight";
+    const label = `Frequency ${freq.max}/${freq.per}`;
+    return {
+      content: `ILLEGAL: "${titleCase(freq.name)}" was already used ${scope} (${label}). It does NOT happen — do something else or end the turn.`,
+      isError: true,
+      summaryLine: `- ${titleCase(freq.name)}: NOT used — ${label} already spent ${scope}.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Requirements de atividade (validação LEVE): só padrões que a ficha responde
+ * de graça — duas armas empunhadas, escudo. O resto passa sem julgamento
+ * (empunhadura/postura são estado que a engine não rastreia).
+ */
+export function requirementBlocked(session: Session, text: string): ToolOutcome | null {
+  const found = activityRequirement(text);
+  if (!found) return null;
+  const req = found.requirement.toLowerCase();
+  const c = session.character;
+  let missing = "";
+  if (/wielding two (melee )?weapons|two weapons, (one|each) in (a different|each) hand/.test(req)) {
+    if (c.weapons.length < 2) {
+      missing = `two wielded weapons (the sheet lists ${c.weapons.length ? `only "${c.weapons.map((w) => w.name).join('", "')}"` : "none"})`;
+    }
+  } else if (/wielding a shield|shield is raised|have a shield raised/.test(req)) {
+    const hasShield =
+      c.armor.some((a) => /shield/i.test(a.name)) ||
+      c.equipment.some((e) => /shield/i.test(e.name));
+    if (!hasShield) missing = "a shield (none on the sheet)";
+  }
+  if (!missing) return null;
+  const pretty = titleCase(found.name);
+  return {
+    content: `ILLEGAL: "${pretty}" requires ${found.requirement} — the character lacks ${missing}. It does NOT happen and no action is spent. Do something the sheet supports.`,
+    isError: true,
+    summaryLine: `- ${pretty}: NOT possible — requires ${found.requirement}.`,
+  };
+}
+
+/**
+ * Condição oficial de PF2e? Aceita a forma valuada ("frightened 2") e a
+ * família "persistent X damage". Whitelist = conditions.json (44 oficiais).
+ */
+export function isOfficialCondition(cond: string): boolean {
+  const c = cond.toLowerCase().trim();
+  if (!c) return false;
+  if (/^persistent\b.*damage(\s+\d+)?$/.test(c)) return true;
+  const name = c.replace(/\s+\d+$/, "");
+  return officialConditions().has(name);
+}
+
+/** Sugestões próximas para uma condição inválida (erro educativo). */
+function conditionSuggestions(bad: string): string {
+  const tokens = bad.toLowerCase().split(/[^a-z-]+/).filter((t) => t.length > 3);
+  const near = [...officialConditions()].filter((n) =>
+    tokens.some((t) => n.includes(t) || t.includes(n)),
+  );
+  return (near.length ? near : ["frightened 1", "off-guard", "prone", "grabbed"])
+    .slice(0, 4)
+    .join(", ");
+}
+
+/** Grava o uso de uma atividade com Frequency (par do `frequencyLimit`). */
+export function commitFrequency(session: Session, text: string): void {
+  const freq = activityFrequency(text);
+  if (!freq) return;
+  const store = frequencyStore(session, freq.per);
+  store?.set(freq.name, (store.get(freq.name) ?? 0) + 1);
+}
 
 /**
  * O jogador caiu a 0 HP: entra em dying 1 (2 se foi crit) + wounded acumulado,
@@ -146,7 +274,7 @@ const TOOLS: ChatCompletionTool[] = [
           agile: {
             type: "boolean",
             description:
-              "ATTACKS ONLY: true if the weapon has the agile trait (MAP -4/-8 instead of -5/-10). Look it up if unsure.",
+              "ATTACKS ONLY: true if the weapon has the agile trait (MAP -4/-8 instead of -5/-10). For weapons on the character sheet the engine reads the trait from the rules data and IGNORES this — only pass it for weapons the sheet doesn't list (improvised, unarmed).",
           },
           actions: {
             type: "number",
@@ -187,6 +315,34 @@ const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "use_item",
+      description:
+        "Uses/consumes an item from the character's Equipment (potion, elixir, bomb, torch...). The ENGINE verifies the sheet, spends the real quantity, and resolves the real effect: a bomb is thrown as a Strike with the item's REAL statblock (pass `target`); a healing potion heals its listed dice automatically. Costs 2 actions in combat (draw + use). ALWAYS use this tool for items — never spend_actions or update_state.",
+      parameters: {
+        type: "object",
+        properties: {
+          item: {
+            type: "string",
+            description:
+              "The item's name as listed in Equipment, e.g. 'Healing Potion (Minor)' or \"Alchemist's Fire\".",
+          },
+          target: {
+            type: "string",
+            description:
+              "BOMBS/offensive items only: the id or name of the combatant being targeted.",
+          },
+          reason: {
+            type: "string",
+            description: "What the character does with the item.",
+          },
+        },
+        required: ["item", "reason"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "start_combat",
       description:
         "Begins a combat encounter. Call this ONCE when a fight starts. The engine adds the player, rolls initiative for everyone, and assigns real AC/HP by creature level. After this, resolve turns with roll_check (attacks), roll_damage, and end_turn.",
@@ -209,6 +365,12 @@ const TOOLS: ChatCompletionTool[] = [
               },
               required: ["name"],
             },
+          },
+          difficulty: {
+            type: "string",
+            enum: ["trivial", "low", "moderate", "severe", "extreme"],
+            description:
+              "Intended encounter difficulty (default 'moderate'). Use 'severe'/'extreme' ONLY for climactic boss moments. The engine enforces the PF2e XP budget for the REAL party size and trims anything over it — 'extreme' is the hard ceiling.",
           },
         },
         required: ["enemies"],
@@ -329,6 +491,19 @@ interface ToolOutcome {
   endedTurn?: boolean;
 }
 
+/** Finds the sheet weapon a roll's skill/weapon name refers to (null if none). */
+export function findSheetWeapon(c: Character, ref: string): Weapon | null {
+  const key = ref.toLowerCase().trim();
+  if (!key) return null;
+  return (
+    c.weapons.find((w) => w.name.toLowerCase() === key) ??
+    c.weapons.find((w) => key.includes(w.name.toLowerCase())) ??
+    (key.length >= 3
+      ? (c.weapons.find((w) => w.name.toLowerCase().includes(key)) ?? null)
+      : null)
+  );
+}
+
 /** Attack bonus for a Strike: the player's weapon bonus, or the enemy's benchmark. */
 function combatAttackModifier(
   session: Session,
@@ -405,6 +580,22 @@ function titleCase(s: string): string {
   return s.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * Attack bonus for throwing a bomb: DEX + weapon proficiency (bombs are
+ * martial thrown weapons) + the item's own bonus. Sheets parsed before
+ * weaponProficiencies existed fall back to the best weapon attack.
+ */
+function bombAttackBonus(c: Character, record: RuleRecord): number {
+  const item = record.bonus ?? 0;
+  const cat = record.weaponCategory === "simple" ? "simple" : "martial";
+  const rank = c.weaponProficiencies?.[cat];
+  if (rank != null) {
+    const prof = rank > 0 ? c.level + rank * 2 : 0;
+    return c.abilityModifiers.dex + prof + item;
+  }
+  return Math.max(0, ...c.weapons.map((w) => w.attack)) + item;
+}
+
 /** Number of Sneak Attack dice (d6) the character deals, or 0 if they lack it. */
 function sneakAttackDice(session: Session): number {
   const c = session.character;
@@ -431,7 +622,38 @@ function enemyLevelFor(name: string): number {
   return DEFAULT_ENEMY_LEVEL;
 }
 
-async function executeTool(
+/** Difficulty declared by the model; anything unrecognized falls back to "moderate". */
+function parseDifficulty(v: unknown): EncounterDifficulty {
+  const s = String(v ?? "").toLowerCase().trim();
+  return (ENCOUNTER_DIFFICULTIES as readonly string[]).includes(s)
+    ? (s as EncounterDifficulty)
+    : "moderate";
+}
+
+/** Budget-cut annotations for the mechanical summary (audit trail). */
+function budgetNotes(plan: EncounterPlan): string {
+  const parts: string[] = [];
+  if (plan.trimmedOver.length) {
+    const cut = plan.trimmedOver.map((s) => `${s.count}× ${s.name}`).join(", ");
+    parts.push(`[budget: dropped ${cut} — over ${plan.requested} ${plan.budget} XP for this party]`);
+  }
+  if (plan.droppedForbidden.length) {
+    const cut = plan.droppedForbidden
+      .map((s) => `${s.name} (level ${s.level} > party level +4)`)
+      .join(", ");
+    parts.push(`[forbidden: ${cut}]`);
+  }
+  if (plan.downleveled) {
+    parts.push(
+      `[budget: ${plan.downleveled.name} weakened from level ${plan.downleveled.from} to ${plan.downleveled.to} to fit]`,
+    );
+  }
+  return parts.length ? ` ${parts.join(" ")}` : "";
+}
+
+// Exportada para os testes unitários (use_item, guards) — o fluxo normal só a
+// chama via runRulesStage.
+export async function executeTool(
   session: Session,
   name: string,
   input: Record<string, unknown>,
@@ -487,9 +709,32 @@ async function executeTool(
             summaryLine: `- ${titleCase(skill)} Strike: NOT taken — costs ${cost}, only ${attacker.actionsRemaining} action(s) left.`,
           };
         }
+        // Requirements + Frequency do dataset: peek antes, commit depois de
+        // todas as validações — só o que acontece de fato queima o limite.
+        // `activity && cost === 0` = rolagem seguinte do MESMO uso (Twin Feint,
+        // 2 Strikes): não conta como um segundo uso.
+        if (attacker.kind === "player" && !(activity && cost === 0)) {
+          const reqBlock = requirementBlocked(session, `${reason} ${skill}`);
+          if (reqBlock) return reqBlock;
+          const freqBlock = frequencyLimit(session, `${reason} ${skill}`);
+          if (freqBlock) return freqBlock;
+          commitFrequency(session, `${reason} ${skill}`);
+        }
         if (activity && cost > 0) chargedSet?.add(activity.name);
 
-        const agile = input.agile === true;
+        // Agile from DATA, not from the model: when the player's weapon is on
+        // the sheet, its traits come from equipment.json and the model's
+        // `agile` param is ignored. The param only counts for weapons the
+        // engine can't identify (improvised, unarmed variants).
+        let agile = input.agile === true;
+        let agileSource = "model";
+        if (attacker.kind === "player") {
+          const sheetWeapon = findSheetWeapon(session.character, skill);
+          if (sheetWeapon) {
+            agile = itemTraits(sheetWeapon.name).includes("agile");
+            agileSource = "sheet";
+          }
+        }
         const baseMod = combatAttackModifier(session, attacker, skill);
         const map = mapPenalty(attacker.mapProgress, agile);
         // Conditions as real mechanics: off-guard −2 AC, frightened −N to
@@ -516,7 +761,7 @@ async function executeTool(
             : critMiss
               ? "criticalMiss"
               : "miss";
-        const mapNote = map ? ` [MAP ${map}]` : "";
+        const mapNote = map ? ` [MAP ${map}${agile ? ` agile:${agileSource}` : ""}]` : "";
 
         // On a hit, roll and apply damage automatically (no separate tool call).
         let damageLine = "";
@@ -615,6 +860,15 @@ async function executeTool(
           ? 0
           : Math.max(skillActivity.cost, skillBase)
         : skillBase;
+      // Requirements + Frequency: peek antes de cobrar; rolagem seguinte do
+      // mesmo uso (skillCost 0 com atividade já cobrada) não conta de novo.
+      const skillFreqCounts = !(skillActivity && skillCost === 0);
+      if (skillFreqCounts) {
+        const reqBlock = requirementBlocked(session, `${reason} ${skill}`);
+        if (reqBlock) return reqBlock;
+        const freqBlock = frequencyLimit(session, `${reason} ${skill}`);
+        if (freqBlock) return freqBlock;
+      }
       if (combat?.active && skillCost > 0) {
         const you = playerOf(combat);
         if (you && !you.defeated) {
@@ -630,6 +884,7 @@ async function executeTool(
           emit({ type: "state", state: session.state });
         }
       }
+      if (skillFreqCounts) commitFrequency(session, `${reason} ${skill}`);
       const result = rollCheck(`${reason} (${skill} vs DC ${dc})`, modifier, dc);
       emit({ type: "check", result });
       return {
@@ -639,14 +894,29 @@ async function executeTool(
     }
     case "start_combat": {
       const raw = Array.isArray(input.enemies) ? input.enemies : [];
-      const makeEnemies = (): Combatant[] => {
+      const specs: EnemySpec[] = [];
+      for (const e of raw as Record<string, unknown>[]) {
+        // Escape debris from the model's broken JSON (`Scavenger\" (Thug)`)
+        // must not leak into combatant names — it also breaks dedupe.
+        const eName =
+          String(e?.name ?? "Enemy")
+            .replace(/[\\"]/g, "")
+            .replace(/\s+/g, " ")
+            .trim() || "Enemy";
+        const rawCount = Number(e?.count ?? 1);
+        const count = Number.isFinite(rawCount) ? Math.max(1, Math.min(8, rawCount)) : 1;
+        const rawLevel = Number(e?.level);
+        const level =
+          e?.level != null && Number.isFinite(rawLevel) ? rawLevel : enemyLevelFor(eName);
+        specs.push({ name: eName, level, count });
+      }
+      const difficulty = parseDifficulty(input.difficulty);
+      const partyLevel = session.character.level;
+      const instantiate = (accepted: EnemySpec[]): Combatant[] => {
         const out: Combatant[] = [];
-        for (const e of raw as Record<string, unknown>[]) {
-          const eName = String(e?.name ?? "Enemy");
-          const count = Math.max(1, Math.min(8, Number(e?.count ?? 1)));
-          const level = e?.level != null ? Number(e.level) : enemyLevelFor(eName);
-          for (let i = 0; i < count; i++) {
-            out.push(enemyCombatant(count > 1 ? `${eName} ${i + 1}` : eName, level));
+        for (const s of accepted) {
+          for (let i = 0; i < s.count; i++) {
+            out.push(enemyCombatant(s.count > 1 ? `${s.name} ${i + 1}` : s.name, s.level));
           }
         }
         return out;
@@ -656,21 +926,35 @@ async function executeTool(
       // Instead let genuinely new foes join as reinforcements.
       const existing = session.state.combat;
       if (existing?.active) {
-        const added: Combatant[] = [];
-        for (const foe of makeEnemies()) {
-          // Skip foes already in the fight (fuzzy match) so a re-issued
-          // start_combat with a slightly different name can't spawn a duplicate.
-          if (!hasCombatantNamed(existing, foe.name)) {
-            existing.combatants.push(foe);
-            added.push(foe);
-          }
+        // Dedupe FIRST (fuzzy) so a re-issued start_combat with a slightly
+        // different name can't spawn a duplicate NOR spend encounter budget.
+        const novel = specs.filter((s) => !hasCombatantNamed(existing, s.name));
+        const partySize = partySizeOf(existing.combatants);
+        // One encounter, one budget: DEFEATED enemies still count, so the
+        // model can't escalate the same fight in endless waves.
+        let existingXp = 0;
+        for (const c of existing.combatants) {
+          if (c.kind !== "enemy") continue;
+          existingXp += creatureXp(c.level ?? DEFAULT_ENEMY_LEVEL, partyLevel) ?? 0;
         }
+        const plan = planEncounter(novel, existingXp, { partyLevel, partySize, difficulty });
+        const added = instantiate(plan.accepted);
         if (added.length) {
+          existing.combatants.push(...added);
           existing.combatants.sort((a, b) => b.initiative - a.initiative);
           emit({ type: "state", state: session.state });
+          const names = added.map((c) => c.name).join(", ");
+          const note = `Encounter now: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`;
           return {
-            content: `Combat already active; reinforcements joined: ${added.map((c) => c.name).join(", ")}.`,
-            summaryLine: `- Reinforcements join the fight: ${added.map((c) => c.name).join(", ")}.`,
+            content: `Combat already active; reinforcements joined: ${names}. ${note}${budgetNotes(plan)}`,
+            summaryLine: `- Reinforcements join the fight: ${names}. ${note}${budgetNotes(plan)}`,
+          };
+        }
+        if (novel.length) {
+          // Everything new was cut by the budget — nothing joins.
+          return {
+            content: `Reinforcements would exceed the encounter budget (${plan.requested} ${plan.budget} XP for this party): none joined. Resolve the current foes.`,
+            summaryLine: "- Reinforcements held back by the encounter budget: none joined.",
           };
         }
         return {
@@ -679,17 +963,29 @@ async function executeTool(
       }
 
       const player = playerCombatant(session.character, session.state.currentHp);
-      const combat = buildCombat([player, ...makeEnemies()]);
+      const partySize = partySizeOf([player]);
+      const plan = planEncounter(specs, 0, { partyLevel, partySize, difficulty });
+      const combat = buildCombat([player, ...instantiate(plan.accepted)]);
       // This message is the player's turn: give them a full set of actions.
       if (player.actionsRemaining < 3) player.actionsRemaining = 3;
+      // Combate novo zera os limites de Frequency de período longo (1/hour...).
+      combatFrequencyUsed.set(session, new Map());
       session.state.combat = combat;
       emit({ type: "state", state: session.state });
       const order = combat.combatants
         .map((c) => `${c.name} (init ${c.initiative}, AC ${c.ac}, ${c.currentHp} HP)`)
         .join("; ");
+      // Passivos aplicados pela engine ficam visíveis no resumo (auditoria).
+      const passive = passiveFeatBonus(session.character, "initiative");
+      const passiveNote = passive.total
+        ? ` [+${passive.total} initiative from ${passive.sources.join(", ")}]`
+        : "";
+      const note = specs.length
+        ? ` Encounter: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`
+        : "";
       return {
-        content: `Combat started. Initiative order: ${order}`,
-        summaryLine: `- Combat begins (round 1). Initiative: ${order}.`,
+        content: `Combat started.${note} Initiative order: ${order}${passiveNote}${budgetNotes(plan)}`,
+        summaryLine: `- Combat begins (round 1).${note} Initiative: ${order}.${passiveNote}${budgetNotes(plan)}`,
       };
     }
     case "end_turn": {
@@ -718,31 +1014,27 @@ async function executeTool(
       const you = playerOf(combat);
       if (!you || you.defeated) return { content: "No active player combatant.", isError: true };
       const reason = String(input.reason ?? "activity");
-      // Ação de ITEM só existe se o item existir (o modelo gastou 1 ação
-      // "bebendo" uma poção que não estava no inventário — a narração então
-      // mostrou o gole). Mesmo espírito do guard de cura: ficha manda.
+      // Uso de ITEM tem tool própria: use_item verifica a ficha, gasta a
+      // quantidade de verdade e resolve o efeito real. spend_actions para item
+      // criaria um caminho paralelo sem contador — redireciona sempre.
       const itemWord = reason.match(
         /\b(potion|elixir|tonic|flask|bomb|alchemical|acid|scroll|oil|talisman|antidote|antiplague)\b/i,
       )?.[0];
       if (itemWord) {
-        const family = /potion|elixir|tonic/i.test(itemWord)
-          ? /potion|elixir|tonic/i
-          : /flask|bomb|alchemical|acid/i.test(itemWord)
-            ? /flask|bomb|alchemical|acid/i
-            : new RegExp(itemWord, "i");
-        const has = session.character.equipment.some((e) => family.test(e.name));
-        if (!has) {
-          return {
-            content: `REJECTED: there is no "${itemWord}" item in the character's Equipment — this action does NOT happen and no action is spent. Resolve the rest of the turn without it.`,
-            isError: true,
-            summaryLine: `- ${reason}: FAILED — no such item in the character's Equipment; their hand finds nothing.`,
-          };
-        }
+        return {
+          content: `Use the use_item tool for items ("${itemWord}"): it checks the Equipment, spends the real quantity, and resolves the real effect. No action was spent here — retry with use_item.`,
+          isError: true,
+        };
       }
       // O dataset manda no custo quando o reason cita a atividade (o modelo
       // chamou spend_actions com 1 para Improvised Repair, que custa 3).
       const spendActivity = multiActionCost(reason);
       const spendCharged = turnActivityCharged.get(session);
+      // Requirements + Frequency: peek antes de cobrar, commit após.
+      const spendReqBlock = requirementBlocked(session, reason);
+      if (spendReqBlock) return spendReqBlock;
+      const spendFreqBlock = frequencyLimit(session, reason);
+      if (spendFreqBlock) return spendFreqBlock;
       const cost =
         spendActivity && !spendCharged?.has(spendActivity.name)
           ? Math.max(spendActivity.cost, clampActionCost(input.actions))
@@ -758,10 +1050,190 @@ async function executeTool(
       // não pode transformar a próxima tentativa em custo reduzido).
       if (spendActivity) spendCharged?.add(spendActivity.name);
       you.actionsRemaining -= cost;
+      commitFrequency(session, reason);
       emit({ type: "state", state: session.state });
       return {
         content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.`,
         summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).`,
+      };
+    }
+    case "use_item": {
+      const itemName = String(input.item ?? "").trim();
+      const reason = String(input.reason ?? itemName);
+      if (!itemName) {
+        return { content: "Missing 'item': pass the Equipment item's name.", isError: true };
+      }
+      // Grounding: o item PRECISA estar no Equipment com quantidade > 0. A
+      // mão vazia é mostrada em ficção pelo narrador (summaryLine).
+      const equipment = session.character.equipment;
+      const key = itemName.toLowerCase();
+      const owned =
+        equipment.find((e) => e.name.toLowerCase() === key) ??
+        equipment.find(
+          (e) =>
+            key.includes(e.name.toLowerCase()) || e.name.toLowerCase().includes(key),
+        );
+      if (!owned || owned.qty <= 0) {
+        const carried =
+          equipment
+            .filter((e) => e.qty > 0)
+            .map((e) => (e.qty > 1 ? `${e.name} x${e.qty}` : e.name))
+            .join(", ") || "nothing";
+        return {
+          content: `REJECTED: no "${itemName}" in the character's Equipment (carried: ${carried}). It does NOT exist in their hands and nothing is spent. Resolve the turn without it.`,
+          isError: true,
+          summaryLine: `- Use ${itemName}: FAILED — no such item in the Equipment; their hand finds nothing.`,
+        };
+      }
+
+      const combat = session.state.combat;
+      const you = combat?.active ? playerOf(combat) : null;
+      const inCombat = !!you && !you.defeated;
+      const record = itemRecord(owned.name);
+      const traits = record?.traits ?? [];
+      const isBomb = traits.includes("bomb") && !!record?.damage;
+      // Tolera palavras entre a fórmula e "Hit Points" ("regain 1d8 healing
+      // Hit Points" — o tipo vem do @Damage do Foundry).
+      const healMatch = record
+        ? /(\d+)d(\d+)(?:\s*\+\s*(\d+))?[^.]{0,40}?(?:hit points|hp)\b/i.exec(record.text)
+        : null;
+      const isHealing =
+        !!healMatch && /potion|elixir|oil|healing/i.test(`${owned.name} ${traits.join(" ")}`);
+
+      // Custo RAW em combate: sacar (Interact) + usar. Itens sem mecânica
+      // própria (tocha, corda) cobram só o Interact.
+      const cost = inCombat ? (isBomb || isHealing ? 2 : 1) : 0;
+      if (inCombat && you!.actionsRemaining < cost) {
+        return {
+          content: `ILLEGAL: using ${owned.name} costs ${cost} action(s) (draw + use) but the player has only ${you!.actionsRemaining} left this turn. It does NOT happen.`,
+          isError: true,
+          summaryLine: `- Use ${owned.name}: NOT done — costs ${cost} action(s), only ${you!.actionsRemaining} left.`,
+        };
+      }
+      const consume = () => {
+        owned.qty -= 1;
+        if (owned.qty <= 0) equipment.splice(equipment.indexOf(owned), 1);
+      };
+      const qtyNote = () =>
+        owned.qty > 0 ? `${owned.qty} left` : `that was the last one`;
+
+      // BOMBA: Strike de arremesso com o statblock REAL do item (dataset) —
+      // não os stats da arma da ficha (bug do smoke de 2026-07-05).
+      if (isBomb) {
+        if (!inCombat || !input.target) {
+          return {
+            content: `"${owned.name}" is a bomb: in combat, pass 'target' and the engine resolves a real Strike with its statblock. Outside combat there is nothing to hit — don't consume it idly.`,
+            isError: true,
+          };
+        }
+        const target = findCombatant(combat!, String(input.target));
+        if (!target) {
+          const valid = combat!.combatants
+            .filter((c) => !c.defeated)
+            .map((c) => `"${c.name}"`)
+            .join(", ");
+          return {
+            content: `No combatant "${String(input.target)}". Valid targets: ${valid}. Retry use_item with one of these exact names.`,
+            isError: true,
+          };
+        }
+        you!.actionsRemaining -= cost;
+        const atkBonus = bombAttackBonus(session.character, record!);
+        const map = mapPenalty(you!.mapProgress, traits.includes("agile"));
+        const ac = effectiveAC(target);
+        const statusPen = attackStatusPenalty(you!);
+        const mapLabel = map ? `, MAP ${map}` : "";
+        const result = rollCheck(
+          `${reason} (${owned.name} vs AC ${ac}${mapLabel})`,
+          atkBonus + map + statusPen,
+          ac,
+        );
+        you!.mapProgress += 1;
+        const hit = result.degree === "success" || result.degree === "criticalSuccess";
+        const crit = result.degree === "criticalSuccess";
+        const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : result.degree === "criticalFailure" ? "CRITICAL MISS" : "MISS";
+        let damageLine = "";
+        let dmg: { amount: number; type: string } | null = null;
+        if (hit) {
+          const base = rollDice(record!.damage!.dice, parseDie(record!.damage!.die));
+          let amount = crit ? base * 2 : base;
+          if (record!.splash) amount += record!.splash;
+          dmg = { amount, type: record!.damage!.type };
+          const before = target.currentHp;
+          applyDamage(target, amount);
+          turnStruck.get(session)?.add(target.id);
+          let extra = "";
+          if (record!.persistent) {
+            const pcond = `persistent ${record!.persistent.type} damage ${record!.persistent.number}`;
+            if (!target.conditions.includes(pcond)) target.conditions.push(pcond);
+            extra = ` + ${pcond}`;
+          }
+          if (record!.splash) extra += ` (incl. ${record!.splash} splash)`;
+          const defeatedNote = target.defeated ? ` — ${target.name} DEFEATED` : "";
+          damageLine = ` for ${amount} ${dmg.type}${extra}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
+        }
+        consume(); // a bomba se foi mesmo errando o arremesso
+        result.attack = {
+          attacker: you!.name,
+          target: target.name,
+          attackerKind: "player",
+          outcome: crit ? "criticalHit" : hit ? "hit" : result.degree === "criticalFailure" ? "criticalMiss" : "miss",
+          damage: dmg?.amount ?? null,
+          damageType: dmg?.type ?? null,
+        };
+        emit({ type: "check", result });
+        let endNote = "";
+        if (combat!.active && combatStatus(combat!) !== "ongoing") {
+          combat!.active = false;
+          endNote = " Combat ends: VICTORY.";
+        }
+        emit({ type: "state", state: session.state });
+        return {
+          content: JSON.stringify({
+            ...result,
+            hit,
+            crit,
+            damage: dmg?.amount ?? 0,
+            targetHp: target.currentHp,
+            itemQtyLeft: owned.qty > 0 ? owned.qty : 0,
+            actionsLeft: you!.actionsRemaining,
+          }),
+          summaryLine: `- ${owned.name} thrown: ${you!.name} vs ${target.name}${map ? ` [MAP ${map}]` : ""} → ${verb}${damageLine}. Bomb spent (${qtyNote()}).${endNote}`,
+        };
+      }
+
+      // CURA: a engine rola a fórmula do texto do item e aplica capada.
+      if (isHealing) {
+        if (inCombat) you!.actionsRemaining -= cost;
+        const dice = Number(healMatch![1]);
+        const faces = Number(healMatch![2]);
+        const flat = healMatch![3] ? Number(healMatch![3]) : 0;
+        const healed = rollDice(dice, faces) + flat;
+        const s = session.state;
+        const before = s.currentHp;
+        s.currentHp = Math.min(session.character.maxHp, s.currentHp + healed);
+        if (combat) {
+          const pc = playerOf(combat);
+          if (pc) pc.currentHp = s.currentHp;
+        }
+        consume();
+        emit({ type: "state", state: s });
+        return {
+          content: `Consumed ${owned.name}: healed ${s.currentHp - before} HP (${before}→${s.currentHp}/${session.character.maxHp}). ${qtyNote()}.${inCombat ? ` ${you!.actionsRemaining} action(s) left.` : ""}`,
+          summaryLine: `- ${owned.name} consumed: heals ${s.currentHp - before} HP (${before}→${s.currentHp}/${session.character.maxHp}); ${qtyNote()}.`,
+        };
+      }
+
+      // Item sem mecânica própria: só CONSUMÍVEIS (trait do dataset) gastam
+      // quantidade — corda/tocha continuam no inventário.
+      if (inCombat) you!.actionsRemaining -= cost;
+      const isConsumable = traits.includes("consumable");
+      if (isConsumable) consume();
+      if (inCombat) emit({ type: "state", state: session.state });
+      const spentNote = isConsumable ? ` Consumed (${qtyNote()}).` : "";
+      return {
+        content: `Used ${owned.name}.${spentNote} No mechanical effect — narrate its use.`,
+        summaryLine: `- ${owned.name} used.${spentNote}`,
       };
     }
     case "lookup_rule": {
@@ -815,14 +1287,38 @@ async function executeTool(
         input.hpDelta > 0 &&
         combat?.active
       ) {
-        const healSource = session.character.equipment.some((e) =>
-          /potion|elixir|tonic|healer'?s (toolkit|kit|tools)|salve|balm|medicine/i.test(e.name),
-        );
-        if (!healSource) {
+        const gear = session.character.equipment;
+        // Toolkit habilita cura por HABILIDADE (Battle Medicine, RAW exige o
+        // healer's toolkit) → hpDelta permitido. Consumível bebível é papel do
+        // use_item (contador real). Nada dos dois → cura não existe.
+        const toolkit = gear.some((e) => /healer'?s (toolkit|kit|tools)/i.test(e.name));
+        const drinkable = gear.some((e) => /potion|elixir|tonic|salve|balm/i.test(e.name));
+        if (!toolkit && !drinkable) {
           return {
             content: `REJECTED: no healing source in the character's Equipment (no potion/elixir/healer's toolkit). In-combat healing needs a real item or ability — without one, ${session.character.name} does NOT heal. Resolve the rest of the turn without it.`,
             isError: true,
             summaryLine: `- Healing attempt: FAILED — no healing item in the character's Equipment; no HP recovered.`,
+          };
+        }
+        if (!toolkit) {
+          return {
+            content: `Use the use_item tool to heal with a consumable: it spends the real quantity and rolls the item's real dice. NOTHING was applied here — retry with use_item (e.g. {"item":"Healing Potion (Minor)","reason":"drink it"}). hpDelta is only for healing abilities backed by the sheet (Battle Medicine with a healer's toolkit, a spell).`,
+            isError: true,
+          };
+        }
+      }
+
+      // Whitelist de condições (regras-como-dados): só as 44 oficiais entram
+      // no estado. História-como-condição ("companion: Cat") é rejeitada —
+      // fatos de história vivem na narrativa, não na mecânica.
+      let addConds: string[] = [];
+      if (Array.isArray(input.addConditions)) {
+        addConds = (input.addConditions as unknown[]).map((c) => String(c).toLowerCase().trim());
+        const invalid = addConds.filter((c) => !isOfficialCondition(c));
+        if (invalid.length > 0) {
+          return {
+            content: `REJECTED: ${invalid.map((c) => `"${c}"`).join(", ")} ${invalid.length > 1 ? "are" : "is"} not a PF2e condition — NOTHING was applied. Only official conditions go in state (closest: ${conditionSuggestions(invalid[0]!)}). Story facts are NOT conditions; keep them in the narrative. Retry with official conditions only, e.g. {"addConditions":["frightened 1"]}.`,
+            isError: true,
           };
         }
       }
@@ -849,20 +1345,37 @@ async function executeTool(
           if (input.hpDelta < 0) applyDamage(target, -input.hpDelta);
           else target.currentHp = Math.min(target.maxHp, target.currentHp + input.hpDelta);
         }
-        if (Array.isArray(input.addConditions)) {
-          for (const cond of input.addConditions as string[]) {
-            if (!target.conditions.includes(cond)) target.conditions.push(cond);
-          }
+        for (const cond of addConds) {
+          if (!target.conditions.includes(cond)) target.conditions.push(cond);
         }
         if (Array.isArray(input.removeConditions)) {
-          const remove = new Set(input.removeConditions as string[]);
-          target.conditions = target.conditions.filter((c) => !remove.has(c));
+          // Leniente: remover o que não está lá é no-op, sem whitelist.
+          const remove = new Set(
+            (input.removeConditions as unknown[]).map((c) => String(c).toLowerCase().trim()),
+          );
+          target.conditions = target.conditions.filter((c) => !remove.has(c.toLowerCase()));
         }
         if (target.kind === "player") s.currentHp = target.currentHp;
         emit({ type: "state", state: s });
         return {
           content: `Updated ${target.name}: HP ${target.currentHp}/${target.maxHp}, conditions [${target.conditions.join(", ")}].`,
         };
+      }
+
+      // Target explícito que NÃO resolveu para um combatente ativo (combate
+      // já fechou, alvo morto): nunca cair no estado do jogador — o -12
+      // mirado no "Bandit" recém-morto drenava o HP do Ferro (bateria
+      // 2026-07-06, Dual-Handed Assault).
+      if (targetRef) {
+        const isSelf =
+          targetRef.toLowerCase().includes(session.character.name.toLowerCase()) ||
+          /^(player|me|self|myself)$/i.test(targetRef.trim());
+        if (!isSelf) {
+          return {
+            content: `NOTHING was changed: no active combatant "${targetRef}" (the fight may already be over — the engine had applied all Strike damage). Do not re-apply damage. update_state without a target only touches the PLAYER's own state.`,
+            isError: true,
+          };
+        }
       }
 
       // Default: the player's persistent state.
@@ -872,14 +1385,14 @@ async function executeTool(
           Math.min(session.character.maxHp, s.currentHp + input.hpDelta),
         );
       }
-      if (Array.isArray(input.addConditions)) {
-        for (const cond of input.addConditions as string[]) {
-          if (!s.conditions.includes(cond)) s.conditions.push(cond);
-        }
+      for (const cond of addConds) {
+        if (!s.conditions.includes(cond)) s.conditions.push(cond);
       }
       if (Array.isArray(input.removeConditions)) {
-        const remove = new Set(input.removeConditions as string[]);
-        s.conditions = s.conditions.filter((c) => !remove.has(c));
+        const remove = new Set(
+          (input.removeConditions as unknown[]).map((c) => String(c).toLowerCase().trim()),
+        );
+        s.conditions = s.conditions.filter((c) => !remove.has(c.toLowerCase()));
       }
       // Keep the player's combatant HP in sync during combat.
       if (combat) {
@@ -1076,6 +1589,7 @@ async function runRulesStage(
   // 3 actions (and enemies reset MAP) before resolving this turn's Strikes.
   turnStruck.set(session, new Set());
   turnActivityCharged.set(session, new Set());
+  turnFrequencyUsed.set(session, new Map());
   if (session.state.combat?.active) {
     beginPlayerRound(session.state.combat);
     emit({ type: "state", state: session.state });
@@ -1106,6 +1620,7 @@ async function runRulesStage(
   const consulted: string[] = [];
   let anyTool = false;
   let endedTurn = false;
+  let mechanicalResolved = false;
 
   /** One rules-model exchange: executes any tool calls, returns how many. */
   const runIteration = async (iterLabel: string): Promise<number> => {
@@ -1142,6 +1657,14 @@ async function runRulesStage(
       );
       if (outcome.summaryLine) summaryLines.push(outcome.summaryLine);
       if (outcome.endedTurn) endedTurn = true;
+      if (
+        !outcome.isError &&
+        ["roll_check", "use_item", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
+          tc.function.name,
+        )
+      ) {
+        mechanicalResolved = true;
+      }
       if (tc.function.name === "lookup_rule" && !outcome.isError) {
         consulted.push(outcome.content.split("\n")[0]!.slice(0, 80));
       }
@@ -1174,6 +1697,26 @@ async function runRulesStage(
       });
       for (let i = 0; i < 3; i++) {
         if ((await runIteration(`recheck${i}`)) === 0) break;
+      }
+    }
+  }
+
+  // SECOND CHANCE fora de combate (escada de escalação: o prompt "atividades
+  // nunca são narração pura" reincidiu — Goblin Song na bateria 2026-07-06):
+  // o jogador invocou uma atividade COM regras e nada mecânico foi resolvido.
+  if (!session.state.combat?.active && !mechanicalResolved) {
+    const lastUser = [...session.messages]
+      .reverse()
+      .find((m) => m.role === "user");
+    const invoked =
+      typeof lastUser?.content === "string" ? namedActivity(lastUser.content) : null;
+    if (invoked) {
+      messages.push({
+        role: "user",
+        content: `[ENGINE CHECK] The player invoked "${invoked}", which has RULES (an action, usually with a check), but you resolved NOTHING mechanically. Resolve it now: roll_check with its listed skill vs a real DC (lookup_rule first if unsure) and apply any effect with update_state. Only if it truly cannot apply in this scene, answer in one line why.`,
+      });
+      for (let i = 0; i < 2; i++) {
+        if ((await runIteration(`activity-recheck${i}`)) === 0) break;
       }
     }
   }

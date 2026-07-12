@@ -46,10 +46,14 @@ npx tsx scripts/feat-audit/run-feat-tests.ts     # roda a bateria (--side/--arch
 
 `runTurn` = 2 estágios com o MESMO modelo residente (contextos separados):
 1. **Rules** (`runRulesStage`): tool loop (roll_check, start_combat, end_combat,
-   end_turn, spend_actions, update_state, lookup_rule, get_character) → resumo
-   mecânico determinístico. Em combate: 1 mensagem do jogador = 1 turno completo
-   (3 ações; engine cobra custos, aplica dano, resolve o revide inimigo em código,
-   roda dying/recovery checks quando o jogador cai).
+   end_turn, spend_actions, use_item, update_state, lookup_rule, get_character) →
+   resumo mecânico determinístico. Em combate: 1 mensagem do jogador = 1 turno
+   completo (3 ações; engine cobra custos, aplica dano, resolve o revide inimigo em
+   código, roda dying/recovery checks quando o jogador cai). `start_combat` impõe o
+   **orçamento de XP do encontro** (GM Core) para o tamanho REAL da party
+   (`planEncounter` em combat.ts — solo: moderate 20 XP, teto extreme 40): corta
+   excedente criatura a criatura, nunca começa combate vazio, PL+5 nunca entra e
+   inimigos derrotados seguem contando contra reforços (anti-onda).
 2. **Narrative** (`runNarrativeStage`): narra o resumo (streaming), temperatura
    menor em combate, sem tools.
 

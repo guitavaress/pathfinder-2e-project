@@ -1,8 +1,21 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { Combatant, GameState } from "@pf2e/shared";
-import { resolveEnemyTurns } from "./agent.js";
+import type { Character, Combatant, GameState } from "@pf2e/shared";
+import {
+  commitFrequency,
+  findSheetWeapon,
+  frequencyLimit,
+  isOfficialCondition,
+  requirementBlocked,
+  resolveEnemyTurns,
+} from "./agent.js";
 import { buildCombat } from "./combat.js";
 import type { Session } from "./sessions.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const hasGenerated = existsSync(join(here, "../../data/pf2e/generated"));
 
 /** Minimal combatant (deterministic — no RNG). */
 function mk(partial: Partial<Combatant> & Pick<Combatant, "name" | "kind">): Combatant {
@@ -41,6 +54,131 @@ function sessionWith(player: Combatant, ...enemies: Combatant[]): Session {
 }
 
 const noop = () => {};
+
+// Frequency lê o dataset gerado (gitignorado) — pulado em clone fresco.
+describe.skipIf(!hasGenerated)("frequency enforcement (requer generated/)", () => {
+  // Fixtures do dataset: "Sharpened Senses" = 1/round; "Chilling Paralysis" = 1/PT1H.
+  const freshSession = (combatActive: boolean): Session =>
+    ({
+      id: "t",
+      state: {
+        sessionId: "t",
+        currentHp: 10,
+        conditions: [],
+        flags: {},
+        combat: combatActive ? { active: true, round: 1, turnIndex: 0, combatants: [] } : null,
+      },
+    }) as unknown as Session;
+
+  it("once per round: 1º uso passa, 2º no mesmo turno é bloqueado", () => {
+    const s = freshSession(false);
+    const text = "I use Sharpened Senses to find the thief";
+    expect(frequencyLimit(s, text)).toBeNull();
+    commitFrequency(s, text);
+    const blocked = frequencyLimit(s, text);
+    expect(blocked?.isError).toBe(true);
+    expect(blocked?.content).toContain("Frequency 1/round");
+  });
+
+  it("sessão nova (turno novo) libera o uso de novo", () => {
+    const s1 = freshSession(false);
+    commitFrequency(s1, "Sharpened Senses");
+    expect(frequencyLimit(s1, "Sharpened Senses")?.isError).toBe(true);
+    // WeakMap por sessão: outra sessão/turno não herda o gasto.
+    expect(frequencyLimit(freshSession(false), "Sharpened Senses")).toBeNull();
+  });
+
+  it("período longo (1/hour): dentro do MESMO combate é bloqueado", () => {
+    const s = freshSession(true);
+    expect(frequencyLimit(s, "Chilling Paralysis on the guard")).toBeNull();
+    commitFrequency(s, "Chilling Paralysis on the guard");
+    expect(frequencyLimit(s, "I repeat Chilling Paralysis")?.isError).toBe(true);
+  });
+
+  it("período longo FORA de combate: engine não julga (tempo narrativo)", () => {
+    const s = freshSession(false);
+    commitFrequency(s, "Chilling Paralysis");
+    expect(frequencyLimit(s, "Chilling Paralysis")).toBeNull();
+  });
+
+  it("texto sem atividade com frequency → null", () => {
+    expect(frequencyLimit(freshSession(true), "I strike with my dagger")).toBeNull();
+  });
+});
+
+describe.skipIf(!hasGenerated)("requirementBlocked (requer generated/)", () => {
+  const weapon = (name: string) => ({ name, attack: 10, die: "d6", damageBonus: 0, damageType: "S" });
+  const sessionWithSheet = (weapons: string[], equipment: string[] = []): Session =>
+    ({
+      character: {
+        weapons: weapons.map(weapon),
+        armor: [],
+        equipment: equipment.map((name) => ({ name, qty: 1 })),
+      },
+    }) as unknown as Session;
+
+  it("Double Slice com 1 arma → bloqueado; com 2 → passa", () => {
+    const one = requirementBlocked(sessionWithSheet(["Longsword"]), "I use Double Slice");
+    expect(one?.isError).toBe(true);
+    expect(one?.content).toContain("Double Slice");
+    expect(requirementBlocked(sessionWithSheet(["Longsword", "Shortsword"]), "I use Double Slice")).toBeNull();
+  });
+
+  it("Raise a Shield sem escudo → bloqueado; com escudo no Equipment → passa", () => {
+    expect(requirementBlocked(sessionWithSheet(["Longsword"]), "Raise a Shield")?.isError).toBe(true);
+    expect(
+      requirementBlocked(sessionWithSheet(["Longsword"], ["Steel Shield"]), "Raise a Shield"),
+    ).toBeNull();
+  });
+
+  it("requirement que a engine não julga (postura/estado) → passa", () => {
+    // "Twin Feint" exige duas armas? Não — sem requirement dos padrões → null.
+    expect(requirementBlocked(sessionWithSheet(["Dagger"]), "I strike with my dagger")).toBeNull();
+  });
+});
+
+describe("isOfficialCondition (whitelist)", () => {
+  it("aceita condições oficiais, com e sem valor", () => {
+    expect(isOfficialCondition("frightened 2")).toBe(true);
+    expect(isOfficialCondition("off-guard")).toBe(true);
+    expect(isOfficialCondition("Prone")).toBe(true); // case-insensitive
+    expect(isOfficialCondition("dying 3")).toBe(true);
+    expect(isOfficialCondition("persistent fire damage 2")).toBe(true);
+  });
+
+  it("rejeita história-como-condição e nomes inventados", () => {
+    expect(isOfficialCondition("companion: Cat")).toBe(false);
+    expect(isOfficialCondition("angry")).toBe(false);
+    expect(isOfficialCondition("blessed by the moon")).toBe(false);
+    expect(isOfficialCondition("")).toBe(false);
+  });
+});
+
+describe("findSheetWeapon", () => {
+  const c = {
+    weapons: [
+      { name: "Dagger", attack: 13, die: "d4", damageBonus: 0, damageType: "P" },
+      { name: "Shortbow", attack: 13, die: "d6", damageBonus: 0, damageType: "P" },
+    ],
+  } as unknown as Character;
+
+  it("casa por nome exato (case-insensitive)", () => {
+    expect(findSheetWeapon(c, "dagger")?.name).toBe("Dagger");
+  });
+
+  it("casa quando a referência CONTÉM o nome ('my trusty dagger')", () => {
+    expect(findSheetWeapon(c, "my trusty dagger strike")?.name).toBe("Dagger");
+  });
+
+  it("casa quando o nome contém a referência ('shortb')", () => {
+    expect(findSheetWeapon(c, "shortb")?.name).toBe("Shortbow");
+  });
+
+  it("null para arma que não está na ficha", () => {
+    expect(findSheetWeapon(c, "greatsword")).toBeNull();
+    expect(findSheetWeapon(c, "")).toBeNull();
+  });
+});
 
 describe("resolveEnemyTurns", () => {
   it("cada inimigo vivo faz 2 Strikes contra o jogador", () => {
