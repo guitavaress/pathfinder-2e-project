@@ -45,9 +45,12 @@ npx tsx scripts/feat-audit/run-feat-tests.ts     # roda a bateria (--side/--arch
 ## Arquitetura do turno (GM)
 
 `runTurn` = 2 estágios com o MESMO modelo residente (contextos separados):
-1. **Rules** (`runRulesStage`): tool loop (roll_check, cast_spell, start_combat,
-   end_combat, end_turn, spend_actions, use_item, update_state, lookup_rule,
-   get_character) → resumo mecânico determinístico. Em combate: 1 mensagem do
+1. **Rules** (`runRulesStage`): tool loop (roll_check, cast_spell, rest,
+   start_combat, end_combat, end_turn, spend_actions, use_item, update_state,
+   lookup_rule, get_character) → resumo mecânico determinístico. `rest` cura
+   com as regras reais (overnight: CON×nível + slots/focus; Treat Wounds:
+   Medicine check DC 15 com toolkit) — cura inventada via `update_state` é
+   rejeitada dentro e fora de combate. Em combate: 1 mensagem do
    jogador = 1 turno completo (3 ações; engine cobra custos, aplica dano, resolve
    o revide inimigo em código, roda dying/recovery checks quando o jogador cai).
    Inimigos nomeados usam o **statblock oficial do bestiary** (`creatureRecord` —

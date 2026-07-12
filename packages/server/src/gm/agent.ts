@@ -352,6 +352,30 @@ const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "rest",
+      description:
+        "Rests to recover, with the REAL PF2e rules (the engine computes the healing — NEVER invent HP with update_state). kind 'overnight' = a full night's sleep: heals CON modifier × level HP, restores ALL spell slots and focus points, removes fatigued and reduces drained/doomed by 1. kind 'treat_wounds' = 10 minutes of first aid: Medicine check (requires trained Medicine AND a healer's toolkit in the Equipment) healing 2d8 HP on a success, 4d8 on a critical. ALWAYS call this when the player rests, sleeps, camps, treats wounds, or asks to recover HP outside combat.",
+      parameters: {
+        type: "object",
+        properties: {
+          kind: {
+            type: "string",
+            enum: ["overnight", "treat_wounds"],
+            description:
+              "'overnight' for sleeping/camping through the night; 'treat_wounds' for a 10-minute Medicine treatment.",
+          },
+          reason: {
+            type: "string",
+            description: "What the character does to rest.",
+          },
+        },
+        required: ["kind"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "cast_spell",
       description:
         "Casts a spell from the character's sheet. The ENGINE validates the spell is known, spends the real spell slot (or focus point; cantrips are free and auto-heightened), charges the cast actions, and resolves the REAL effect from the rules data: spell attack vs the target's AC, or the target's ACTUAL save vs the character's spell DC, with structured damage/healing (heightened by rank). ALWAYS use this tool for spells — never roll_check/spend_actions/update_state.",
@@ -1011,6 +1035,93 @@ export async function executeTool(
       return {
         content: JSON.stringify(result),
         summaryLine: `- ${checkReason(result.label)}: ${DEGREE_EN[result.degree]}.`,
+      };
+    }
+    case "rest": {
+      const kind = String(input.kind ?? "").toLowerCase().trim();
+      const combat = session.state.combat;
+      if (combat?.active) {
+        return {
+          content:
+            "ILLEGAL: cannot rest during combat. Resolve or leave the fight first (end_combat when the story moves past it).",
+          isError: true,
+        };
+      }
+      const c = session.character;
+
+      if (kind === "overnight") {
+        // RAW: descanso noturno cura CON (mín. 1) × nível; prepara magias de
+        // novo (slots/focus); remove fatigued; drained/doomed caem 1 por dia.
+        const conMod = c.abilityModifiers.con;
+        const heal = Math.max(1, conMod) * c.level;
+        const before = session.state.currentHp;
+        session.state.currentHp = Math.min(c.maxHp, before + heal);
+        session.state.spellSlotsUsed = undefined;
+        session.state.focusPointsUsed = undefined;
+        let conds = session.state.conditions.filter((x) => !/^fatigued$/i.test(x));
+        const drained = conditionValueIn(conds, "drained");
+        if (drained > 0) conds = setValuedCondition(conds, "drained", drained - 1);
+        const doomed = conditionValueIn(conds, "doomed");
+        if (doomed > 0) conds = setValuedCondition(conds, "doomed", doomed - 1);
+        session.state.conditions = conds;
+        emit({ type: "state", state: session.state });
+        const gained = session.state.currentHp - before;
+        const slotsNote = c.spellcasting.length ? " Spell slots and focus points restored." : "";
+        return {
+          content: `Overnight rest (8h): healed ${gained} HP (CON ${conMod >= 0 ? "+" : ""}${conMod} × level ${c.level}): ${before}→${session.state.currentHp}/${c.maxHp}.${slotsNote} Fatigued removed; drained/doomed reduced by 1. A full night passes in the story.`,
+          summaryLine: `- A full night's rest: ${session.character.name} recovers ${gained} HP (${before}→${session.state.currentHp}) and wakes with renewed strength. The night passes.`,
+        };
+      }
+
+      if (kind === "treat_wounds") {
+        // RAW: Medicine treinado + healer's toolkit; DC 15 → 2d8 (crit 4d8),
+        // crit falha causa 1d8. Sem relógio de jogo, o custo de tempo (10 min
+        // + 1h de imunidade) vai para a narração.
+        const med = c.skills["medicine"];
+        if (!med || med.rank < 1) {
+          return {
+            content: `REJECTED: Treat Wounds requires TRAINED Medicine — ${c.name} is untrained. No HP recovered. Overnight rest ('overnight') is the alternative.`,
+            isError: true,
+            summaryLine: `- Treat Wounds: FAILED — ${c.name} lacks the medical training.`,
+          };
+        }
+        const toolkit = c.equipment.some((e) => /healer'?s (toolkit|kit|tools)/i.test(e.name));
+        if (!toolkit) {
+          return {
+            content: `REJECTED: Treat Wounds requires a healer's toolkit and there is none in the Equipment. No HP recovered. Overnight rest ('overnight') is the alternative.`,
+            isError: true,
+            summaryLine: `- Treat Wounds: FAILED — no healer's toolkit in the pack.`,
+          };
+        }
+        const result = rollCheck(`Treat Wounds: Medicine check (DC 15)`, med.modifier, 15);
+        emit({ type: "check", result });
+        const before = session.state.currentHp;
+        let note: string;
+        if (result.degree === "criticalSuccess") {
+          const heal = rollDice(4, 8);
+          session.state.currentHp = Math.min(c.maxHp, before + heal);
+          note = `expert work: recovers ${session.state.currentHp - before} HP (${before}→${session.state.currentHp})`;
+        } else if (result.degree === "success") {
+          const heal = rollDice(2, 8);
+          session.state.currentHp = Math.min(c.maxHp, before + heal);
+          note = `recovers ${session.state.currentHp - before} HP (${before}→${session.state.currentHp})`;
+        } else if (result.degree === "criticalFailure") {
+          const dmg = rollDice(1, 8);
+          session.state.currentHp = Math.max(0, before - dmg);
+          note = `botched treatment: takes ${dmg} damage (${before}→${session.state.currentHp})`;
+        } else {
+          note = "the wounds resist treatment; no HP recovered";
+        }
+        emit({ type: "state", state: session.state });
+        return {
+          content: `Treat Wounds (${DEGREE_EN[result.degree]}): ${note}. Ten minutes pass; these wounds can only be treated again after an hour of story time.`,
+          summaryLine: `- Treat Wounds (ten careful minutes): ${note}.`,
+        };
+      }
+
+      return {
+        content: `Unknown rest kind "${kind}". Use 'overnight' (night's sleep) or 'treat_wounds' (10-minute Medicine treatment).`,
+        isError: true,
       };
     }
     case "cast_spell": {
@@ -1705,9 +1816,23 @@ export async function executeTool(
         };
       }
 
+      // Cura via hpDelta FORA de combate: era livre ("descanso") e o modelo
+      // inventou +15 no play-test 2026-07-12 — agora existe a tool `rest` com
+      // os valores REAIS (overnight/Treat Wounds), então o caminho livre fecha.
+      if (
+        typeof input.hpDelta === "number" &&
+        input.hpDelta > 0 &&
+        !combat?.active
+      ) {
+        return {
+          content:
+            "REJECTED: healing must come from a REAL source — NOTHING was applied. Use the rest tool for recovery (kind 'overnight' heals CON × level and restores spells; kind 'treat_wounds' rolls a real Medicine check), use_item for potions/elixirs, or cast_spell for healing spells. Retry with the right tool.",
+          isError: true,
+        };
+      }
+
       // Cura EM COMBATE exige uma fonte real na ficha (regras-como-dados): o
       // modelo curou o jogador com uma "poção" que não existia no inventário.
-      // Fora de combate o descanso continua livre (regra RAW já ensinada).
       if (
         typeof input.hpDelta === "number" &&
         input.hpDelta > 0 &&
@@ -2364,7 +2489,7 @@ async function runRulesStage(
       }
       if (
         !outcome.isError &&
-        ["roll_check", "use_item", "cast_spell", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
+        ["roll_check", "use_item", "cast_spell", "rest", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
           tc.function.name,
         )
       ) {
