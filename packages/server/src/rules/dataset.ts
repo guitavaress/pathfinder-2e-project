@@ -33,6 +33,58 @@ export interface RuleRecord {
   range?: number;
   /** Weapon proficiency category: "simple" | "martial" | "advanced" | "unarmed". */
   weaponCategory?: string;
+  /** Creatures (bestiary): structured statblock — real AC/HP/saves/attacks.
+   *  Present only when the importer resolved AC and HP (honest absence). */
+  statblock?: CreatureStatblock;
+}
+
+/** An NPC Strike (Foundry "melee" item — ranged attacks included). */
+export interface CreatureAttack {
+  name: string;
+  /** Attack bonus (system.bonus.value). */
+  bonus: number;
+  /** Damage entries in statblock order; category "persistent" preserved for PR2. */
+  damage: { formula: string; type: string; category?: string }[];
+  traits: string[];
+  /** Present when the strike is ranged (system.range.increment). */
+  rangeIncrement?: number;
+  /** attackEffects (grab, knockdown…) — stored, not yet enforced. */
+  effects?: string[];
+}
+
+/** An NPC ability ("action" item: passives, reactions, special actions). */
+export interface CreatureAbility {
+  name: string;
+  actionType: string; // "action" | "reaction" | "free" | "passive"
+  actions: number | null;
+  text: string;
+}
+
+/** An NPC spellcasting entry (DC/attack + granted spell list). */
+export interface CreatureSpellcasting {
+  name: string;
+  tradition: string;
+  type: string; // "prepared" | "spontaneous" | "innate" | "focus"
+  dc: number;
+  attack: number;
+  spells: { name: string; rank: number }[];
+}
+
+export interface CreatureStatblock {
+  ac: number;
+  hp: number;
+  perception: number;
+  saves: { fortitude: number; reflex: number; will: number };
+  abilities?: Record<string, number>;
+  speed?: { land: number; other: { type: string; value: number }[] };
+  size?: string;
+  senses?: string[];
+  immunities?: string[];
+  weaknesses?: { type: string; value: number }[];
+  resistances?: { type: string; value: number }[];
+  attacks: CreatureAttack[];
+  abilitiesList: CreatureAbility[];
+  spellcasting?: CreatureSpellcasting[];
 }
 
 interface SeedAction {
@@ -346,6 +398,71 @@ export function activityRequirement(
     if (t.includes(name)) return { name, requirement };
   }
   return null;
+}
+
+let creaturesByName: Map<string, RuleRecord> | null = null;
+
+/**
+ * Normalizes a combatant/creature name into a bestiary query: drops the
+ * engine's instance suffix ("Goblin Warrior 2"), parentheticals
+ * ("Rat Swarm (Large)") and extra whitespace.
+ */
+function normalizeCreatureQuery(name: string): string {
+  return normalize(name.replace(/\([^)]*\)/g, " ").replace(/\s+\d+\s*$/, ""))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Whole-word containment: "giant rat" inside "ancient giant rat", not "rate". */
+function wordBounded(hay: string, needle: string): boolean {
+  return new RegExp(`(^|\\s)${escapeRegex(needle)}(\\s|$)`).test(hay);
+}
+
+/**
+ * Finds a bestiary record WITH a structured statblock by creature name.
+ * Strategy: exact → model-plural ("Giant Rats") → record name contained
+ * whole-word in the query ("elite Goblin Warrior" → Goblin Warrior; shortest
+ * wins). The REVERSE direction is deliberately not matched: a generic "Thug"
+ * must never bind to a specific "Scarlet Triad Thug" (level 7) — unknown
+ * names fall back to the level benchmark. Never matches across categories.
+ */
+export function creatureRecord(name: string): RuleRecord | null {
+  if (!creaturesByName) {
+    creaturesByName = new Map();
+    for (const r of load()) {
+      if (r.category !== "bestiary" || !r.statblock) continue;
+      const key = normalize(r.name);
+      if (!creaturesByName.has(key)) creaturesByName.set(key, r);
+    }
+  }
+  const q = normalizeCreatureQuery(name);
+  if (!q) return null;
+
+  const exact = creaturesByName.get(q);
+  if (exact) return exact;
+
+  // The model often pluralizes ("three Giant Rats").
+  const singular = q.replace(/s$/, "");
+  if (singular !== q) {
+    const s = creaturesByName.get(singular);
+    if (s) return s;
+  }
+
+  // Longest record name contained in the query wins (most specific:
+  // "elite Goblin Warrior" must hit "Goblin Warrior", not a bare "Goblin").
+  let best: RuleRecord | null = null;
+  let bestLen = 0;
+  for (const [n, r] of creaturesByName) {
+    if (n.length > bestLen && wordBounded(q, n)) {
+      best = r;
+      bestLen = n.length;
+    }
+  }
+  return best;
 }
 
 let conditionNames: Set<string> | null = null;

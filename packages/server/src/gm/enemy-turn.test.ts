@@ -257,3 +257,31 @@ describe("resolveEnemyTurns", () => {
     expect(dead.state.combat!.round).toBe(1); // derrota → não avança
   });
 });
+
+// Strike de statblock real (via sourceName) — lê o dataset gerado.
+describe.skipIf(!hasGenerated)("resolveEnemyTurns com bestiary (requer generated/)", () => {
+  it("usa o ataque real (Jaws), MAP agile no 2º strike e dano tipado", () => {
+    const player = mk({ name: "Hero", kind: "player", initiative: 20, ac: 1 }); // AC 1: sempre acerta
+    const rat = mk({
+      name: "Giant Rat 1",
+      kind: "enemy",
+      initiative: 5,
+      level: -1,
+      sourceName: "Giant Rat",
+    });
+    const s = sessionWith(player, rat);
+    const lines = resolveEnemyTurns(s, noop);
+    expect(lines[0]).toContain("Giant Rat 1 Jaws Strike vs Hero");
+    expect(lines[0]).toContain("piercing");
+    expect(lines[1]).toContain("[MAP -4 agile]");
+  });
+
+  it("inimigo sem sourceName segue no benchmark genérico", () => {
+    const player = mk({ name: "Hero", kind: "player", initiative: 20, ac: 1 });
+    const thug = mk({ name: "Cinzalto Thug", kind: "enemy", initiative: 5, level: 1 });
+    const s = sessionWith(player, thug);
+    const lines = resolveEnemyTurns(s, noop);
+    expect(lines[0]).toContain("Cinzalto Thug Strike vs Hero");
+    expect(lines[1]).toContain("[MAP -5]");
+  });
+});

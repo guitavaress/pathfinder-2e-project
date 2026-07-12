@@ -9,6 +9,7 @@ import { isValidDc, rollCheck } from "../dice/check.js";
 import {
   activityFrequency,
   activityRequirement,
+  creatureRecord,
   itemRecord,
   itemTraits,
   lookupLocalRule,
@@ -23,7 +24,6 @@ import {
   applyRecovery,
   attackStatusPenalty,
   beginPlayerRound,
-  benchmark,
   buildCombat,
   clampActionCost,
   conditionValueIn,
@@ -45,10 +45,12 @@ import {
   playerOf,
   partySizeOf,
   rollDice,
+  strikeProfileFrom,
   tickEndOfRound,
   type EncounterDifficulty,
   type EncounterPlan,
   type EnemySpec,
+  type StrikeProfile,
 } from "./combat.js";
 import { loadLore, loadWorld } from "./lore.js";
 import {
@@ -355,11 +357,15 @@ const TOOLS: ChatCompletionTool[] = [
             items: {
               type: "object",
               properties: {
-                name: { type: "string", description: "Creature name, e.g. 'Clockwork Sentinel'." },
+                name: {
+                  type: "string",
+                  description:
+                    "Creature name. Use the creature's REAL PF2e name when one fits (e.g. 'Giant Rat', 'Goblin Warrior', 'Skeleton Guard') — the engine then uses its OFFICIAL statblock (AC/HP/saves/real attacks) and its official level overrides your estimate. Invented names get generic level-based stats.",
+                },
                 level: {
                   type: "number",
                   description:
-                    "Creature level — ALWAYS estimate and pass this, it drives AC/HP/attack. Guide: mundane townsperson/clerk/merchant = -1 to 0; trained guard/thug = 1-2; veteran/soldier = 3-4; elite/leader = 5-7; boss/monster = 8+. If omitted, the engine assumes a weak commoner (level 0).",
+                    "Creature level — matters only for creatures NOT in the bestiary (unnamed thugs, custom NPCs); official creatures use their real level. Guide: mundane townsperson/clerk/merchant = -1 to 0; trained guard/thug = 1-2; veteran/soldier = 3-4; elite/leader = 5-7; boss/monster = 8+. If omitted, the engine assumes a weak commoner (level 0).",
                 },
                 count: { type: "number", description: "How many of this creature (default 1)." },
               },
@@ -504,7 +510,7 @@ export function findSheetWeapon(c: Character, ref: string): Weapon | null {
   );
 }
 
-/** Attack bonus for a Strike: the player's weapon bonus, or the enemy's benchmark. */
+/** Attack bonus for a Strike: the player's weapon bonus, or the enemy's real/benchmark attack. */
 function combatAttackModifier(
   session: Session,
   attacker: Combatant,
@@ -515,7 +521,7 @@ function combatAttackModifier(
     if (mod !== null) return mod;
     return session.character.weapons[0]?.attack ?? session.character.perception;
   }
-  return benchmark(attacker.level ?? 0).attack;
+  return strikeProfileFor(attacker).bonus;
 }
 
 const DAMAGE_TYPE_NAMES: Record<string, string> = {
@@ -570,9 +576,16 @@ function rollDamage(
     }
   }
 
-  const b = benchmark(attacker?.level ?? 0).damage;
-  const type = input.damageType ? String(input.damageType) : "damage";
-  return { amount: dbl(rollDice(b.dice, b.faces) + b.bonus), type };
+  // Inimigo (ou fallback): statblock real quando houver, senão benchmark —
+  // strikeProfileFor decide. Soma todas as entradas de dano do ataque.
+  const profile = attacker
+    ? strikeProfileFor(attacker)
+    : strikeProfileFrom(undefined, 0);
+  const amount = profile.damage.reduce((sum, d) => sum + rollFormula(d.formula), 0);
+  const type = input.damageType
+    ? String(input.damageType)
+    : (profile.damage[0]?.type ?? "damage");
+  return { amount: dbl(amount), type };
 }
 
 /** Title-cases a weapon/skill name for the summary ("dagger" → "Dagger"). */
@@ -615,11 +628,26 @@ function sneakAttackDice(session: Session): number {
  */
 const DEFAULT_ENEMY_LEVEL = 0;
 
-/** Resolves an enemy's level from the bestiary by name, else a low default. */
-function enemyLevelFor(name: string): number {
-  const rec = lookupLocalRule(name);
-  if (rec && typeof rec.level === "number") return rec.level;
-  return DEFAULT_ENEMY_LEVEL;
+/**
+ * Resolves a creature by name against the bestiary (statblock records only —
+ * a same-named feat/spell can never stat an enemy). Returns the record plus
+ * the level to use (record's official level, else the low default).
+ */
+function resolveCreature(name: string): { record: RuleRecord | null; level: number } {
+  const record = creatureRecord(name);
+  if (record && typeof record.level === "number") {
+    return { record, level: record.level };
+  }
+  return { record: null, level: DEFAULT_ENEMY_LEVEL };
+}
+
+/**
+ * The strike an enemy combatant uses, re-resolved from the bestiary via its
+ * stable `sourceName` (real attack name/bonus/damage/agile), else benchmark.
+ */
+function strikeProfileFor(c: Combatant): StrikeProfile {
+  const rec = c.sourceName ? creatureRecord(c.sourceName) : null;
+  return strikeProfileFrom(rec?.statblock, c.level ?? 0);
 }
 
 /** Difficulty declared by the model; anything unrecognized falls back to "moderate". */
@@ -895,6 +923,8 @@ export async function executeTool(
     case "start_combat": {
       const raw = Array.isArray(input.enemies) ? input.enemies : [];
       const specs: EnemySpec[] = [];
+      const recordsBySpecName = new Map<string, RuleRecord>();
+      const levelOverrides: string[] = [];
       for (const e of raw as Record<string, unknown>[]) {
         // Escape debris from the model's broken JSON (`Scavenger\" (Thug)`)
         // must not leak into combatant names — it also breaks dedupe.
@@ -905,9 +935,24 @@ export async function executeTool(
             .trim() || "Enemy";
         const rawCount = Number(e?.count ?? 1);
         const count = Number.isFinite(rawCount) ? Math.max(1, Math.min(8, rawCount)) : 1;
+        // Regras como dados: quando o bestiary conhece a criatura, o nível
+        // OFICIAL vence o palpite do modelo (e os stats virão do statblock).
+        const resolved = resolveCreature(eName);
         const rawLevel = Number(e?.level);
-        const level =
-          e?.level != null && Number.isFinite(rawLevel) ? rawLevel : enemyLevelFor(eName);
+        const modelLevel =
+          e?.level != null && Number.isFinite(rawLevel) ? rawLevel : null;
+        let level: number;
+        if (resolved.record) {
+          level = resolved.level;
+          recordsBySpecName.set(eName, resolved.record);
+          if (modelLevel != null && modelLevel !== level) {
+            levelOverrides.push(
+              `${resolved.record.name} is level ${level} (bestiary) — model said ${modelLevel}`,
+            );
+          }
+        } else {
+          level = modelLevel ?? DEFAULT_ENEMY_LEVEL;
+        }
         specs.push({ name: eName, level, count });
       }
       const difficulty = parseDifficulty(input.difficulty);
@@ -915,12 +960,28 @@ export async function executeTool(
       const instantiate = (accepted: EnemySpec[]): Combatant[] => {
         const out: Combatant[] = [];
         for (const s of accepted) {
+          const record = recordsBySpecName.get(s.name);
+          // Statblock real só quando o nível aceito É o oficial: se o orçamento
+          // de XP rebaixou a criatura (anti-empty), stats reais mentiriam.
+          const sb =
+            record?.statblock && record.level === s.level
+              ? {
+                  ...record.statblock,
+                  sourceName: record.name,
+                  traits: record.traits ?? [],
+                }
+              : undefined;
           for (let i = 0; i < s.count; i++) {
-            out.push(enemyCombatant(s.count > 1 ? `${s.name} ${i + 1}` : s.name, s.level));
+            out.push(
+              enemyCombatant(s.count > 1 ? `${s.name} ${i + 1}` : s.name, s.level, sb),
+            );
           }
         }
         return out;
       };
+      const bestiaryNote = levelOverrides.length
+        ? ` [${levelOverrides.join("; ")}]`
+        : "";
 
       // Combat already running: do NOT restart (that would wipe HP/initiative).
       // Instead let genuinely new foes join as reinforcements.
@@ -946,7 +1007,7 @@ export async function executeTool(
           const names = added.map((c) => c.name).join(", ");
           const note = `Encounter now: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`;
           return {
-            content: `Combat already active; reinforcements joined: ${names}. ${note}${budgetNotes(plan)}`,
+            content: `Combat already active; reinforcements joined: ${names}. ${note}${budgetNotes(plan)}${bestiaryNote}`,
             summaryLine: `- Reinforcements join the fight: ${names}. ${note}${budgetNotes(plan)}`,
           };
         }
@@ -984,7 +1045,7 @@ export async function executeTool(
         ? ` Encounter: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`
         : "";
       return {
-        content: `Combat started.${note} Initiative order: ${order}${passiveNote}${budgetNotes(plan)}`,
+        content: `Combat started.${note} Initiative order: ${order}${passiveNote}${budgetNotes(plan)}${bestiaryNote}`,
         summaryLine: `- Combat begins (round 1).${note} Initiative: ${order}.${passiveNote}${budgetNotes(plan)}`,
       };
     }
@@ -1435,27 +1496,41 @@ export function resolveEnemyTurns(
 
   for (const enemy of order) {
     enemy.mapProgress = 0;
-    const b = benchmark(enemy.level ?? 0);
+    // Statblock real (via sourceName) quando houver; senão benchmark do nível.
+    const profile = strikeProfileFor(enemy);
+    const strikeName = profile.label === "Strike" ? "Strike" : `${profile.label} Strike`;
     for (let strike = 0; strike < 2; strike++) {
       if (player.defeated) break;
-      const map = mapPenalty(enemy.mapProgress);
+      const map = mapPenalty(enemy.mapProgress, profile.agile);
+      const mapTag = map ? ` [MAP ${map}${profile.agile ? " agile" : ""}]` : "";
       // Same condition math as player Strikes (off-guard/frightened both ways).
       const ac = effectiveAC(player);
-      const label = `${enemy.name} Strike vs ${player.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
-      const result = rollCheck(label, b.attack + map + attackStatusPenalty(enemy), ac);
+      const label = `${enemy.name} ${strikeName} vs ${player.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
+      const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(enemy), ac);
       enemy.mapProgress += 1;
       const crit = result.degree === "criticalSuccess";
       const hit = crit || result.degree === "success";
       let dmgLine = "";
       let amount: number | null = null;
       if (hit) {
-        amount = rollDice(b.damage.dice, b.damage.faces) + b.damage.bonus;
+        // Soma todas as entradas de dano do ataque; crit dobra o total.
+        const parts = profile.damage.map((d) => ({
+          type: d.type,
+          rolled: rollFormula(d.formula),
+        }));
+        amount = parts.reduce((sum, p) => sum + p.rolled, 0);
         if (crit) amount *= 2;
         const before = player.currentHp;
         applyDamage(player, amount);
         session.state.currentHp = player.currentHp;
         const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
-        dmgLine = ` for ${amount}; ${player.name} ${before}→${player.currentHp} HP${down}`;
+        const typeNote =
+          parts.length === 1 && parts[0]!.type
+            ? ` ${parts[0]!.type}`
+            : parts.length > 1
+              ? ` (${parts.map((p) => `${crit ? p.rolled * 2 : p.rolled} ${p.type || "damage"}`).join(" + ")})`
+              : "";
+        dmgLine = ` for ${amount}${typeNote}; ${player.name} ${before}→${player.currentHp} HP${down}`;
       }
       const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
       result.attack = {
@@ -1464,11 +1539,11 @@ export function resolveEnemyTurns(
         attackerKind: "enemy",
         outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
         damage: amount,
-        damageType: null,
+        damageType: profile.damage[0]?.type || null,
       };
       emit({ type: "check", result });
       lines.push(
-        `- ${enemy.name} Strike vs ${player.name}${map ? ` [MAP ${map}]` : ""} → ${verb}${dmgLine}.`,
+        `- ${enemy.name} ${strikeName} vs ${player.name}${mapTag} → ${verb}${dmgLine}.`,
       );
       emit({ type: "state", state: session.state });
     }

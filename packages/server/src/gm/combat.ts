@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Character, Combat, Combatant, DegreeOfSuccess } from "@pf2e/shared";
+// Import de TIPO apenas: combat.ts segue puro (nunca carrega o dataset em runtime).
+import type { CreatureStatblock } from "../rules/dataset.js";
 import { degreeOfSuccess } from "../dice/check.js";
 
 /** Rolls `n` dice with `faces` sides and returns the total. */
@@ -261,8 +263,29 @@ export function playerCombatant(character: Character, currentHp: number): Combat
   });
 }
 
-/** Builds an enemy combatant from benchmark stats for its level. */
-export function enemyCombatant(name: string, level: number): Combatant {
+/**
+ * Builds an enemy combatant. With a real statblock (bestiary) uses its
+ * AC/HP/perception/saves; without, falls back to the level benchmark.
+ */
+export function enemyCombatant(
+  name: string,
+  level: number,
+  sb?: CreatureStatblock & { sourceName: string; traits: string[] },
+): Combatant {
+  if (sb) {
+    return newCombatant({
+      name,
+      kind: "enemy",
+      initiative: d20() + sb.perception,
+      ac: sb.ac,
+      maxHp: sb.hp,
+      currentHp: sb.hp,
+      level,
+      traits: sb.traits,
+      sourceName: sb.sourceName,
+      saves: sb.saves,
+    });
+  }
   const b = benchmark(level);
   return newCombatant({
     name,
@@ -273,6 +296,52 @@ export function enemyCombatant(name: string, level: number): Combatant {
     currentHp: b.hp,
     level,
   });
+}
+
+/**
+ * The strike an enemy uses on its turn, resolved from DATA when available.
+ * With a statblock: prefers the first melee attack (no rangeIncrement — the
+ * engine has no positioning), else the first attack; `agile` comes from the
+ * attack's traits. Without: the level benchmark (label "Strike", not agile).
+ */
+export interface StrikeProfile {
+  label: string;
+  bonus: number;
+  damage: { formula: string; type: string }[];
+  agile: boolean;
+}
+
+export function strikeProfileFrom(
+  sb: CreatureStatblock | undefined,
+  level: number,
+): StrikeProfile {
+  const attack =
+    sb?.attacks.find((a) => a.rangeIncrement === undefined) ?? sb?.attacks[0];
+  if (attack) {
+    // PR2: entradas category "persistent" viram condição de dano persistente;
+    // por ora só o dano direto entra (strike 100% persistente mantém tudo
+    // para nunca golpear por 0).
+    const direct = attack.damage.filter((d) => d.category !== "persistent");
+    const rolls = direct.length > 0 ? direct : attack.damage;
+    return {
+      label: attack.name,
+      bonus: attack.bonus,
+      damage: rolls.map((d) => ({ formula: d.formula, type: d.type })),
+      agile: attack.traits.includes("agile"),
+    };
+  }
+  const b = benchmark(level);
+  return {
+    label: "Strike",
+    bonus: b.attack,
+    damage: [
+      {
+        formula: `${b.damage.dice}d${b.damage.faces}+${b.damage.bonus}`,
+        type: "damage",
+      },
+    ],
+    agile: false,
+  };
 }
 
 /**

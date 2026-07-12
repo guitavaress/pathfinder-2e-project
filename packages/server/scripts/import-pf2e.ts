@@ -61,6 +61,58 @@ interface RuleRecord {
   range?: number;
   /** Categoria de proficiência da ARMA: "simple" | "martial" | "advanced" | "unarmed". */
   weaponCategory?: string;
+  /** Criaturas (type "npc"): statblock estruturado — a engine usa AC/HP/ataques
+   *  reais em vez do benchmark por nível. Só presente quando AC e HP resolvem. */
+  statblock?: CreatureStatblock;
+}
+
+/** Um Strike de NPC (item Foundry type "melee" — inclui ataques à distância). */
+interface CreatureAttack {
+  name: string;
+  /** Bônus de ataque (system.bonus.value). */
+  bonus: number;
+  /** Entradas de dano na ordem do statblock (Object.values de system.damageRolls). */
+  damage: { formula: string; type: string; category?: string }[];
+  traits: string[];
+  /** Presente quando o strike é à distância (system.range.increment). */
+  rangeIncrement?: number;
+  /** attackEffects (grab, knockdown, filth-fever…) — guardado, não aplicado ainda. */
+  effects?: string[];
+}
+
+/** Habilidade de NPC (item type "action": passivas, reações, ações especiais). */
+interface CreatureAbility {
+  name: string;
+  actionType: string; // "action" | "reaction" | "free" | "passive"
+  actions: number | null;
+  text: string;
+}
+
+/** Entrada de conjuração de NPC (item type "spellcastingEntry" + spells irmãs). */
+interface CreatureSpellcasting {
+  name: string;
+  tradition: string;
+  type: string; // "prepared" | "spontaneous" | "innate" | "focus"
+  dc: number;
+  attack: number;
+  spells: { name: string; rank: number }[];
+}
+
+interface CreatureStatblock {
+  ac: number;
+  hp: number;
+  perception: number;
+  saves: { fortitude: number; reflex: number; will: number };
+  abilities?: Record<string, number>;
+  speed?: { land: number; other: { type: string; value: number }[] };
+  size?: string;
+  senses?: string[];
+  immunities?: string[];
+  weaknesses?: { type: string; value: number }[];
+  resistances?: { type: string; value: number }[];
+  attacks: CreatureAttack[];
+  abilitiesList: CreatureAbility[];
+  spellcasting?: CreatureSpellcasting[];
 }
 
 /** Mapeia o `type` do documento Foundry para a nossa categoria. */
@@ -130,6 +182,180 @@ function cleanText(html: unknown): string {
     .slice(0, 2000);
 }
 
+/**
+ * Extrai o statblock estruturado de um NPC. Retorna undefined quando AC ou HP
+ * não resolvem (ausência honesta → runtime cai no benchmark; nunca fabricar 0).
+ * Nota --from-local: nos packs LevelDB os items podem não vir embutidos no
+ * actor — a extração é best-effort e o record fica prose-only.
+ */
+function extractStatblock(
+  system: Record<string, unknown>,
+  items: unknown,
+): CreatureStatblock | undefined {
+  const attrs = (system.attributes ?? {}) as Record<string, unknown>;
+  const acObj = (attrs.ac ?? {}) as Record<string, unknown>;
+  const hpObj = (attrs.hp ?? {}) as Record<string, unknown>;
+  if (typeof acObj.value !== "number" || typeof hpObj.max !== "number") {
+    return undefined;
+  }
+
+  // 7.8.0: percepção fica em system.perception (não em attributes.perception).
+  const percObj = (system.perception ?? {}) as Record<string, unknown>;
+  const savesObj = (system.saves ?? {}) as Record<string, unknown>;
+  const saveOf = (key: string): number => {
+    const o = (savesObj[key] ?? {}) as Record<string, unknown>;
+    return typeof o.value === "number" ? o.value : 0;
+  };
+
+  const abilitiesObj = (system.abilities ?? {}) as Record<string, unknown>;
+  const abilities: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(abilitiesObj)) {
+    const mod = (raw as Record<string, unknown>)?.mod;
+    if (typeof mod === "number") abilities[key] = mod;
+  }
+
+  const speedObj = (attrs.speed ?? {}) as Record<string, unknown>;
+  const speed =
+    typeof speedObj.value === "number"
+      ? {
+          land: speedObj.value,
+          other: (Array.isArray(speedObj.otherSpeeds) ? speedObj.otherSpeeds : [])
+            .map((s) => s as Record<string, unknown>)
+            .filter((s) => typeof s.type === "string" && typeof s.value === "number")
+            .map((s) => ({ type: s.type as string, value: s.value as number })),
+        }
+      : undefined;
+
+  const senses = (Array.isArray(percObj.senses) ? percObj.senses : [])
+    .map((s) => (s as Record<string, unknown>)?.type)
+    .filter((t): t is string => typeof t === "string");
+
+  // immunities: [{type}] · weaknesses/resistances: [{type, value}] — ausentes
+  // quando vazios, então tudo é defensivo.
+  const typeList = (raw: unknown): string[] =>
+    (Array.isArray(raw) ? raw : [])
+      .map((e) => (e as Record<string, unknown>)?.type)
+      .filter((t): t is string => typeof t === "string");
+  const typeValueList = (raw: unknown): { type: string; value: number }[] =>
+    (Array.isArray(raw) ? raw : [])
+      .map((e) => e as Record<string, unknown>)
+      .filter((e) => typeof e.type === "string" && typeof e.value === "number")
+      .map((e) => ({ type: e.type as string, value: e.value as number }));
+
+  const attacks: CreatureAttack[] = [];
+  const abilitiesList: CreatureAbility[] = [];
+  const entries = new Map<string, CreatureSpellcasting>();
+  const spellsByEntry = new Map<string, { name: string; rank: number }[]>();
+
+  for (const raw of Array.isArray(items) ? items : []) {
+    const item = raw as Record<string, unknown>;
+    const name = typeof item.name === "string" ? item.name : "";
+    const isys = (item.system ?? {}) as Record<string, unknown>;
+    if (!name) continue;
+
+    if (item.type === "melee") {
+      // "melee" = Strike de NPC (ataques à distância TAMBÉM são type "melee";
+      // o discriminador é system.range.increment).
+      const bonusObj = (isys.bonus ?? {}) as Record<string, unknown>;
+      const damage = Object.values((isys.damageRolls ?? {}) as Record<string, unknown>)
+        .map((r) => {
+          const o = (r ?? {}) as Record<string, unknown>;
+          if (typeof o.damage !== "string" || !o.damage) return null;
+          return {
+            formula: o.damage,
+            type: typeof o.damageType === "string" ? o.damageType : "",
+            ...(o.category === "persistent" ? { category: "persistent" } : {}),
+          };
+        })
+        .filter((d): d is CreatureAttack["damage"][number] => d !== null);
+      if (typeof bonusObj.value !== "number" || damage.length === 0) continue;
+
+      const traitsObj = (isys.traits ?? {}) as Record<string, unknown>;
+      const rangeObj = (isys.range ?? null) as Record<string, unknown> | null;
+      const fxObj = (isys.attackEffects ?? {}) as Record<string, unknown>;
+      const effects = (Array.isArray(fxObj.value) ? fxObj.value : []).map(String);
+      attacks.push({
+        name,
+        bonus: bonusObj.value,
+        damage,
+        traits: Array.isArray(traitsObj.value)
+          ? (traitsObj.value as unknown[]).map(String)
+          : [],
+        ...(rangeObj && typeof rangeObj.increment === "number"
+          ? { rangeIncrement: rangeObj.increment }
+          : {}),
+        ...(effects.length > 0 ? { effects } : {}),
+      });
+    } else if (item.type === "action") {
+      const atObj = (isys.actionType ?? {}) as Record<string, unknown>;
+      const acObj2 = (isys.actions ?? {}) as Record<string, unknown>;
+      const descObj = (isys.description ?? {}) as Record<string, unknown>;
+      abilitiesList.push({
+        name,
+        actionType: typeof atObj.value === "string" && atObj.value ? atObj.value : "passive",
+        actions: typeof acObj2.value === "number" ? acObj2.value : null,
+        text: cleanText(descObj.value).slice(0, 600),
+      });
+    } else if (item.type === "spellcastingEntry") {
+      const id = typeof item._id === "string" ? item._id : "";
+      const dcObj = (isys.spelldc ?? {}) as Record<string, unknown>;
+      const tradObj = (isys.tradition ?? {}) as Record<string, unknown>;
+      const prepObj = (isys.prepared ?? {}) as Record<string, unknown>;
+      if (!id || typeof dcObj.dc !== "number") continue;
+      entries.set(id, {
+        name,
+        tradition: typeof tradObj.value === "string" ? tradObj.value : "",
+        type: typeof prepObj.value === "string" ? prepObj.value : "",
+        dc: dcObj.dc,
+        attack: typeof dcObj.value === "number" ? dcObj.value : 0,
+        spells: [],
+      });
+    } else if (item.type === "spell") {
+      const locObj = (isys.location ?? {}) as Record<string, unknown>;
+      const lvlObj = (isys.level ?? {}) as Record<string, unknown>;
+      const loc = typeof locObj.value === "string" ? locObj.value : "";
+      if (!loc) continue;
+      const list = spellsByEntry.get(loc) ?? [];
+      list.push({ name, rank: typeof lvlObj.value === "number" ? lvlObj.value : 0 });
+      spellsByEntry.set(loc, list);
+    }
+  }
+
+  for (const [id, entry] of entries) {
+    entry.spells = spellsByEntry.get(id) ?? [];
+  }
+  const spellcasting = [...entries.values()];
+
+  const sizeObj = ((system.traits ?? {}) as Record<string, unknown>).size as
+    | Record<string, unknown>
+    | undefined;
+
+  const immunities = typeList(attrs.immunities);
+  const weaknesses = typeValueList(attrs.weaknesses);
+  const resistances = typeValueList(attrs.resistances);
+
+  return {
+    ac: acObj.value,
+    hp: hpObj.max,
+    perception: typeof percObj.mod === "number" ? percObj.mod : 0,
+    saves: {
+      fortitude: saveOf("fortitude"),
+      reflex: saveOf("reflex"),
+      will: saveOf("will"),
+    },
+    ...(Object.keys(abilities).length > 0 ? { abilities } : {}),
+    ...(speed ? { speed } : {}),
+    ...(sizeObj && typeof sizeObj.value === "string" ? { size: sizeObj.value } : {}),
+    ...(senses.length > 0 ? { senses } : {}),
+    ...(immunities.length > 0 ? { immunities } : {}),
+    ...(weaknesses.length > 0 ? { weaknesses } : {}),
+    ...(resistances.length > 0 ? { resistances } : {}),
+    attacks,
+    abilitiesList,
+    ...(spellcasting.length > 0 ? { spellcasting } : {}),
+  };
+}
+
 function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | null {
   const type = typeof doc.type === "string" ? doc.type : "";
   const category = categoryOf(type);
@@ -151,8 +377,22 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
         : null;
 
   // NPCs guardam a prosa em system.details.publicNotes, não em description.value.
-  const text =
-    cleanText(description.value) || cleanText(detailsObj.publicNotes);
+  // Muitos NPCs não têm prosa nenhuma — sintetizar um texto mínimo para que o
+  // record não seja filtrado pelo loader (dataset.ts exige `text`).
+  let text = cleanText(description.value) || cleanText(detailsObj.publicNotes);
+
+  // Statblock estruturado de CRIATURAS: AC/HP/saves/ataques reais para a engine.
+  let statblock: CreatureStatblock | undefined;
+  if (type === "npc") {
+    statblock = extractStatblock(system, doc.items);
+    if (!text) {
+      const traitList = Array.isArray(traitsObj.value)
+        ? (traitsObj.value as unknown[]).map(String).join(", ")
+        : "";
+      const rarity = typeof traitsObj.rarity === "string" ? traitsObj.rarity : "common";
+      text = `Level ${level ?? "?"} ${rarity} creature.${traitList ? ` Traits: ${traitList}.` : ""}`;
+    }
+  }
 
   // Custo de ação (feats/actions): separa "tem custo no encounter" de passivo.
   const actionTypeObj = (system.actionType ?? {}) as Record<string, unknown>;
@@ -235,6 +475,7 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
     bonus,
     range,
     weaponCategory,
+    statblock,
   };
 }
 
@@ -367,6 +608,10 @@ async function main() {
     console.log(`  ${category}: ${arr.length}`);
     total += arr.length;
   }
+  // Visibilidade de regressão: extração de statblock quebrada aparece aqui.
+  const bestiary = byCategory.get("bestiary") ?? [];
+  const withStats = bestiary.filter((r) => r.statblock).length;
+  console.log(`  bestiary statblocks: ${withStats}/${bestiary.length}`);
   console.log(`OK: ${total} entradas gravadas em ${OUT_DIR}`);
 }
 

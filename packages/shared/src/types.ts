@@ -230,6 +230,17 @@ export const CombatantSchema = z.object({
   level: z.number().int().nullable(),
   traits: z.array(z.string()),
   defeated: z.boolean(),
+  /** Canonical bestiary record name when built from a real statblock — the
+   *  stable key the engine uses to re-resolve attacks (name gets " 1"/" 2"). */
+  sourceName: z.string().optional(),
+  /** Real saves (bestiary statblock) — spell saves (PR4) and audit lines. */
+  saves: z
+    .object({
+      fortitude: z.number().int(),
+      reflex: z.number().int(),
+      will: z.number().int(),
+    })
+    .optional(),
 });
 export type Combatant = z.infer<typeof CombatantSchema>;
 

@@ -17,6 +17,7 @@ import {
   effectiveAC,
   encounterBudget,
   findCombatant,
+  enemyCombatant,
   hasCombatantNamed,
   isOffGuard,
   livingEnemy,
@@ -26,6 +27,7 @@ import {
   planEncounter,
   playerCombatant,
   setValuedCondition,
+  strikeProfileFrom,
   tickEndOfRound,
 } from "./combat.js";
 import type { Character } from "@pf2e/shared";
@@ -528,5 +530,84 @@ describe("passiveFeatBonus / playerCombatant (passivos da engine)", () => {
       expect(withFeat.initiative).toBeGreaterThanOrEqual(13);
       expect(withFeat.initiative).toBeLessThanOrEqual(32);
     }
+  });
+});
+
+describe("enemyCombatant / strikeProfileFrom (statblock literal, sem dataset)", () => {
+  const sb = {
+    ac: 15,
+    hp: 8,
+    perception: 5,
+    saves: { fortitude: 6, reflex: 7, will: 3 },
+    attacks: [
+      {
+        name: "Shortbow",
+        bonus: 7,
+        damage: [{ formula: "1d6", type: "piercing" }],
+        traits: ["deadly-d10"],
+        rangeIncrement: 60,
+      },
+      {
+        name: "Jaws",
+        bonus: 7,
+        damage: [
+          { formula: "1d6+1", type: "piercing" },
+          { formula: "1d4", type: "persistent bleed", category: "persistent" },
+        ],
+        traits: ["agile", "finesse"],
+      },
+    ],
+    abilitiesList: [],
+  };
+
+  it("com statblock usa AC/HP/saves/sourceName reais", () => {
+    const c = enemyCombatant("Giant Rat 1", -1, {
+      ...sb,
+      sourceName: "Giant Rat",
+      traits: ["animal"],
+    });
+    expect(c.ac).toBe(15);
+    expect(c.maxHp).toBe(8);
+    expect(c.currentHp).toBe(8);
+    expect(c.saves).toEqual({ fortitude: 6, reflex: 7, will: 3 });
+    expect(c.sourceName).toBe("Giant Rat");
+    expect(c.traits).toEqual(["animal"]);
+    expect(c.level).toBe(-1);
+  });
+
+  it("sem statblock mantém o benchmark do nível (comportamento antigo)", () => {
+    const c = enemyCombatant("Cinzalto Enforcer", 2);
+    const b = benchmark(2);
+    expect(c.ac).toBe(b.ac);
+    expect(c.maxHp).toBe(b.hp);
+    expect(c.sourceName).toBeUndefined();
+    expect(c.saves).toBeUndefined();
+  });
+
+  it("strikeProfileFrom prefere melee sobre ranged e lê agile das traits", () => {
+    const p = strikeProfileFrom(sb, -1);
+    expect(p.label).toBe("Jaws");
+    expect(p.bonus).toBe(7);
+    expect(p.agile).toBe(true);
+    // PR2: dano persistente fica fora do golpe direto por enquanto.
+    expect(p.damage).toEqual([{ formula: "1d6+1", type: "piercing" }]);
+  });
+
+  it("strikeProfileFrom sem statblock cai no benchmark (não-agile)", () => {
+    const p = strikeProfileFrom(undefined, 2);
+    const b = benchmark(2);
+    expect(p.label).toBe("Strike");
+    expect(p.bonus).toBe(b.attack);
+    expect(p.agile).toBe(false);
+    expect(p.damage).toEqual([
+      { formula: `${b.damage.dice}d${b.damage.faces}+${b.damage.bonus}`, type: "damage" },
+    ]);
+  });
+
+  it("statblock só com ataques ranged usa o primeiro mesmo assim", () => {
+    const ranged = { ...sb, attacks: [sb.attacks[0]!] };
+    const p = strikeProfileFrom(ranged, -1);
+    expect(p.label).toBe("Shortbow");
+    expect(p.agile).toBe(false);
   });
 });
