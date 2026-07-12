@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@pf2e/brain": "*",
     "@pf2e/shared": "*",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

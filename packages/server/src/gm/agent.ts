@@ -56,6 +56,12 @@ import {
   type EnemySpec,
   type StrikeProfile,
 } from "./combat.js";
+import {
+  brainJournal,
+  brainKnowledge,
+  brainTurnStamp,
+  queueBrainWrite,
+} from "./brain.js";
 import { loadLore, loadWorld } from "./lore.js";
 import {
   NARRATIVE_SYSTEM_PROMPT,
@@ -2725,6 +2731,14 @@ async function runNarrativeStage(
 ): Promise<void> {
   const world = loadWorld();
   const lore = loadLore();
+  // Memória do protagonista (brain): map + cauda do journal + nós citados no
+  // turno — continuidade entre sessões sem custo de geração extra.
+  const lastUser = [...session.messages]
+    .reverse()
+    .find((m) => m.role === "user" && typeof m.content === "string");
+  const knowledge = brainKnowledge(
+    `${typeof lastUser?.content === "string" ? lastUser.content : ""}\n${mechanical}`,
+  );
   const narrativeSystem: ChatCompletionMessageParam = {
     role: "system",
     content: [
@@ -2736,6 +2750,7 @@ async function runNarrativeStage(
         ? `# GM-ONLY SECRETS (NEVER reveal, narrate, quote, or dump these — not even in the opening. They are background only: use them to plant at most one small, deniable hint at a time, and only once the player earns it.)\n${lore}`
         : "",
       characterSheetBlock(session.character),
+      knowledge,
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -2831,6 +2846,18 @@ async function runNarrativeStage(
   });
 }
 
+/** Cliente do write pass do brain: MESMO modelo residente, temp baixa. */
+async function brainComplete(prompt: string): Promise<string> {
+  const resp = await client.chat.completions.create({
+    model: NARRATIVE_MODEL,
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.1,
+    max_tokens: 500,
+    ...NO_REASONING,
+  });
+  return resp.choices[0]?.message?.content ?? "";
+}
+
 /**
  * Runs a turn in two stages: (1) the rules model resolves the PF2e mechanics
  * via tools; (2) the narrative model writes the scene consistent with the
@@ -2846,15 +2873,35 @@ export async function runTurn(
     `[GM] turn started (rules=${RULES_MODEL}, narrative=${NARRATIVE_MODEL})`,
   );
   try {
+    // Relógio do brain: 1 mensagem do jogador = 1 turno ("S3.T12").
+    const stamp = brainTurnStamp();
+
     emit({ type: "phase", phase: "rules" });
     const mechanical = await runRulesStage(session, emit);
     console.log(`[GM] mechanical summary: ${mechanical.slice(0, 160) || "(empty)"}`);
+
+    // Journaling determinístico (engine, sem modelo): ground truth mecânico.
+    brainJournal(mechanical, stamp);
 
     emit({ type: "phase", phase: "narrative" });
     await runNarrativeStage(session, mechanical, emit);
 
     console.log("[GM] turn finished");
     emit({ type: "done" });
+
+    // Write pass do brain DEPOIS do done (fire-and-forget, fila coalescida):
+    // só texto que o jogador viu — LORE.md nunca entra (fronteira revelada).
+    const lastAssistant = [...session.messages]
+      .reverse()
+      .find((m) => m.role === "assistant" && typeof m.content === "string");
+    queueBrainWrite(
+      {
+        playerText,
+        mechanical,
+        narration: typeof lastAssistant?.content === "string" ? lastAssistant.content : "",
+      },
+      brainComplete,
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[GM] turn ERROR:", message);
