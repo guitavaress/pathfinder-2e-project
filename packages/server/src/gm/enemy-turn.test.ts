@@ -9,7 +9,9 @@ import {
   frequencyLimit,
   isOfficialCondition,
   requirementBlocked,
+  reactionTriggerOf,
   resolveEnemyTurns,
+  triggerEnemyReactions,
 } from "./agent.js";
 import { buildCombat } from "./combat.js";
 import type { Session } from "./sessions.js";
@@ -283,5 +285,58 @@ describe.skipIf(!hasGenerated)("resolveEnemyTurns com bestiary (requer generated
     const lines = resolveEnemyTurns(s, noop);
     expect(lines[0]).toContain("Cinzalto Thug Strike vs Hero");
     expect(lines[1]).toContain("[MAP -5]");
+  });
+});
+
+describe("reactionTriggerOf (gatilhos de reação)", () => {
+  it("use_item é manipulate; movimento é move; Step e rolagens não provocam", () => {
+    expect(reactionTriggerOf("use_item", {})).toBe("manipulate");
+    expect(reactionTriggerOf("spend_actions", { reason: "Stride to the door" })).toBe("move");
+    expect(reactionTriggerOf("spend_actions", { reason: "I retreat from the fight" })).toBe("move");
+    expect(reactionTriggerOf("spend_actions", { reason: "Step back carefully" })).toBeNull();
+    expect(reactionTriggerOf("spend_actions", { reason: "Demoralize the goblin" })).toBeNull();
+    expect(reactionTriggerOf("roll_check", {})).toBeNull();
+  });
+});
+
+describe.skipIf(!hasGenerated)("triggerEnemyReactions (requer generated/)", () => {
+  it("Skeletal Champion reage 1x (Reactive Strike), consome a reação e não repete", () => {
+    const player = mk({ name: "Hero", kind: "player", initiative: 20 });
+    const champ = mk({
+      name: "Skeletal Champion",
+      kind: "enemy",
+      initiative: 5,
+      level: 2,
+      sourceName: "Skeletal Champion",
+    });
+    const s = sessionWith(player, champ);
+    const lines = triggerEnemyReactions(s, noop);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("Reaction (");
+    expect(lines[0]).toContain("Skeletal Champion");
+    expect(champ.reactionAvailable).toBe(false);
+    // Reação já gasta: segundo gatilho na mesma rodada não faz nada.
+    expect(triggerEnemyReactions(s, noop)).toEqual([]);
+  });
+
+  it("inimigo sem a reação no statblock (Giant Rat) não reage", () => {
+    const player = mk({ name: "Hero", kind: "player", initiative: 20 });
+    const rat = mk({
+      name: "Giant Rat",
+      kind: "enemy",
+      initiative: 5,
+      level: -1,
+      sourceName: "Giant Rat",
+    });
+    const s = sessionWith(player, rat);
+    expect(triggerEnemyReactions(s, noop)).toEqual([]);
+    expect(rat.reactionAvailable).toBe(true);
+  });
+
+  it("inimigo sem sourceName (benchmark) não reage", () => {
+    const player = mk({ name: "Hero", kind: "player", initiative: 20 });
+    const thug = mk({ name: "Cinzalto Thug", kind: "enemy", initiative: 5, level: 1 });
+    const s = sessionWith(player, thug);
+    expect(triggerEnemyReactions(s, noop)).toEqual([]);
   });
 });

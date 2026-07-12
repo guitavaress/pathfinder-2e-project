@@ -1476,6 +1476,71 @@ export async function executeTool(
  * defeat. This runs automatically at the end of the player's turn.
  */
 /**
+ * Reações de Strike que a ENGINE resolve (whitelist por nome canônico do
+ * dataset — "regras como dados"): só o que tem mecânica 100% suportada entra.
+ * Goblin Scuttle e afins (movimento) ficam narrativos num engine sem grid;
+ * Shield Block fica de fora até termos hardness estruturado.
+ */
+const STRIKE_REACTIONS = new Set(["reactive strike", "attack of opportunity"]);
+
+/** O que uma tool do jogador provoca (gatilhos RAW aproximados sem grid). */
+export function reactionTriggerOf(
+  toolName: string,
+  input: Record<string, unknown>,
+): "manipulate" | "move" | null {
+  if (toolName === "use_item") return "manipulate";
+  if (toolName === "spend_actions") {
+    const reason = String(input.reason ?? "");
+    // Step (5 ft cuidadoso) NÃO provoca — todo o resto de movimento sim.
+    if (/\bstep\b/i.test(reason)) return null;
+    if (/\b(stride|move|moving|dash|run|charge|approach|retreat|reposition|withdraw|flee|climb|leap|jump)\b/i.test(reason)) {
+      return "move";
+    }
+  }
+  return null;
+}
+
+/**
+ * Dispara as reações dos inimigos vivos com Reactive Strike/AoO no statblock
+ * e reação disponível: um Strike fora do turno (consome a reação). Linhas
+ * extras para o resumo numerado.
+ */
+export function triggerEnemyReactions(
+  session: Session,
+  emit: (e: StreamEvent) => void,
+): string[] {
+  const combat = session.state.combat;
+  if (!combat?.active) return [];
+  const player = playerOf(combat);
+  if (!player || player.defeated) return [];
+
+  const lines: string[] = [];
+  for (const enemy of combat.combatants) {
+    if (enemy.kind !== "enemy" || enemy.defeated || !enemy.reactionAvailable) continue;
+    if (!enemy.sourceName) continue;
+    const sb = creatureRecord(enemy.sourceName)?.statblock;
+    const reaction = sb?.abilitiesList.find(
+      (a) => a.actionType === "reaction" && STRIKE_REACTIONS.has(a.name.toLowerCase()),
+    );
+    if (!reaction) continue;
+    enemy.reactionAvailable = false;
+    lines.push(
+      strikeAtPlayer(session, enemy, player, strikeProfileFor(enemy), emit, {
+        reactionName: reaction.name,
+      }),
+    );
+    if (player.defeated) break;
+  }
+
+  if (lines.length && combatStatus(combat) === "defeat") {
+    combat.active = false;
+    lines.push("- Combat ends: DEFEAT — you fall.");
+    emit({ type: "state", state: session.state });
+  }
+  return lines;
+}
+
+/**
  * Ticka o dano persistente de todos os combatentes (engine, sem modelo) e
  * devolve as linhas player-safe do resumo. Fecha o combate se o tick decidir
  * a luta e põe o jogador em dying quando ele cai queimando/sangrando.
@@ -1516,6 +1581,81 @@ function applyPersistentTicks(
   return lines;
 }
 
+/**
+ * Um Strike de inimigo contra o jogador — usado pelo turno inimigo E pelas
+ * reações (Reactive Strike). Usa o MAP corrente do inimigo (RAW: o MAP só
+ * reseta no começo do turno DELE, então a reação fora do turno herda o
+ * acumulado), aplica dano/persistente e devolve a linha player-safe.
+ */
+function strikeAtPlayer(
+  session: Session,
+  enemy: Combatant,
+  player: Combatant,
+  profile: StrikeProfile,
+  emit: (e: StreamEvent) => void,
+  opts: { reactionName?: string } = {},
+): string {
+  const strikeName = profile.label === "Strike" ? "Strike" : `${profile.label} Strike`;
+  const map = mapPenalty(enemy.mapProgress, profile.agile);
+  const mapTag = map ? ` [MAP ${map}${profile.agile ? " agile" : ""}]` : "";
+  // Same condition math as player Strikes (off-guard/frightened both ways).
+  const ac = effectiveAC(player);
+  const reactionTag = opts.reactionName ? `Reaction (${opts.reactionName}): ` : "";
+  const label = `${reactionTag}${enemy.name} ${strikeName} vs ${player.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
+  const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(enemy), ac);
+  enemy.mapProgress += 1;
+  const crit = result.degree === "criticalSuccess";
+  const hit = crit || result.degree === "success";
+  let dmgLine = "";
+  let amount: number | null = null;
+  if (hit) {
+    // Soma todas as entradas de dano do ataque; crit dobra o total.
+    const parts = profile.damage.map((d) => ({
+      type: d.type,
+      rolled: rollFormula(d.formula),
+    }));
+    amount = parts.reduce((sum, p) => sum + p.rolled, 0);
+    if (crit) amount *= 2;
+    const before = player.currentHp;
+    applyDamage(player, amount);
+    session.state.currentHp = player.currentHp;
+    // Dano persistente do ataque (dados do statblock) vira condição no
+    // hit; mesmo tipo não empilha (mantém a existente).
+    let persistentNote = "";
+    for (const p of profile.persistent) {
+      const already = player.conditions.some((x) =>
+        new RegExp(`^persistent\\s+${p.type}\\s+damage`, "i").test(x.trim()),
+      );
+      if (already) continue;
+      const cond = `persistent ${p.type} damage ${p.formula}`;
+      player.conditions = [...player.conditions, cond];
+      session.state.conditions = [...session.state.conditions, cond];
+      persistentNote += ` + persistent ${p.type} damage`;
+    }
+    const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
+    const typeNote =
+      parts.length === 1 && parts[0]!.type
+        ? ` ${parts[0]!.type}`
+        : parts.length > 1
+          ? ` (${parts.map((p) => `${crit ? p.rolled * 2 : p.rolled} ${p.type || "damage"}`).join(" + ")})`
+          : "";
+    dmgLine = ` for ${amount}${typeNote}${persistentNote}; ${player.name} ${before}→${player.currentHp} HP${down}`;
+  }
+  const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
+  result.attack = {
+    attacker: enemy.name,
+    target: player.name,
+    attackerKind: "enemy",
+    outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
+    damage: amount,
+    damageType: profile.damage[0]?.type || null,
+  };
+  emit({ type: "check", result });
+  const line = `- ${reactionTag}${enemy.name} ${strikeName} vs ${player.name}${mapTag} → ${verb}${dmgLine}.`;
+  emit({ type: "state", state: session.state });
+  return line;
+}
+
 export function resolveEnemyTurns(
   session: Session,
   emit: (e: StreamEvent) => void,
@@ -1537,70 +1677,14 @@ export function resolveEnemyTurns(
   const order = [...slower, ...faster];
 
   for (const enemy of order) {
+    // Turno DELE começa: MAP reseta agora (a reação fora de turno herda o
+    // acumulado — RAW).
     enemy.mapProgress = 0;
     // Statblock real (via sourceName) quando houver; senão benchmark do nível.
     const profile = strikeProfileFor(enemy);
-    const strikeName = profile.label === "Strike" ? "Strike" : `${profile.label} Strike`;
     for (let strike = 0; strike < 2; strike++) {
       if (player.defeated) break;
-      const map = mapPenalty(enemy.mapProgress, profile.agile);
-      const mapTag = map ? ` [MAP ${map}${profile.agile ? " agile" : ""}]` : "";
-      // Same condition math as player Strikes (off-guard/frightened both ways).
-      const ac = effectiveAC(player);
-      const label = `${enemy.name} ${strikeName} vs ${player.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
-      const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(enemy), ac);
-      enemy.mapProgress += 1;
-      const crit = result.degree === "criticalSuccess";
-      const hit = crit || result.degree === "success";
-      let dmgLine = "";
-      let amount: number | null = null;
-      if (hit) {
-        // Soma todas as entradas de dano do ataque; crit dobra o total.
-        const parts = profile.damage.map((d) => ({
-          type: d.type,
-          rolled: rollFormula(d.formula),
-        }));
-        amount = parts.reduce((sum, p) => sum + p.rolled, 0);
-        if (crit) amount *= 2;
-        const before = player.currentHp;
-        applyDamage(player, amount);
-        session.state.currentHp = player.currentHp;
-        // Dano persistente do ataque (dados do statblock) vira condição no
-        // hit; mesmo tipo não empilha (mantém a existente).
-        let persistentNote = "";
-        for (const p of profile.persistent) {
-          const already = player.conditions.some((x) =>
-            new RegExp(`^persistent\\s+${p.type}\\s+damage`, "i").test(x.trim()),
-          );
-          if (already) continue;
-          const cond = `persistent ${p.type} damage ${p.formula}`;
-          player.conditions = [...player.conditions, cond];
-          session.state.conditions = [...session.state.conditions, cond];
-          persistentNote += ` + persistent ${p.type} damage`;
-        }
-        const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
-        const typeNote =
-          parts.length === 1 && parts[0]!.type
-            ? ` ${parts[0]!.type}`
-            : parts.length > 1
-              ? ` (${parts.map((p) => `${crit ? p.rolled * 2 : p.rolled} ${p.type || "damage"}`).join(" + ")})`
-              : "";
-        dmgLine = ` for ${amount}${typeNote}${persistentNote}; ${player.name} ${before}→${player.currentHp} HP${down}`;
-      }
-      const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
-      result.attack = {
-        attacker: enemy.name,
-        target: player.name,
-        attackerKind: "enemy",
-        outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
-        damage: amount,
-        damageType: profile.damage[0]?.type || null,
-      };
-      emit({ type: "check", result });
-      lines.push(
-        `- ${enemy.name} ${strikeName} vs ${player.name}${mapTag} → ${verb}${dmgLine}.`,
-      );
-      emit({ type: "state", state: session.state });
+      lines.push(strikeAtPlayer(session, enemy, player, profile, emit));
     }
     if (player.defeated) break;
   }
@@ -1747,6 +1831,8 @@ async function runRulesStage(
   // returns a player-safe `summaryLine`; we keep them in call order so the
   // narrator sees an explicit hit/miss/damage story, not just "failure".
   const summaryLines: string[] = [];
+  /** Linhas de reação inimiga aguardando aviso ao rules model (pós tool results). */
+  const pendingReactionNotices: string[] = [];
   const consulted: string[] = [];
   let anyTool = false;
   let endedTurn = false;
@@ -1787,6 +1873,14 @@ async function runRulesStage(
       );
       if (outcome.summaryLine) summaryLines.push(outcome.summaryLine);
       if (outcome.endedTurn) endedTurn = true;
+      // Reações inimigas (engine): manipulate (use_item) e movimento provocam
+      // Reactive Strike/AoO de quem tem a reação no statblock e ela disponível.
+      // (Aviso ao modelo só DEPOIS do loop — tool results têm que vir direto.)
+      if (!outcome.isError && reactionTriggerOf(tc.function.name, args)) {
+        const reactionLines = triggerEnemyReactions(session, emit);
+        summaryLines.push(...reactionLines);
+        pendingReactionNotices.push(...reactionLines);
+      }
       if (
         !outcome.isError &&
         ["roll_check", "use_item", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
@@ -1804,6 +1898,15 @@ async function runRulesStage(
         tool_call_id: tc.id,
         content: outcome.content,
       });
+    }
+    // Reações disparadas nesta iteração: o rules model precisa saber (o resumo
+    // numerado vai só para o narrador). Depois dos tool results, protocolo OK.
+    if (pendingReactionNotices.length) {
+      messages.push({
+        role: "user",
+        content: `[ENGINE] Enemy reaction(s) already resolved by the engine — account for them, do NOT re-roll:\n${pendingReactionNotices.join("\n")}`,
+      });
+      pendingReactionNotices.length = 0;
     }
     return toolCalls.length;
   };
