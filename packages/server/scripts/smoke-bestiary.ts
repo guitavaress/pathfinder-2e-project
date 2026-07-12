@@ -62,6 +62,27 @@ async function main() {
 
   console.log("\nRevide inimigo (determinístico):");
   for (const line of resolveEnemyTurns(session, noop)) console.log(line);
+
+  // Cenário 2: inimigo caster (política determinística de conjuração).
+  const casterSession = {
+    id: "smoke2",
+    character,
+    state: { sessionId: "smoke2", currentHp: 20, conditions: [], flags: {}, combat: null },
+  } as unknown as Session;
+  // extreme: on-level (40 XP) cabe sem rebaixar — o statblock entra inteiro.
+  const out2 = await executeTool(
+    casterSession,
+    "start_combat",
+    { difficulty: "extreme", enemies: [{ name: "Goblin War Chanter" }] },
+    noop,
+  );
+  console.log("\ncaster start_combat →", out2.content);
+  const you = casterSession.state.combat!.combatants.find(
+    (c: Combatant) => c.kind === "player",
+  )!;
+  you.actionsRemaining = 0;
+  console.log("Turno do caster inimigo:");
+  for (const line of resolveEnemyTurns(casterSession, noop)) console.log(line);
 }
 
 main().catch((err) => {

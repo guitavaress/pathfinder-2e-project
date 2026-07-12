@@ -113,6 +113,10 @@ export const SpellcastingSchema = z.object({
   dc: z.number().int().nullable(),
   /** Flattened list of known/prepared spell names. */
   spells: z.array(z.string()),
+  /** Slots per day by rank ("1".."10") — cantrips ("0") are unlimited. */
+  slots: z.record(z.string(), z.number().int()).optional(),
+  /** Known/prepared spell names grouped by rank ("0" = cantrips). */
+  spellsByRank: z.record(z.string(), z.array(z.string())).optional(),
 });
 export type Spellcasting = z.infer<typeof SpellcastingSchema>;
 
@@ -157,6 +161,8 @@ export const CharacterSchema = z.object({
   equipment: z.array(EquipmentItemSchema),
   money: MoneySchema,
   spellcasting: z.array(SpellcastingSchema),
+  /** Focus pool maximum (0/absent = no focus spells). */
+  focusPoints: z.number().int().optional(),
   resistances: z.array(z.string()),
   languages: z.array(z.string()),
   deity: z.string().nullable(),
@@ -264,5 +270,9 @@ export const GameStateSchema = z.object({
   flags: z.record(z.string(), z.unknown()),
   /** Present only during a combat encounter; null otherwise. */
   combat: CombatSchema.nullable(),
+  /** Spell slots spent today, by rank ("1".."10"). Restored on daily rest. */
+  spellSlotsUsed: z.record(z.string(), z.number().int()).optional(),
+  /** Focus points spent (max = character.focusPoints). Refocus restores 1. */
+  focusPointsUsed: z.number().int().optional(),
 });
 export type GameState = z.infer<typeof GameStateSchema>;

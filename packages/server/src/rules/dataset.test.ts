@@ -9,6 +9,7 @@ import {
   itemTraits,
   namedActivity,
   officialConditions,
+  spellRecord,
 } from "./dataset.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -140,6 +141,37 @@ describe.skipIf(!hasGenerated)("dataset (requer generated/)", () => {
       // Spell homônimo jamais vira statblock de inimigo.
       expect(creatureRecord("Fireball")).toBeNull();
       expect(creatureRecord("zzz-not-a-creature")).toBeNull();
+    });
+  });
+
+  describe("spellRecord (magias com mecânica estruturada)", () => {
+    it("Fireball: save reflex basic, 6d6 fire, heighten +2d6, área", () => {
+      const s = spellRecord("Fireball")?.spell;
+      expect(s?.rank).toBe(3);
+      expect(s?.cantrip).toBe(false);
+      expect(s?.castActions).toBe("2");
+      expect(s?.defense).toEqual({ save: "reflex", basic: true });
+      expect(s?.damage).toEqual([{ formula: "6d6", type: "fire", kinds: ["damage"] }]);
+      expect(s?.heighten).toEqual({ interval: 1, add: ["2d6"] });
+      expect(s?.area).toBe("20-foot burst");
+    });
+
+    it("Ignition: cantrip de ataque com heighten +1d4", () => {
+      const s = spellRecord("Ignition")?.spell;
+      expect(s?.cantrip).toBe(true);
+      expect(s?.attack).toBe(true);
+      expect(s?.damage[0]?.formula).toBe("2d4");
+      expect(s?.heighten).toEqual({ interval: 1, add: ["1d4"] });
+    });
+
+    it("Heal: kinds distingue cura de dano", () => {
+      const s = spellRecord("Heal")?.spell;
+      expect(s?.damage[0]?.kinds).toContain("healing");
+    });
+
+    it("nome desconhecido/categoria errada → null", () => {
+      expect(spellRecord("Giant Rat")).toBeNull();
+      expect(spellRecord("zzz-not-a-spell")).toBeNull();
     });
   });
 });

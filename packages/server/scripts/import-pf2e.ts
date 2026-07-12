@@ -64,6 +64,29 @@ interface RuleRecord {
   /** Criaturas (type "npc"): statblock estruturado — a engine usa AC/HP/ataques
    *  reais em vez do benchmark por nível. Só presente quando AC e HP resolvem. */
   statblock?: CreatureStatblock;
+  /** Magias (type "spell"): mecânica estruturada — cast_spell resolve daqui. */
+  spell?: SpellMechanics;
+}
+
+/** Mecânica estruturada de uma magia (extraída do doc Foundry). */
+interface SpellMechanics {
+  /** Rank base (system.level.value). Cantrips têm rank 1 + trait "cantrip". */
+  rank: number;
+  cantrip: boolean;
+  /** system.time.value cru: "1" | "2" | "3" | "1 to 3" | "reaction" | "1 minute"… */
+  castActions: string;
+  /** Trait "attack": spell attack roll contra AC. */
+  attack: boolean;
+  /** Save do alvo (system.defense.save); basic = metade no sucesso. */
+  defense?: { save: string; basic: boolean };
+  /** Entradas de dano/cura; kinds distingue "damage" de "healing". */
+  damage: { formula: string; type: string; kinds: string[]; category?: string }[];
+  /** Heightening por intervalo: +add[i] à damage[i] a cada `interval` ranks. */
+  heighten?: { interval: number; add: string[] };
+  range?: string;
+  area?: string;
+  targets?: string;
+  duration?: string;
 }
 
 /** Um Strike de NPC (item Foundry type "melee" — inclui ataques à distância). */
@@ -356,6 +379,69 @@ function extractStatblock(
   };
 }
 
+/** Extrai a mecânica estruturada de uma magia (type "spell"). */
+function extractSpell(
+  system: Record<string, unknown>,
+  rank: number,
+  traits: string[],
+): SpellMechanics {
+  const timeObj = (system.time ?? {}) as Record<string, unknown>;
+  const defObj = (system.defense ?? null) as Record<string, unknown> | null;
+  const saveObj = (defObj?.save ?? null) as Record<string, unknown> | null;
+
+  const damageRaw = (system.damage ?? {}) as Record<string, unknown>;
+  const damageKeys = Object.keys(damageRaw);
+  const damage = damageKeys
+    .map((k) => {
+      const d = (damageRaw[k] ?? {}) as Record<string, unknown>;
+      if (typeof d.formula !== "string" || !d.formula) return null;
+      return {
+        formula: d.formula,
+        type: typeof d.type === "string" ? d.type : "",
+        kinds: Array.isArray(d.kinds) ? (d.kinds as unknown[]).map(String) : ["damage"],
+        ...(typeof d.category === "string" && d.category
+          ? { category: d.category }
+          : {}),
+      };
+    })
+    .filter((d): d is NonNullable<typeof d> => d !== null);
+
+  // Heightening "interval": add[i] alinhado à damage[i] pela MESMA chave.
+  const hObj = (system.heightening ?? null) as Record<string, unknown> | null;
+  let heighten: SpellMechanics["heighten"];
+  if (hObj?.type === "interval" && typeof hObj.interval === "number") {
+    const hDmg = (hObj.damage ?? {}) as Record<string, unknown>;
+    const add = damageKeys
+      .map((k) => (typeof hDmg[k] === "string" ? (hDmg[k] as string) : ""))
+      .filter(Boolean);
+    if (add.length > 0) heighten = { interval: hObj.interval, add };
+  }
+
+  const str = (v: unknown): string | undefined => {
+    const o = (v ?? null) as Record<string, unknown> | null;
+    return o && typeof o.value === "string" && o.value ? o.value : undefined;
+  };
+  const areaObj = (system.area ?? null) as Record<string, unknown> | null;
+
+  return {
+    rank,
+    cantrip: traits.includes("cantrip"),
+    castActions: typeof timeObj.value === "string" ? timeObj.value : "2",
+    attack: traits.includes("attack"),
+    ...(saveObj && typeof saveObj.statistic === "string"
+      ? { defense: { save: saveObj.statistic, basic: saveObj.basic === true } }
+      : {}),
+    damage,
+    ...(heighten ? { heighten } : {}),
+    ...(str(system.range) ? { range: str(system.range) } : {}),
+    ...(areaObj && typeof areaObj.value === "number" && typeof areaObj.type === "string"
+      ? { area: `${areaObj.value}-foot ${areaObj.type}` }
+      : {}),
+    ...(str(system.target) ? { targets: str(system.target) } : {}),
+    ...(str(system.duration) ? { duration: str(system.duration) } : {}),
+  };
+}
+
 function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | null {
   const type = typeof doc.type === "string" ? doc.type : "";
   const category = categoryOf(type);
@@ -380,6 +466,18 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
   // Muitos NPCs não têm prosa nenhuma — sintetizar um texto mínimo para que o
   // record não seja filtrado pelo loader (dataset.ts exige `text`).
   let text = cleanText(description.value) || cleanText(detailsObj.publicNotes);
+
+  // Mecânica estruturada de MAGIAS: cast_spell resolve dados, não prosa.
+  let spell: SpellMechanics | undefined;
+  if (type === "spell" && level !== null) {
+    const traitList = Array.isArray(traitsObj.value)
+      ? (traitsObj.value as unknown[]).map(String)
+      : [];
+    // Rituais ficam fora (não são conjuráveis em combate).
+    if (!traitList.includes("ritual") && !(system.ritual ?? null)) {
+      spell = extractSpell(system, level, traitList);
+    }
+  }
 
   // Statblock estruturado de CRIATURAS: AC/HP/saves/ataques reais para a engine.
   let statblock: CreatureStatblock | undefined;
@@ -476,6 +574,7 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
     range,
     weaponCategory,
     statblock,
+    spell,
   };
 }
 
@@ -608,10 +707,13 @@ async function main() {
     console.log(`  ${category}: ${arr.length}`);
     total += arr.length;
   }
-  // Visibilidade de regressão: extração de statblock quebrada aparece aqui.
+  // Visibilidade de regressão: extração estruturada quebrada aparece aqui.
   const bestiary = byCategory.get("bestiary") ?? [];
   const withStats = bestiary.filter((r) => r.statblock).length;
   console.log(`  bestiary statblocks: ${withStats}/${bestiary.length}`);
+  const spells = byCategory.get("spells") ?? [];
+  const withSpell = spells.filter((r) => r.spell).length;
+  console.log(`  spells estruturadas: ${withSpell}/${spells.length}`);
   console.log(`OK: ${total} entradas gravadas em ${OUT_DIR}`);
 }
 

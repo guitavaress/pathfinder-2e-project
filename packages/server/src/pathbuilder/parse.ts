@@ -179,15 +179,31 @@ export function parsePathbuilder(raw: unknown): Character {
   const castersRaw = (build.spellCasters ?? []) as Record<string, unknown>[];
   const spellcasting = castersRaw.map((c) => {
     const spellsList: string[] = [];
+    // Estrutura por rank preservada (cast_spell valida rank e cobra slot).
+    const spellsByRank: Record<string, string[]> = {};
     const groups = (c.spells ?? []) as Record<string, unknown>[];
     for (const g of groups) {
+      const rank = String(asNumber(g.spellLevel, 0));
       const list = (g.list ?? g.prepared ?? []) as unknown[];
       for (const sp of list) {
-        if (typeof sp === "string") spellsList.push(sp);
-        else if (sp && typeof sp === "object")
-          spellsList.push(asString((sp as Record<string, unknown>).name));
+        const name =
+          typeof sp === "string"
+            ? sp
+            : sp && typeof sp === "object"
+              ? asString((sp as Record<string, unknown>).name)
+              : "";
+        if (!name) continue;
+        spellsList.push(name);
+        (spellsByRank[rank] ??= []).push(name);
       }
     }
+    // perDay: array indexada por rank (0 = cantrips, ilimitados — ignora).
+    const slots: Record<string, number> = {};
+    const perDay = (c.perDay ?? []) as unknown[];
+    perDay.forEach((n, rank) => {
+      const v = asNumber(n);
+      if (rank > 0 && v > 0) slots[String(rank)] = v;
+    });
     return {
       name: asString(c.name, "Spellcasting"),
       tradition: asString(c.magicTradition),
@@ -196,6 +212,8 @@ export function parsePathbuilder(raw: unknown): Character {
       attack: c.attack != null ? asNumber(c.attack) : null,
       dc: c.dc != null ? asNumber(c.dc) : null,
       spells: spellsList.filter(Boolean),
+      ...(Object.keys(slots).length > 0 ? { slots } : {}),
+      ...(Object.keys(spellsByRank).length > 0 ? { spellsByRank } : {}),
     };
   });
 
@@ -241,6 +259,10 @@ export function parsePathbuilder(raw: unknown): Character {
     equipment,
     money,
     spellcasting,
+    // Focus pool do Pathbuilder (0/ausente = sem focus spells).
+    ...(asNumber(build.focusPoints) > 0
+      ? { focusPoints: asNumber(build.focusPoints) }
+      : {}),
     resistances,
     languages,
     deity: build.deity && build.deity !== "Not set" ? asString(build.deity) : null,

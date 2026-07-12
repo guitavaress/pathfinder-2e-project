@@ -16,7 +16,9 @@ import {
   multiActionCost,
   namedActivity,
   officialConditions,
+  spellRecord,
   type RuleRecord,
+  type SpellMechanics,
 } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
 import {
@@ -24,6 +26,7 @@ import {
   applyRecovery,
   attackStatusPenalty,
   beginPlayerRound,
+  benchmark,
   buildCombat,
   clampActionCost,
   conditionValueIn,
@@ -105,6 +108,9 @@ const turnFrequencyUsed = new WeakMap<Session, Map<string, number>>();
  * quando um combate novo começa.
  */
 const combatFrequencyUsed = new WeakMap<Session, Map<string, number>>();
+/** Inimigos (por id) que já conjuraram neste combate — casters gastam a melhor
+ *  magia UMA vez por luta (política determinística; o 12B nunca decide). */
+const combatEnemyCasts = new WeakMap<Session, Set<string>>();
 
 /** Store de frequency para um `per` do dataset (null = engine não julga). */
 function frequencyStore(session: Session, per: string): Map<string, number> | null {
@@ -340,6 +346,34 @@ const TOOLS: ChatCompletionTool[] = [
           },
         },
         required: ["item", "reason"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cast_spell",
+      description:
+        "Casts a spell from the character's sheet. The ENGINE validates the spell is known, spends the real spell slot (or focus point; cantrips are free and auto-heightened), charges the cast actions, and resolves the REAL effect from the rules data: spell attack vs the target's AC, or the target's ACTUAL save vs the character's spell DC, with structured damage/healing (heightened by rank). ALWAYS use this tool for spells — never roll_check/spend_actions/update_state.",
+      parameters: {
+        type: "object",
+        properties: {
+          spell: {
+            type: "string",
+            description: "The spell's name as on the sheet, e.g. 'Fireball', 'Ignition'.",
+          },
+          target: {
+            type: "string",
+            description:
+              "Offensive single-target spells: the combatant's id or name. Area spells (Fireball) may omit it to hit every enemy.",
+          },
+          rank: {
+            type: "number",
+            description:
+              "Slot rank to cast at, for heightening (spontaneous casters). Defaults to the spell's own rank. Ignored for cantrips (auto-heightened).",
+          },
+        },
+        required: ["spell"],
       },
     },
   },
@@ -651,6 +685,64 @@ function strikeProfileFor(c: Combatant): StrikeProfile {
   return strikeProfileFrom(rec?.statblock, c.level ?? 0);
 }
 
+/**
+ * Custo em ações de uma conjuração a partir do time.value cru do dataset:
+ * "2" → 2; "1 to 3" → 2 (meio-termo do Heal); "reaction"/"free" → 0;
+ * "1 minute"+ → 3 (turno inteiro; fora de combate é só narrativa).
+ */
+function castActionCost(raw: string | undefined): number {
+  const s = (raw ?? "").toLowerCase().trim();
+  if (!s) return 2;
+  if (/reaction|free/.test(s)) return 0;
+  if (/minute|hour|day/.test(s)) return 3;
+  const m = /^(\d)/.exec(s);
+  if (m) return Math.max(1, Math.min(3, Number(m[1])));
+  return 2;
+}
+
+/**
+ * Rola o dano/cura de uma magia no rank de conjuração: fórmula base + os
+ * passos de heightening ("+2d6 por rank" do Fireball, "+1d4" do cantrip).
+ */
+function rollSpellDamage(
+  mech: SpellMechanics,
+  castRank: number,
+): { total: number; type: string } {
+  const steps = mech.heighten
+    ? Math.max(0, Math.floor((castRank - mech.rank) / mech.heighten.interval))
+    : 0;
+  let total = 0;
+  let type = "";
+  mech.damage.forEach((d, i) => {
+    total += rollFormula(d.formula);
+    const add = mech.heighten?.add[i];
+    if (add) for (let s = 0; s < steps; s++) total += rollFormula(add);
+    if (!type && d.type && d.type !== "untyped") type = d.type;
+  });
+  return { total, type };
+}
+
+/** Devolve o slot/focus cobrado quando a conjuração acabou rejeitada. */
+function refundSpellResource(
+  session: Session,
+  isCantrip: boolean,
+  isFocus: boolean,
+  castRank: number,
+): void {
+  if (isCantrip) return;
+  if (isFocus) {
+    const used = session.state.focusPointsUsed ?? 0;
+    session.state.focusPointsUsed = Math.max(0, used - 1);
+    return;
+  }
+  const rankKey = String(castRank);
+  const used = session.state.spellSlotsUsed?.[rankKey] ?? 0;
+  session.state.spellSlotsUsed = {
+    ...(session.state.spellSlotsUsed ?? {}),
+    [rankKey]: Math.max(0, used - 1),
+  };
+}
+
 /** Difficulty declared by the model; anything unrecognized falls back to "moderate". */
 function parseDifficulty(v: unknown): EncounterDifficulty {
   const s = String(v ?? "").toLowerCase().trim();
@@ -921,6 +1013,276 @@ export async function executeTool(
         summaryLine: `- ${checkReason(result.label)}: ${DEGREE_EN[result.degree]}.`,
       };
     }
+    case "cast_spell": {
+      const spellInput = String(input.spell ?? "").trim();
+      if (!spellInput) {
+        return { content: "Missing 'spell': pass the spell's name.", isError: true };
+      }
+      const c = session.character;
+
+      // Grounding: a magia PRECISA estar na ficha (nome exato → contido).
+      const key = spellInput.toLowerCase();
+      let entry = c.spellcasting.find((e) =>
+        e.spells.some((s) => s.toLowerCase() === key),
+      );
+      let sheetName = entry?.spells.find((s) => s.toLowerCase() === key);
+      if (!entry) {
+        for (const e of c.spellcasting) {
+          const m = e.spells.find(
+            (s) => s.toLowerCase().includes(key) || key.includes(s.toLowerCase()),
+          );
+          if (m) {
+            entry = e;
+            sheetName = m;
+            break;
+          }
+        }
+      }
+      if (!entry || !sheetName) {
+        const known =
+          c.spellcasting.flatMap((e) => e.spells).join(", ") || "none — not a caster";
+        return {
+          content: `REJECTED: "${spellInput}" is not on the character's sheet (known spells: ${known}). Nothing is cast and nothing is spent.`,
+          isError: true,
+          summaryLine: `- Cast ${spellInput}: FAILED — not a spell they know.`,
+        };
+      }
+
+      const mech = spellRecord(sheetName)?.spell;
+      // Rank na ficha (spellsByRank) manda; senão o rank base do dataset.
+      let sheetRank: number | null = null;
+      if (entry.spellsByRank) {
+        for (const [rank, list] of Object.entries(entry.spellsByRank)) {
+          if (list.some((s) => s.toLowerCase() === sheetName!.toLowerCase())) {
+            sheetRank = Number(rank);
+            break;
+          }
+        }
+      }
+      const baseRank = mech?.rank ?? sheetRank ?? 1;
+      const isCantrip = mech?.cantrip === true || sheetRank === 0;
+      const isFocus = entry.type.toLowerCase().includes("focus");
+
+      // Cantrips auto-heighten para metade do nível (arredondado para cima).
+      let castRank = isCantrip ? Math.ceil(c.level / 2) : baseRank;
+      if (!isCantrip && input.rank != null && Number.isFinite(Number(input.rank))) {
+        castRank = Math.max(baseRank, Math.min(10, Math.round(Number(input.rank))));
+      }
+
+      // Slot/focus: a engine cobra o recurso REAL (sem dado de slots na ficha
+      // antiga, cobra às cegas mas não bloqueia — ausência honesta).
+      let resourceNote = "";
+      if (isCantrip) {
+        resourceNote = " (cantrip, no slot)";
+      } else if (isFocus) {
+        const max = c.focusPoints ?? 0;
+        const used = session.state.focusPointsUsed ?? 0;
+        if (max > 0 && used >= max) {
+          return {
+            content: `REJECTED: no Focus Points left (${used}/${max} spent — Refocus restores 1). The spell is NOT cast.`,
+            isError: true,
+            summaryLine: `- Cast ${sheetName}: FAILED — no focus left.`,
+          };
+        }
+        session.state.focusPointsUsed = used + 1;
+        resourceNote = max > 0 ? ` (focus ${used + 1}/${max})` : " (focus)";
+      } else {
+        const rankKey = String(castRank);
+        const slotsMax = entry.slots?.[rankKey];
+        const used = session.state.spellSlotsUsed?.[rankKey] ?? 0;
+        if (slotsMax != null && used >= slotsMax) {
+          const left = Object.entries(entry.slots ?? {})
+            .map(([r, max]) => {
+              const u = session.state.spellSlotsUsed?.[r] ?? 0;
+              return max - u > 0 ? `rank ${r}: ${max - u}` : "";
+            })
+            .filter(Boolean)
+            .join(", ");
+          return {
+            content: `REJECTED: no rank-${castRank} spell slots left (${used}/${slotsMax} spent today). Slots remaining: ${left || "none"}. The spell is NOT cast.`,
+            isError: true,
+            summaryLine: `- Cast ${sheetName}: FAILED — no rank-${castRank} slots left.`,
+          };
+        }
+        session.state.spellSlotsUsed = {
+          ...(session.state.spellSlotsUsed ?? {}),
+          [rankKey]: used + 1,
+        };
+        resourceNote =
+          slotsMax != null
+            ? ` (slot ${used + 1}/${slotsMax} rank ${castRank})`
+            : ` (rank ${castRank} slot)`;
+      }
+
+      // Custo de ações em combate (fora de combate não conta).
+      const combat = session.state.combat;
+      const you = combat?.active ? playerOf(combat) : null;
+      const inCombat = !!you && !you.defeated;
+      const cost = castActionCost(mech?.castActions);
+      if (inCombat && you!.actionsRemaining < cost) {
+        // Recurso NÃO pode ficar cobrado numa conjuração ilegal — devolve.
+        refundSpellResource(session, isCantrip, isFocus, castRank);
+        return {
+          content: `ILLEGAL: casting ${sheetName} costs ${cost} action(s) but the player has only ${you!.actionsRemaining} left this turn. It does NOT happen (the slot was not spent).`,
+          isError: true,
+          summaryLine: `- Cast ${sheetName}: NOT done — costs ${cost}, only ${you!.actionsRemaining} action(s) left.`,
+        };
+      }
+      if (inCombat) you!.actionsRemaining -= cost;
+
+      const castLabel = `${sheetName}${castRank > baseRank || isCantrip ? ` (rank ${castRank})` : ""}`;
+
+      // Sem mecânica estruturada: gasto real + efeito narrado (utility spells).
+      if (!mech || (mech.damage.length === 0 && !mech.attack && !mech.defense)) {
+        emit({ type: "state", state: session.state });
+        return {
+          content: `${sheetName} is cast${resourceNote}. No structured combat effect — narrate its utility effect faithfully (text: ${spellRecord(sheetName)?.text.slice(0, 300) ?? "see rules"}).`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}.`,
+        };
+      }
+
+      const parts: string[] = [];
+
+      // CURA (kinds inclui "healing") sem alvo inimigo → cura o personagem.
+      const isHealing = mech.damage.some((d) => d.kinds.includes("healing"));
+      const targetRef = String(input.target ?? "").trim();
+      const enemyTarget =
+        inCombat && targetRef ? findCombatant(combat!, targetRef) : null;
+      if (isHealing && (!enemyTarget || enemyTarget.kind !== "enemy")) {
+        const amount = rollSpellDamage(mech, castRank);
+        const before = session.state.currentHp;
+        session.state.currentHp = Math.min(c.maxHp, before + amount.total);
+        if (you) you.currentHp = session.state.currentHp;
+        emit({ type: "state", state: session.state });
+        return {
+          content: `${sheetName} heals ${amount.total} HP${resourceNote}: ${before}→${session.state.currentHp}/${c.maxHp}.`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}: heals ${amount.total} (${before}→${session.state.currentHp} HP).`,
+        };
+      }
+
+      if (!inCombat) {
+        emit({ type: "state", state: session.state });
+        return {
+          content: `${sheetName} is cast${resourceNote} (no combat active — narrate the effect).`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}.`,
+        };
+      }
+
+      // ATAQUE de magia: rola contra a AC real do alvo, com MAP (é um ataque).
+      if (mech.attack) {
+        const target = enemyTarget;
+        if (!target || target.kind !== "enemy" || target.defeated) {
+          refundSpellResource(session, isCantrip, isFocus, castRank);
+          if (you) you.actionsRemaining += cost;
+          return {
+            content: `Missing/invalid 'target' for the attack spell ${sheetName} (nothing was spent). Pass the enemy's id or name.`,
+            isError: true,
+          };
+        }
+        const map = mapPenalty(you!.mapProgress);
+        const ac = effectiveAC(target);
+        const result = rollCheck(
+          `${sheetName} spell attack: ${c.name} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`,
+          (entry.attack ?? 0) + map,
+          ac,
+        );
+        you!.mapProgress += 1;
+        const crit = result.degree === "criticalSuccess";
+        const hit = crit || result.degree === "success";
+        let dmgNote = "";
+        if (hit) {
+          const dmg = rollSpellDamage(mech, castRank);
+          const amount = crit ? dmg.total * 2 : dmg.total;
+          const before = target.currentHp;
+          applyDamage(target, amount);
+          dmgNote = ` for ${amount} ${dmg.type || "damage"}; ${target.name} ${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""}`;
+        }
+        result.attack = {
+          attacker: c.name,
+          target: target.name,
+          attackerKind: "player",
+          outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
+          damage: hit ? null : null,
+          damageType: mech.damage[0]?.type ?? null,
+        };
+        emit({ type: "check", result });
+        parts.push(
+          `${crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS"}${dmgNote}`,
+        );
+      } else if (mech.defense?.save) {
+        // SAVE: cada alvo rola o save REAL (bestiary) contra o spell DC.
+        if (entry.dc == null) {
+          refundSpellResource(session, isCantrip, isFocus, castRank);
+          if (you) you.actionsRemaining += cost;
+          return {
+            content: `REJECTED: the sheet has no spell DC for ${entry.name} — cannot resolve ${sheetName} (nothing was spent).`,
+            isError: true,
+          };
+        }
+        const targets =
+          enemyTarget && enemyTarget.kind === "enemy" && !enemyTarget.defeated
+            ? [enemyTarget]
+            : mech.area
+              ? combat!.combatants.filter((x) => x.kind === "enemy" && !x.defeated)
+              : [];
+        if (targets.length === 0) {
+          refundSpellResource(session, isCantrip, isFocus, castRank);
+          if (you) you.actionsRemaining += cost;
+          return {
+            content: `Missing/invalid 'target' for ${sheetName} (nothing was spent). Pass the enemy's id or name${mech.area ? ", or none to hit every enemy in the area" : ""}.`,
+            isError: true,
+          };
+        }
+        const saveKey = mech.defense.save as "fortitude" | "reflex" | "will";
+        for (const target of targets) {
+          // Save real do statblock; sem statblock, aproximação por nível
+          // (percepção do benchmark) — visível no label para auditoria.
+          const saveMod =
+            target.saves?.[saveKey] ?? benchmark(target.level ?? 0).perception;
+          const approx = target.saves ? "" : " approx";
+          const result = rollCheck(
+            `${sheetName}: ${target.name} ${saveKey}${approx} save vs ${c.name}'s spell DC ${entry.dc}`,
+            saveMod,
+            entry.dc,
+          );
+          emit({ type: "check", result });
+          const dmg = rollSpellDamage(mech, castRank);
+          const mult =
+            result.degree === "criticalFailure"
+              ? 2
+              : result.degree === "failure"
+                ? 1
+                : result.degree === "success" && mech.defense.basic
+                  ? 0.5
+                  : 0;
+          const amount = Math.floor(dmg.total * mult);
+          if (amount > 0) {
+            const before = target.currentHp;
+            applyDamage(target, amount);
+            parts.push(
+              `${target.name} ${DEGREE_EN[result.degree]} → takes ${amount} ${dmg.type || "damage"} (${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""})`,
+            );
+          } else {
+            parts.push(`${target.name} ${DEGREE_EN[result.degree]} → unharmed`);
+          }
+        }
+      }
+
+      // Auto-close no wipe (mesmo padrão do Strike).
+      let endNote = "";
+      if (combat!.active && combatStatus(combat!) !== "ongoing") {
+        combat!.active = false;
+        endNote =
+          combatStatus(combat!) === "victory"
+            ? " Combat ends: VICTORY."
+            : " Combat ends: DEFEAT.";
+      }
+      emit({ type: "state", state: session.state });
+      return {
+        content: `${castLabel} cast${resourceNote} (${cost} action${cost > 1 ? "s" : ""}): ${parts.join("; ")}.${endNote} Actions left: ${you!.actionsRemaining}.`,
+        summaryLine: `- Casts ${castLabel}${resourceNote}: ${parts.join("; ")}.${endNote}`,
+      };
+    }
     case "start_combat": {
       const raw = Array.isArray(input.enemies) ? input.enemies : [];
       const specs: EnemySpec[] = [];
@@ -1030,8 +1392,10 @@ export async function executeTool(
       const combat = buildCombat([player, ...instantiate(plan.accepted)]);
       // This message is the player's turn: give them a full set of actions.
       if (player.actionsRemaining < 3) player.actionsRemaining = 3;
-      // Combate novo zera os limites de Frequency de período longo (1/hour...).
+      // Combate novo zera os limites de Frequency de período longo (1/hour...)
+      // e o registro de conjurações inimigas.
       combatFrequencyUsed.set(session, new Map());
+      combatEnemyCasts.set(session, new Set());
       session.state.combat = combat;
       emit({ type: "state", state: session.state });
       const order = combat.combatants
@@ -1488,7 +1852,8 @@ export function reactionTriggerOf(
   toolName: string,
   input: Record<string, unknown>,
 ): "manipulate" | "move" | null {
-  if (toolName === "use_item") return "manipulate";
+  // Conjurar (trait manipulate na esmagadora maioria) e usar item provocam.
+  if (toolName === "use_item" || toolName === "cast_spell") return "manipulate";
   if (toolName === "spend_actions") {
     const reason = String(input.reason ?? "");
     // Step (5 ft cuidadoso) NÃO provoca — todo o resto de movimento sim.
@@ -1656,6 +2021,116 @@ function strikeAtPlayer(
   return line;
 }
 
+/**
+ * Turno de conjuração de um inimigo caster — política DETERMINÍSTICA (o 12B
+ * nunca decide): 1x por combate, a magia DANOSA estruturada de maior rank do
+ * statblock; o jogador rola o save REAL da ficha contra o spell DC oficial
+ * (ou a magia ataca vs AC). Retorna a linha, ou null se não conjurou.
+ */
+function enemySpellTurn(
+  session: Session,
+  enemy: Combatant,
+  player: Combatant,
+  emit: (e: StreamEvent) => void,
+): string | null {
+  if (!enemy.sourceName) return null;
+  const casting = creatureRecord(enemy.sourceName)?.statblock?.spellcasting;
+  if (!casting?.length) return null;
+  const done = combatEnemyCasts.get(session);
+  if (!done || done.has(enemy.id)) return null;
+
+  let pick: {
+    dc: number;
+    attack: number;
+    name: string;
+    rank: number;
+    mech: SpellMechanics;
+  } | null = null;
+  for (const entry of casting) {
+    for (const sp of entry.spells) {
+      const mech = spellRecord(sp.name)?.spell;
+      if (!mech) continue;
+      const damaging = mech.damage.some(
+        (d) => d.kinds.includes("damage") && !d.kinds.includes("healing"),
+      );
+      if (!damaging || (!mech.defense?.save && !mech.attack)) continue;
+      if (!pick || sp.rank > pick.rank) {
+        pick = { dc: entry.dc, attack: entry.attack, name: sp.name, rank: sp.rank, mech };
+      }
+    }
+  }
+  if (!pick) return null;
+  done.add(enemy.id);
+
+  const castRank = Math.max(pick.mech.rank, pick.rank);
+  const dmg = rollSpellDamage(pick.mech, castRank);
+
+  if (pick.mech.defense?.save) {
+    const saveKey = pick.mech.defense.save as "fortitude" | "reflex" | "will";
+    const mod = session.character.saves[saveKey];
+    const result = rollCheck(
+      `${pick.name} (${enemy.name}): ${player.name} ${saveKey} save vs spell DC ${pick.dc}`,
+      mod,
+      pick.dc,
+    );
+    emit({ type: "check", result });
+    // Basic save; saves não-basic com dano usam os mesmos multiplicadores
+    // (aproximação honesta — o efeito extra fica para a narração).
+    const mult =
+      result.degree === "criticalFailure"
+        ? 2
+        : result.degree === "failure"
+          ? 1
+          : result.degree === "success"
+            ? 0.5
+            : 0;
+    const amount = Math.floor(dmg.total * mult);
+    let downNote = "";
+    const before = player.currentHp;
+    if (amount > 0) {
+      applyDamage(player, amount);
+      session.state.currentHp = player.currentHp;
+      if (player.defeated) downNote = ` — ${enterDying(session, result.degree === "criticalFailure")}`;
+    }
+    emit({ type: "state", state: session.state });
+    const dmgNote =
+      amount > 0
+        ? ` takes ${amount} ${dmg.type || "damage"} (${before}→${player.currentHp} HP)${downNote}`
+        : " is unharmed";
+    return `- ${enemy.name} casts ${pick.name}: ${player.name} ${saveKey} save ${DEGREE_EN[result.degree]} →${dmgNote}.`;
+  }
+
+  // Spell attack contra a AC do jogador (sem MAP: primeira ação do turno).
+  const ac = effectiveAC(player);
+  const result = rollCheck(
+    `${pick.name} spell attack: ${enemy.name} vs ${player.name} (AC ${ac})`,
+    pick.attack + attackStatusPenalty(enemy),
+    ac,
+  );
+  const crit = result.degree === "criticalSuccess";
+  const hit = crit || result.degree === "success";
+  let dmgLine = "";
+  if (hit) {
+    const amount = crit ? dmg.total * 2 : dmg.total;
+    const before = player.currentHp;
+    applyDamage(player, amount);
+    session.state.currentHp = player.currentHp;
+    const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
+    dmgLine = ` for ${amount} ${dmg.type || "damage"}; ${player.name} ${before}→${player.currentHp} HP${down}`;
+  }
+  result.attack = {
+    attacker: enemy.name,
+    target: player.name,
+    attackerKind: "enemy",
+    outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
+    damage: hit ? dmg.total : null,
+    damageType: dmg.type || null,
+  };
+  emit({ type: "check", result });
+  emit({ type: "state", state: session.state });
+  return `- ${enemy.name} casts ${pick.name} at ${player.name} → ${crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS"}${dmgLine}.`;
+}
+
 export function resolveEnemyTurns(
   session: Session,
   emit: (e: StreamEvent) => void,
@@ -1680,9 +2155,15 @@ export function resolveEnemyTurns(
     // Turno DELE começa: MAP reseta agora (a reação fora de turno herda o
     // acumulado — RAW).
     enemy.mapProgress = 0;
+    // Caster conjura sua melhor magia (2 ações) e fica com 1 Strike; os
+    // demais fazem os 2 Strikes de sempre.
+    const castLine = enemySpellTurn(session, enemy, player, emit);
+    if (castLine) lines.push(castLine);
+    if (player.defeated) break;
     // Statblock real (via sourceName) quando houver; senão benchmark do nível.
     const profile = strikeProfileFor(enemy);
-    for (let strike = 0; strike < 2; strike++) {
+    const strikes = castLine ? 1 : 2;
+    for (let strike = 0; strike < strikes; strike++) {
       if (player.defeated) break;
       lines.push(strikeAtPlayer(session, enemy, player, profile, emit));
     }
@@ -1883,7 +2364,7 @@ async function runRulesStage(
       }
       if (
         !outcome.isError &&
-        ["roll_check", "use_item", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
+        ["roll_check", "use_item", "cast_spell", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
           tc.function.name,
         )
       ) {
