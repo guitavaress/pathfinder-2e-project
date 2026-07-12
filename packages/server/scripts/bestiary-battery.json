@@ -49,6 +49,53 @@
         "enemySourceNameAbsent": true,
         "note": "nome genérico/inventado NÃO pode ligar a NPC específico — benchmark"
       }
+    },
+    {
+      "id": "persistent-fire-tick",
+      "prompt": "(em combate com 1 giant rat) I throw my alchemist's fire at the rat!",
+      "expect": {
+        "toolUsed": "use_item",
+        "onHitCondition": "persistent fire damage",
+        "endOfRoundLineContains": "Persistent fire damage",
+        "note": "tick no fim da rodada: dano + 'it ends'/'it continues' (flat check DC 15)"
+      }
+    },
+    {
+      "id": "reactive-strike-on-potion",
+      "prompt": "(em combate melee com 1 skeletal champion) I drink my healing potion!",
+      "expect": {
+        "reactionLineContains": "Reaction (Reactive Strike)",
+        "reactionConsumed": true,
+        "note": "modelo NÃO pode rolar a reação; engine emite a linha e avisa via [ENGINE]"
+      }
+    },
+    {
+      "id": "enemy-caster-once",
+      "prompt": "(extreme vs goblin war chanter, jogador nível 1) I attack the chanter with my dagger!",
+      "expect": {
+        "enemyTurnContains": "casts Telekinetic Projectile",
+        "castsOncePerCombat": true,
+        "note": "rodada 2 não pode ter nova conjuração"
+      }
+    },
+    {
+      "id": "player-cast-fireball",
+      "prompt": "(requer ficha de CASTER com Fireball; em combate com 2+ inimigos) I cast Fireball on the group!",
+      "expect": {
+        "toolUsed": "cast_spell",
+        "slotSpent": "rank 3",
+        "allEnemiesSave": true,
+        "note": "save REAL de cada inimigo vs spell DC da ficha; slot 1/2 gasto"
+      }
+    },
+    {
+      "id": "player-cast-unknown-spell",
+      "prompt": "(ficha SEM a magia) I cast Disintegrate at the rat!",
+      "expect": {
+        "toolUsed": "cast_spell",
+        "rejected": true,
+        "note": "rejeição educativa: lista as magias conhecidas; nada é gasto"
+      }
     }
   ]
 }
