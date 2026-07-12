@@ -9,9 +9,12 @@ decisions — with NPCs, a living world, and skill checks following the PF2e rul
 > **Status:** playable — import a character, play narrative scenes, and fight through a
 > **deterministic PF2e combat engine**: initiative, the 3-action economy (activity costs read from
 > the rules dataset), Multiple Attack Penalty, automatic damage with crits and Sneak Attack,
-> conditions as real mechanics, enemy turns resolved in code, item grounding (you can only use what
-> your sheet carries), and full **dying/recovery rules** — you can actually die.
-> Validated by a 75-scenario feat-audit regression battery (75/75 PASS).
+> conditions validated against the official list, activity Frequency and Requirements enforced,
+> enemy turns resolved in code, item grounding with **real quantities** (`use_item` throws the bomb
+> your sheet actually carries, with its real statblock), **encounter difficulty enforced by the
+> GM Core XP budget for your real party size** (solo play gets solo-sized encounters — the engine
+> trims whatever the model over-declares), and full **dying/recovery rules** — you can actually die.
+> Validated by a 75-scenario feat-audit regression battery (75/75 PASS) and 108 unit tests.
 
 ## How it works
 
@@ -21,9 +24,9 @@ prompt + message thread), not its own model, so LM Studio keeps a single model r
 swaps weights mid-turn:
 
 1. **Rules context** — resolves the PF2e mechanics with *tool use*: rolls checks and Strikes
-   (`roll_check`), runs combat (`start_combat`/`end_combat`/`end_turn`/`spend_actions`), looks up
-   rules (`lookup_rule`), updates state (`update_state`), and produces a numbered mechanical
-   summary. Dice, damage, action costs, conditions, and dying checks all come from **code**, not the
+   (`roll_check`), runs combat (`start_combat`/`end_combat`/`end_turn`/`spend_actions`), uses
+   consumables from the sheet (`use_item`), looks up rules (`lookup_rule`), updates state
+   (`update_state`), and produces a numbered mechanical summary. Dice, damage, action costs, conditions, and dying checks all come from **code**, not the
    model — the engine validates every tool input and rejects what the sheet can't support.
 2. **Narrative context** — receives that summary and writes the immersive scene (streaming),
    consistent with the result. It calls no tools; what isn't in the summary didn't happen.
@@ -32,9 +35,16 @@ swaps weights mid-turn:
 (reading activity costs from the rules dataset), applies damage automatically (crit doubles, Sneak
 Attack vs off-guard), resolves every enemy's retaliation deterministically, and — when you drop to
 0 HP — runs RAW dying/recovery checks until you stabilize (waking at 1 HP + wounded) or die at
-dying 4. The web UI shows a combat HUD (HP bars, action pips, MAP) and rich roll medallions.
+dying 4. **Encounter difficulty is enforced in code**: the engine computes the GM Core XP budget
+for the *real* party size (a solo character caps at 20 XP moderate / 40 XP extreme), trims
+over-budget creatures before they enter play, never lets a creature above party level +4 join, and
+counts defeated enemies toward the budget so "reinforcement waves" can't recreate a TPK. The web UI
+shows a combat HUD (HP bars, action pips, MAP) and rich roll medallions.
 
 The server talks to LM Studio through its **OpenAI-compatible API** (`http://localhost:1234/v1`).
+Running the project inside **WSL with LM Studio on the Windows host** also works: start the Windows
+server with network access (`lms server start --bind 0.0.0.0 --port 1234`) and point
+`LMSTUDIO_BASE_URL` at the WSL default gateway (`ip route show default | awk '{print $3}'`).
 
 - **Default (`GM_MODEL`):** one model for both stages — `google/gemma-4-12b`
   (Gemma 4 12B, official, Q4). It fits entirely in ~12 GB VRAM (no CPU offload) and follows
@@ -116,7 +126,7 @@ server loads them on demand.)
 ## Tests and build
 
 ```bash
-npm test         # 56 unit tests: combat engine, dice/degrees, dying/recovery, parser
+npm test         # 108 unit tests: combat engine, dice/degrees, dying/recovery, encounter budget, use_item, parser
 npm run build
 ```
 
