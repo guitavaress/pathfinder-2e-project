@@ -28,6 +28,7 @@ import {
   playerCombatant,
   setValuedCondition,
   strikeProfileFrom,
+  tickPersistentDamage,
   tickEndOfRound,
 } from "./combat.js";
 import type { Character } from "@pf2e/shared";
@@ -609,5 +610,93 @@ describe("enemyCombatant / strikeProfileFrom (statblock literal, sem dataset)", 
     const p = strikeProfileFrom(ranged, -1);
     expect(p.label).toBe("Shortbow");
     expect(p.agile).toBe(false);
+  });
+});
+
+describe("persistent damage (PR2)", () => {
+  it("tickEndOfRound NÃO decrementa persistent/dying/wounded, mas decrementa frightened", () => {
+    const c = mkCombatant({
+      name: "Hero",
+      kind: "player",
+      conditions: ["persistent fire damage 2", "dying 2", "wounded 1", "frightened 2"],
+    });
+    const combat = buildCombat([c]);
+    tickEndOfRound(combat);
+    expect(c.conditions).toContain("persistent fire damage 2");
+    expect(c.conditions).toContain("dying 2");
+    expect(c.conditions).toContain("wounded 1");
+    expect(c.conditions).toContain("frightened 1");
+  });
+
+  it("tickPersistentDamage: valor flat causa dano exato e flat check decide o fim", () => {
+    const c = mkCombatant({
+      name: "Goblin",
+      kind: "enemy",
+      currentHp: 12,
+      conditions: ["persistent fire damage 3"],
+    });
+    const combat = buildCombat([c]);
+    const ticks = tickPersistentDamage(combat);
+    expect(ticks).toHaveLength(1);
+    const t = ticks[0]!;
+    expect(t.amount).toBe(3);
+    expect(t.before).toBe(12);
+    expect(t.after).toBe(9);
+    expect(c.currentHp).toBe(9);
+    // Condição removida SSE o flat check (d20 ≥ 15) passou.
+    expect(t.ended).toBe(t.flatRoll >= 15);
+    expect(c.conditions.includes("persistent fire damage 3")).toBe(!t.ended);
+  });
+
+  it("tickPersistentDamage: fórmula NdM rola no intervalo e derrotado perde a condição", () => {
+    const c = mkCombatant({
+      name: "Rat",
+      kind: "enemy",
+      currentHp: 2,
+      conditions: ["persistent bleed damage 1d4+1"],
+    });
+    const combat = buildCombat([c]);
+    const t = tickPersistentDamage(combat)[0]!;
+    expect(t.amount).toBeGreaterThanOrEqual(2);
+    expect(t.amount).toBeLessThanOrEqual(5);
+    // 2 HP e dano mínimo 2 → derrotado; morto não continua sangrando.
+    expect(c.defeated).toBe(true);
+    expect(c.conditions).toEqual([]);
+  });
+
+  it("tickPersistentDamage ignora quem já está derrotado", () => {
+    const c = mkCombatant({
+      name: "Corpse",
+      kind: "enemy",
+      currentHp: 0,
+      defeated: true,
+      conditions: ["persistent fire damage 4"],
+    });
+    const combat = buildCombat([c]);
+    expect(tickPersistentDamage(combat)).toEqual([]);
+  });
+
+  it("strikeProfileFrom separa dano persistente do direto", () => {
+    const sb = {
+      ac: 14,
+      hp: 10,
+      perception: 4,
+      saves: { fortitude: 5, reflex: 6, will: 2 },
+      attacks: [
+        {
+          name: "Fangs",
+          bonus: 8,
+          damage: [
+            { formula: "1d8+2", type: "piercing" },
+            { formula: "1d4", type: "bleed", category: "persistent" },
+          ],
+          traits: [],
+        },
+      ],
+      abilitiesList: [],
+    };
+    const p = strikeProfileFrom(sb, 1);
+    expect(p.damage).toEqual([{ formula: "1d8+2", type: "piercing" }]);
+    expect(p.persistent).toEqual([{ formula: "1d4", type: "bleed" }]);
   });
 });

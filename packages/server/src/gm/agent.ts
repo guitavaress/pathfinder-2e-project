@@ -47,6 +47,7 @@ import {
   rollDice,
   strikeProfileFrom,
   tickEndOfRound,
+  tickPersistentDamage,
   type EncounterDifficulty,
   type EncounterPlan,
   type EnemySpec,
@@ -1474,6 +1475,47 @@ export async function executeTool(
  * MAP, applying HP loss. Returns the summary lines. Ends combat on the player's
  * defeat. This runs automatically at the end of the player's turn.
  */
+/**
+ * Ticka o dano persistente de todos os combatentes (engine, sem modelo) e
+ * devolve as linhas player-safe do resumo. Fecha o combate se o tick decidir
+ * a luta e põe o jogador em dying quando ele cai queimando/sangrando.
+ */
+function applyPersistentTicks(
+  session: Session,
+  emit: (e: StreamEvent) => void,
+): string[] {
+  const combat = session.state.combat;
+  if (!combat?.active) return [];
+  const ticks = tickPersistentDamage(combat);
+  if (ticks.length === 0) return [];
+
+  const lines: string[] = [];
+  for (const t of ticks) {
+    const c = t.combatant;
+    let downNote = "";
+    if (c.kind === "player") {
+      session.state.currentHp = c.currentHp;
+      if (c.defeated) downNote = ` — ${enterDying(session, false)}`;
+    }
+    const fate = t.ended || c.defeated ? "it ends" : "it continues";
+    lines.push(
+      `- Persistent ${t.type} damage: ${c.name} takes ${t.amount} (${t.before}→${t.after} HP)${downNote}; ${fate}.`,
+    );
+  }
+
+  const status = combatStatus(combat);
+  if (status !== "ongoing") {
+    combat.active = false;
+    lines.push(
+      status === "defeat"
+        ? "- Combat ends: DEFEAT — you fall."
+        : "- Combat ends: VICTORY.",
+    );
+  }
+  emit({ type: "state", state: session.state });
+  return lines;
+}
+
 export function resolveEnemyTurns(
   session: Session,
   emit: (e: StreamEvent) => void,
@@ -1523,6 +1565,19 @@ export function resolveEnemyTurns(
         const before = player.currentHp;
         applyDamage(player, amount);
         session.state.currentHp = player.currentHp;
+        // Dano persistente do ataque (dados do statblock) vira condição no
+        // hit; mesmo tipo não empilha (mantém a existente).
+        let persistentNote = "";
+        for (const p of profile.persistent) {
+          const already = player.conditions.some((x) =>
+            new RegExp(`^persistent\\s+${p.type}\\s+damage`, "i").test(x.trim()),
+          );
+          if (already) continue;
+          const cond = `persistent ${p.type} damage ${p.formula}`;
+          player.conditions = [...player.conditions, cond];
+          session.state.conditions = [...session.state.conditions, cond];
+          persistentNote += ` + persistent ${p.type} damage`;
+        }
         const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
         const typeNote =
           parts.length === 1 && parts[0]!.type
@@ -1530,7 +1585,7 @@ export function resolveEnemyTurns(
             : parts.length > 1
               ? ` (${parts.map((p) => `${crit ? p.rolled * 2 : p.rolled} ${p.type || "damage"}`).join(" + ")})`
               : "";
-        dmgLine = ` for ${amount}${typeNote}; ${player.name} ${before}→${player.currentHp} HP${down}`;
+        dmgLine = ` for ${amount}${typeNote}${persistentNote}; ${player.name} ${before}→${player.currentHp} HP${down}`;
       }
       const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
       result.attack = {
@@ -1806,6 +1861,10 @@ async function runRulesStage(
   const tookTurn = endedTurn || (you ? you.actionsRemaining < 3 : false);
   if (combat?.active && enemiesAlive && tookTurn) {
     summaryLines.push(...resolveEnemyTurns(session, emit));
+    // Dano persistente ticka no fim da rodada (dano → flat check DC 15).
+    if (combat.active) {
+      summaryLines.push(...applyPersistentTicks(session, emit));
+    }
     // End-of-round upkeep: off-guard expires, frightened N decrements.
     if (combat.active) {
       tickEndOfRound(combat);

@@ -309,6 +309,8 @@ export interface StrikeProfile {
   bonus: number;
   damage: { formula: string; type: string }[];
   agile: boolean;
+  /** Entradas de dano persistente do ataque (viram condição no hit). */
+  persistent: { formula: string; type: string }[];
 }
 
 export function strikeProfileFrom(
@@ -318,16 +320,25 @@ export function strikeProfileFrom(
   const attack =
     sb?.attacks.find((a) => a.rangeIncrement === undefined) ?? sb?.attacks[0];
   if (attack) {
-    // PR2: entradas category "persistent" viram condição de dano persistente;
-    // por ora só o dano direto entra (strike 100% persistente mantém tudo
-    // para nunca golpear por 0).
+    // Entradas category "persistent" saem do golpe direto: no hit viram a
+    // condição "persistent <type> damage <formula>" (tick no fim da rodada).
+    // Strike 100% persistente mantém tudo no direto para nunca golpear por 0.
     const direct = attack.damage.filter((d) => d.category !== "persistent");
+    const persistent =
+      direct.length > 0
+        ? attack.damage.filter((d) => d.category === "persistent")
+        : [];
     const rolls = direct.length > 0 ? direct : attack.damage;
     return {
       label: attack.name,
       bonus: attack.bonus,
       damage: rolls.map((d) => ({ formula: d.formula, type: d.type })),
       agile: attack.traits.includes("agile"),
+      persistent: persistent.map((d) => ({
+        formula: d.formula,
+        // "persistent bleed" às vezes já vem no type; normaliza para só o tipo.
+        type: d.type.replace(/^persistent\s+/i, "") || "bleed",
+      })),
     };
   }
   const b = benchmark(level);
@@ -341,6 +352,7 @@ export function strikeProfileFrom(
       },
     ],
     agile: false,
+    persistent: [],
   };
 }
 
@@ -543,6 +555,10 @@ export function tickEndOfRound(combat: Combat): void {
     c.conditions = c.conditions
       .filter((cond) => !/^(off-guard|flat-footed)$/i.test(cond.trim()))
       .map((cond) => {
+        // Famílias com regra própria NÃO entram no decremento genérico:
+        // "persistent fire damage 2" termina por flat check (tickPersistentDamage),
+        // não por contagem; dying/wounded mudam por recovery check/cura.
+        if (/^(persistent|dying|wounded)\b/i.test(cond.trim())) return cond;
         const m = cond.match(/^(.*\S)\s+(\d+)$/);
         if (!m) return cond;
         const value = Number(m[2]) - 1;
@@ -550,6 +566,63 @@ export function tickEndOfRound(combat: Combat): void {
       })
       .filter(Boolean);
   }
+}
+
+/**
+ * Dano persistente (RAW): no fim do turno do afetado, sofre o dano e então um
+ * flat check DC 15 encerra a condição. Neste engine ("1 mensagem = 1 rodada")
+ * o tick roda uma vez por rodada, após os turnos inimigos. Aceita valor flat
+ * ("persistent fire damage 4") e fórmula ("persistent bleed damage 1d4+1").
+ */
+export interface PersistentTick {
+  combatant: Combatant;
+  type: string;
+  amount: number;
+  before: number;
+  after: number;
+  flatRoll: number;
+  /** true quando o flat check (DC 15) encerrou a condição. */
+  ended: boolean;
+}
+
+const PERSISTENT_RE = /^persistent\s+(.+?)\s+damage(?:\s+(\d+(?:d\d+)?(?:[+-]\d+)?))?$/i;
+
+/** Rola um valor "3", "1d6" ou "2d4+1"; sem valor declarado usa 1d6 (RAW default ausente → mínimo honesto seria 0, mas condição sem valor é bug de escrita — 1d6 é o padrão de bomba). */
+function rollPersistentAmount(spec: string | undefined): number {
+  if (!spec) return rollDice(1, 6);
+  if (/^\d+$/.test(spec)) return Number(spec);
+  const m = /^(\d+)d(\d+)([+-]\d+)?$/i.exec(spec);
+  if (!m) return 0;
+  return Math.max(0, rollDice(Number(m[1]), Number(m[2])) + Number(m[3] ?? 0));
+}
+
+export function tickPersistentDamage(combat: Combat): PersistentTick[] {
+  const out: PersistentTick[] = [];
+  for (const c of combat.combatants) {
+    if (c.defeated) continue;
+    for (const cond of [...c.conditions]) {
+      const m = PERSISTENT_RE.exec(cond.trim());
+      if (!m) continue;
+      const amount = rollPersistentAmount(m[2]);
+      const before = c.currentHp;
+      applyDamage(c, amount);
+      const flatRoll = d20();
+      const ended = flatRoll >= 15;
+      if (ended || c.defeated) {
+        c.conditions = c.conditions.filter((x) => x !== cond);
+      }
+      out.push({
+        combatant: c,
+        type: m[1]!.toLowerCase(),
+        amount,
+        before,
+        after: c.currentHp,
+        flatRoll,
+        ended,
+      });
+    }
+  }
+  return out;
 }
 
 /** Applies damage (>=0) to a combatant, clamping HP and flagging defeat. */
