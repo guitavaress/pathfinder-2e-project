@@ -395,7 +395,7 @@ const TOOLS: ChatCompletionTool[] = [
                 name: {
                   type: "string",
                   description:
-                    "Creature name. Use the creature's REAL PF2e name when one fits (e.g. 'Giant Rat', 'Goblin Warrior', 'Skeleton Guard') — the engine then uses its OFFICIAL statblock (AC/HP/saves/real attacks) and its official level overrides your estimate. Invented names get generic level-based stats.",
+                    "Creature name EXACTLY as it appears in the scene/player's message (e.g. the scene says 'goblin war chanter' → pass 'Goblin War Chanter'; NEVER substitute a similar creature you know, like 'Goblin Warrior'). Real PF2e names get the OFFICIAL statblock (AC/HP/saves/real attacks) and the official level overrides your estimate; invented names get generic level-based stats.",
                 },
                 level: {
                   type: "number",

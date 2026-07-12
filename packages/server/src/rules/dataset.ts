@@ -484,7 +484,24 @@ export function creatureRecord(name: string): RuleRecord | null {
       bestLen = n.length;
     }
   }
-  return best;
+  if (best) return best;
+
+  // Last resort: same token count, each token equal OR sharing a ≥6-char
+  // prefix — bridges morphology slips ("Skeleton Champion" → "Skeletal
+  // Champion") without reopening the generic-name hole ("Thug" stays null).
+  const qTokens = q.split(" ");
+  for (const [n, r] of creaturesByName) {
+    const nTokens = n.split(" ");
+    if (nTokens.length !== qTokens.length) continue;
+    const all = qTokens.every((qt, i) => {
+      const nt = nTokens[i]!;
+      if (qt === nt) return true;
+      const shared = Math.min(qt.length, nt.length);
+      return shared >= 6 && qt.slice(0, 6) === nt.slice(0, 6);
+    });
+    if (all) return r;
+  }
+  return null;
 }
 
 let spellsByName: Map<string, RuleRecord> | null = null;

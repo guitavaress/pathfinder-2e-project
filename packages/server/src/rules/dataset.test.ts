@@ -135,6 +135,13 @@ describe.skipIf(!hasGenerated)("dataset (requer generated/)", () => {
       expect(creatureRecord("elite Goblin Warrior")?.name).toBe("Goblin Warrior");
     });
 
+    it("deslize morfológico do modelo faz ponte (Skeleton → Skeletal Champion)", () => {
+      // Caso real da bateria 2026-07-12: o 12B declarou "Skeleton Champion".
+      expect(creatureRecord("Skeleton Champion")?.name).toBe("Skeletal Champion");
+      // A ponte exige prefixo ≥6 — typos curtos NÃO ligam.
+      expect(creatureRecord("Goblin Warier")).toBeNull();
+    });
+
     it("genérico NUNCA liga a um NPC específico nem cruza categoria", () => {
       // "Thug" não pode virar "Scarlet Triad Thug" (level 7).
       expect(creatureRecord("Thug")).toBeNull();

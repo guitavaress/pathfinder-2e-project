@@ -47,3 +47,4 @@ LORE.md
 # Camada visível ao jogador (primer + cena de abertura) — local.
 # Use WORLD.example.md como modelo. Caminho via WORLD_PATH.
 WORLD.md
+packages/server/scripts/bestiary-battery-transcripts/
