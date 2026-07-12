@@ -2550,6 +2550,45 @@ function buildMechanicalSummary(
 }
 
 /**
+ * Linha de estado ABSOLUTO do personagem para o narrador — "estado nunca
+ * mente" aplicado à vida/consciência. Promovida a código após o play-test de
+ * 2026-07-12: o prompt já proibia (regra DYING AND DEATH) e o narrador ainda
+ * manteve o jogador num "limbo pós-morte" por 3 turnos DEPOIS do resumo dizer
+ * STABILIZES. Só menciona números de HP quando o personagem está mal —
+ * repetir HP saudável todo turno fazia o narrador inventar dores fantasma.
+ */
+export function playerStateLine(session: Session): string {
+  const name = session.character.name;
+  const conds = session.state.conditions;
+  const hp = session.state.currentHp;
+  const max = session.character.maxHp;
+  if (conds.some((c) => /^dead$/i.test(c))) {
+    return `[PLAYER STATE: ${name} is DEAD. Their story has ended — narrate aftermath only.]`;
+  }
+  const dying = conditionValueIn(conds, "dying");
+  if (dying > 0 || conds.some((c) => /^unconscious$/i.test(c))) {
+    return `[PLAYER STATE: ${name} is UNCONSCIOUS and DYING ${dying || 1} — NOT dead. They cannot act, speak, or perceive clearly; do not kill them or wake them yourself.]`;
+  }
+  const hurt = hp <= Math.ceil(max * 0.25) ? ` They are badly hurt (${hp}/${max} HP) but standing.` : "";
+  return `[PLAYER STATE: ${name} is ALIVE, conscious and able to act.${hurt} NEVER narrate them as dead, dying, unconscious, or drifting in any void/afterlife/limbo.]`;
+}
+
+/**
+ * Apara um texto interrompido no meio da frase (max_tokens) até o último
+ * terminador de frase. Sem frase completa nenhuma, devolve o texto como veio
+ * (parcial é melhor que vazio).
+ */
+export function trimToCompleteSentence(text: string): string {
+  const t = text.trimEnd();
+  if (/[.!?…]["”'’*)\]]*$/.test(t)) return t;
+  let cut = -1;
+  const re = /[.!?…]["”'’*)\]]*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) cut = m.index + m[0].length;
+  return cut > 0 ? t.slice(0, cut) : t;
+}
+
+/**
  * STAGE 2 — Narrative: the narrative model writes the scene (streaming),
  * consistent with the mechanical summary. No tools. Appends the narration to
  * the history.
@@ -2580,11 +2619,14 @@ async function runNarrativeStage(
   // The turn's results go in a FINAL user message, not the system prompt:
   // small models follow the most recent context far more reliably, and this is
   // the one block the narration must not contradict. Not persisted to history.
+  // A linha de PLAYER STATE fecha o modo de falha do limbo: vida/consciência
+  // do personagem SEMPRE explícitas, mesmo em turno sem rolagem.
+  const stateLine = playerStateLine(session);
   const resultsMessage: ChatCompletionMessageParam = {
     role: "user",
     content: mechanical
-      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. These lines are COMPLETE: if the player's message declared an item, attack, or ability that does NOT appear below, it DID NOT HAPPEN — the engine rejected or ignored it (usually the item isn't in their Equipment). Show its absence in-fiction ("your hand finds no such flask in your pack") instead of narrating it working. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}`
-      : "[GM ENGINE] No roll was needed and NO mechanical effect happened (no damage, no healing, no item consumed). Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot, and do NOT narrate items/abilities taking mechanical effect.",
+      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. These lines are COMPLETE: if the player's message declared an item, attack, or ability that does NOT appear below, it DID NOT HAPPEN — the engine rejected or ignored it (usually the item isn't in their Equipment). Show its absence in-fiction ("your hand finds no such flask in your pack") instead of narrating it working. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}\n${stateLine}`
+      : `[GM ENGINE] No roll was needed and NO mechanical effect happened (no damage, no healing, no item consumed). Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot, and do NOT narrate items/abilities taking mechanical effect.\n${stateLine}`,
   };
 
   const inCombat = session.state.combat?.active === true;
@@ -2606,14 +2648,62 @@ async function runNarrativeStage(
   });
 
   let narration = "";
+  let finishReason: string | null = null;
   for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content;
+    const choice = chunk.choices[0];
+    const delta = choice?.delta?.content;
     if (delta) {
       narration += delta;
       emit({ type: "delta", text: delta });
     }
+    if (choice?.finish_reason) finishReason = choice.finish_reason;
   }
-  session.messages.push({ role: "assistant", content: narration });
+
+  // Truncado pelo max_tokens no MEIO da frase (play-test 2026-07-12: o corte
+  // comeu justamente o crit que derrubou o jogador): UMA continuação curta
+  // fecha o pensamento. Se ainda assim terminar quebrado, o histórico guarda
+  // só até a última frase completa — lixo truncado não vira contexto.
+  if (finishReason === "length" && narration.trim()) {
+    console.log("[GM][narrative] truncated by max_tokens — requesting a short wrap-up");
+    try {
+      const cont = await client.chat.completions.create({
+        model: NARRATIVE_MODEL,
+        messages: [
+          narrativeSystem,
+          ...session.messages.slice(-NARRATIVE_CONTEXT_MESSAGES),
+          resultsMessage,
+          { role: "assistant", content: narration },
+          {
+            role: "user",
+            content:
+              "[GM ENGINE] Your narration was CUT OFF mid-sentence by a length limit. Continue EXACTLY from where it stopped and wrap the scene up within TWO short sentences. Do not repeat anything already written and do not start a new paragraph of events.",
+          },
+        ],
+        stream: true,
+        temperature: inCombat ? 0.4 : 0.6,
+        max_tokens: 110,
+        top_p: 0.9,
+        ...NO_REASONING,
+      });
+      for await (const chunk of cont) {
+        const delta = chunk.choices[0]?.delta?.content;
+        if (delta) {
+          narration += delta;
+          emit({ type: "delta", text: delta });
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[GM][narrative] wrap-up call failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  session.messages.push({
+    role: "assistant",
+    content: trimToCompleteSentence(narration),
+  });
 }
 
 /**
