@@ -42,6 +42,16 @@ export const BootIcon = (p: IconProps) => (
   </svg>
 );
 
+export const ConstellationIcon = (p: IconProps) => (
+  <svg {...base(p)} strokeWidth={1.5}>
+    <circle cx="12" cy="5" r="2.2" />
+    <circle cx="5" cy="14" r="2.2" />
+    <circle cx="19" cy="14" r="2.2" />
+    <circle cx="12" cy="20" r="1.6" />
+    <path d="M12 7.2 6 12.2M12 7.2l6 5M6.8 15.6l3.8 3.4M17.2 15.6l-3.8 3.4" />
+  </svg>
+);
+
 export const FeatherIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M20 4C11 4 6 9 6 16l-2 4" />

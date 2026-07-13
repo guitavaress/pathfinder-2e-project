@@ -119,3 +119,8 @@ export function queueBrainWrite(
 export function brainActivityLog(): BrainActivity[] {
   return [...activity];
 }
+
+/** Há write pass rodando/aguardando? (indicador "o escriba anota" na UI). */
+export function brainWriting(): boolean {
+  return queue?.busy ?? false;
+}

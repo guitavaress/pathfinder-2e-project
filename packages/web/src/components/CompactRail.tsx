@@ -1,15 +1,16 @@
 import { ABILITIES, type Character, type GameState } from "@pf2e/shared";
 import { fmt } from "../format.js";
 import { ABILITY_LABEL, skillLabel } from "../labels.js";
-import { ScrollIcon } from "./icons.js";
+import { ConstellationIcon, ScrollIcon } from "./icons.js";
 
 interface Props {
   character: Character;
   state: GameState;
   onOpenSheet: () => void;
+  onOpenBrain: () => void;
 }
 
-export function CompactRail({ character: c, state, onOpenSheet }: Props) {
+export function CompactRail({ character: c, state, onOpenSheet, onOpenBrain }: Props) {
   // "Key" = ability/abilities with the highest modifier (proxy for key ability).
   const maxMod = Math.max(...ABILITIES.map((a) => c.abilityModifiers[a]));
   const topSkills = Object.values(c.skills)
@@ -55,6 +56,10 @@ export function CompactRail({ character: c, state, onOpenSheet }: Props) {
       <button className="rail-btn" onClick={onOpenSheet}>
         <ScrollIcon size={15} />
         Full sheet
+      </button>
+      <button className="rail-btn" onClick={onOpenBrain} title="Grimório da Memória (B)">
+        <ConstellationIcon size={15} />
+        Grimório <kbd className="rail-kbd">B</kbd>
       </button>
     </aside>
   );

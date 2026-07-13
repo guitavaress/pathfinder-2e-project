@@ -17,6 +17,17 @@ export {
   type BrainCommand,
 } from "./commands.js";
 export { durableJournalLines } from "./journal.js";
+export {
+  graphNode,
+  graphView,
+  parseConnections,
+  parseLog,
+  type GraphEdge,
+  type GraphNode,
+  type GraphView,
+  type NodeConnection,
+  type NodeLogEntry,
+} from "./view.js";
 export { knowledgeBlock, relevantStems } from "./routing.js";
 export {
   buildWritePrompt,

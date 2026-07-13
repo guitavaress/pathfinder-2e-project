@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet">
+<style>
+  body { margin:0; background:#0d0a07; }
+  a { color:#c6a24c; } a:hover { color:#e3c878; }
+  @keyframes tomePulse { 0%,100%{ opacity:.35 } 50%{ opacity:.9 } }
+  @keyframes toastIn { from{ opacity:0; transform:translateY(6px) } to{ opacity:1; transform:none } }
+  input::placeholder { color:#7a6c52; font-style:italic; }
+</style>
+</helmet>
+
+<section style="display:flex; flex-direction:column; gap:56px; padding:40px;">
+
+  <!-- turn header -->
+  <div style="display:flex; align-items:baseline; gap:14px; font-family:'Cinzel',serif; color:#c6a24c; font-size:16px; letter-spacing:.12em;">
+    <span style="text-transform:uppercase;">O Brain · Memória do Protagonista</span>
+    <span style="font-family:'EB Garamond',serif; font-style:italic; letter-spacing:0; font-size:14.5px; color:#8a7a5e;">grafo de conhecimento · journal · atividade — tokens do Grimório Aberto</span>
+  </div>
+
+  <!-- ============ ROW 1: as duas direções do Explorer ============ -->
+  <div style="display:flex; gap:56px; align-items:flex-start; flex-wrap:wrap;">
+
+    <!-- ================= 1A · CONSTELAÇÃO ================= -->
+    <div id="1a" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <a href="#1a" style="font-family:'Cinzel',serif; font-weight:700; font-size:12px; color:#1a130c; background:#c6a24c; padding:2px 8px; border-radius:4px; text-decoration:none;">1A</a>
+        <span style="font-family:'Cinzel',serif; font-size:14px; color:#e3c878; letter-spacing:.08em;">Brain Explorer · Constelação</span>
+        <span style="font-family:'EB Garamond',serif; font-style:italic; font-size:13.5px; color:#8a7a5e;">direção fechada · céu de tinta · drawer do nó sobre o grafo · hover destaca vizinhos · scroll = zoom (rótulos de edge aparecem)</span>
+      </div>
+
+      <div data-screen-label="1A Explorer Constelação" style="width:1440px; height:900px; display:flex; flex-direction:column; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 18px 50px rgba(0,0,0,.5); overflow:hidden; font-family:'EB Garamond',serif; color:#ece0c8;">
+
+        <!-- topbar -->
+        <div style="flex:none; height:54px; display:flex; align-items:center; gap:22px; padding:0 22px; background:linear-gradient(180deg,#221a10,#1a130c); border-bottom:1px solid #5a4520; position:relative;">
+          <div style="position:absolute; left:0; right:0; bottom:-2px; height:2px; background:linear-gradient(90deg,transparent,rgba(198,162,76,.6),transparent);"></div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#c6a24c" stroke-width="1.5"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="14" r="2.2"/><circle cx="19" cy="14" r="2.2"/><circle cx="12" cy="20" r="1.6"/><path d="M12 7.2 6 12.2M12 7.2l6 5M6.8 15.6l3.8 3.4M17.2 15.6l-3.8 3.4"/></svg>
+            <span style="font-family:'Cinzel',serif; font-weight:600; font-size:13px; letter-spacing:.2em; text-transform:uppercase; color:#e3c878;">Grimório da Memória</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:4px; margin-left:8px;">
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#1a130c; background:linear-gradient(180deg,#d4af5e,#bb8f3d); padding:6px 14px; border-radius:6px;">Grafo</span>
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#9a8868; padding:6px 14px; border-radius:6px;" style-hover="background:rgba(198,162,76,.06); color:#cdbfa2;">Journal</span>
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#9a8868; padding:6px 14px; border-radius:6px;" style-hover="background:rgba(198,162,76,.06); color:#cdbfa2;">Timeline</span>
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#9a8868; padding:6px 14px; border-radius:6px;" style-hover="background:rgba(198,162,76,.06); color:#cdbfa2;">Atividade</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="font-family:'Cinzel',serif; font-size:12px; color:#c6a24c; background:rgba(198,162,76,.07); border:1px solid #4a3d28; padding:4px 12px; border-radius:12px;">S3 · T12</span>
+          <button aria-label="Fechar" style="display:flex; align-items:center; justify-content:center; width:30px; height:30px; background:none; border:1px solid #3a2e20; border-radius:7px; color:#9a8868; cursor:pointer; font-size:15px;" style-hover="background:rgba(198,162,76,.08); color:#e3c878;">✕</button>
+        </div>
+
+        <!-- toolbar -->
+        <div style="flex:none; display:flex; align-items:center; gap:14px; padding:10px 22px; background:#171209; border-bottom:1px solid #2a2118;">
+          <div style="display:flex; align-items:center; gap:8px; background:#100c08; border:1px solid #3a2e20; border-radius:18px; padding:7px 14px; width:250px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7a6c52" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input value="{{ searchA }}" onChange="{{ onSearchA }}" placeholder="Buscar por nome…" style="flex:1; background:none; border:none; outline:none; color:#e6dac2; font-family:'EB Garamond',serif; font-size:15px;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <sc-for list="{{ chipsA }}" as="chip" hint-placeholder-count="6">
+              <button onClick="{{ chip.toggle }}" style="display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border-radius:13px; cursor:pointer; font-family:'EB Garamond',serif; font-size:13.5px; background:{{ chip.bg }}; border:1px solid {{ chip.border }}; color:{{ chip.color }}; opacity:{{ chip.opacity }};">
+                <span style="width:8px; height:8px; border-radius:50%; background:{{ chip.dot }};"></span>
+                {{ chip.label }}
+                <span style="font-family:'Cinzel',serif; font-size:10.5px; color:{{ chip.countColor }};">{{ chip.count }}</span>
+              </button>
+            </sc-for>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="font-size:13.5px; color:#7a6c52; font-style:italic;">{{ statsA }} · scroll: zoom · arrastar: mover</span>
+        </div>
+
+        <!-- graph body -->
+        <div style="flex:1; position:relative; overflow:hidden;">
+          <canvas ref="{{ canvasARef }}" style="position:absolute; inset:0; width:100%; height:100%; cursor:grab;"></canvas>
+
+          <!-- legenda de zoom -->
+          <div style="position:absolute; left:18px; bottom:16px; font-size:12.5px; font-style:italic; color:#6b5d46; pointer-events:none;">{{ zoomHintA }}</div>
+
+          <!-- ============ DRAWER DO NÓ (1A) ============ -->
+          <div style="position:absolute; top:0; right:0; bottom:0; width:392px; background:linear-gradient(180deg,#1f1810,#17110a); border-left:1px solid #3a2e20; box-shadow:-18px 0 40px rgba(0,0,0,.45); transform:{{ drawerATransform }}; transition:transform .28s ease; display:flex; flex-direction:column;">
+            <sc-if value="{{ hasSelA }}" hint-placeholder-val="{{ true }}">
+              <div style="flex:none; padding:20px 24px 0;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span style="display:inline-flex; align-items:center; gap:6px; font-family:'Cinzel',serif; font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; padding:4px 11px; border-radius:11px; color:{{ selA.typeColor }}; border:1px solid {{ selA.typeBorder }}; background:{{ selA.typeBg }};">{{ selA.typeLabel }}</span>
+                  <span style="font-family:'Cinzel',serif; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; padding:4px 11px; border-radius:11px; color:{{ selA.statusColor }}; border:1px solid {{ selA.statusBorder }};">{{ selA.status }}</span>
+                  <div style="flex:1;"></div>
+                  <button onClick="{{ closeA }}" aria-label="Fechar painel" style="display:flex; align-items:center; justify-content:center; width:28px; height:28px; background:none; border:1px solid #3a2e20; border-radius:7px; color:#9a8868; cursor:pointer; font-size:14px;" style-hover="color:#e3c878;">✕</button>
+                </div>
+                <h2 style="margin:14px 0 0; font-family:'Cinzel',serif; font-weight:700; font-size:25px; color:#e3c878; line-height:1.1;">{{ selA.name }}</h2>
+                <p style="margin:7px 0 0; font-size:13px; font-style:italic; color:#8a7a5e;">Descoberto na {{ selA.createdH }} · atualizado na {{ selA.updatedH }}</p>
+                <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:11px;">
+                  <sc-for list="{{ selA.tags }}" as="tag" hint-placeholder-count="2">
+                    <span style="font-size:12px; color:#9a8868; background:rgba(198,162,76,.06); border:1px solid #322820; padding:2px 10px; border-radius:11px;">#{{ tag }}</span>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="flex:1; overflow-y:auto; padding:16px 24px 24px;">
+                <p style="margin:0; font-size:16.5px; line-height:1.6; color:#e6dac2;">{{ selA.desc }}</p>
+
+                <div style="display:flex; align-items:center; gap:12px; margin:22px 0 12px;">
+                  <span style="font-family:'Cinzel',serif; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#c6a24c;">Log</span>
+                  <span style="flex:1; height:1px; background:linear-gradient(90deg,rgba(198,162,76,.45),transparent);"></span>
+                </div>
+                <div style="display:flex; flex-direction:column; position:relative; padding-left:16px;">
+                  <div style="position:absolute; left:3px; top:8px; bottom:8px; width:1px; background:#322820;"></div>
+                  <sc-for list="{{ selA.log }}" as="entry" hint-placeholder-count="2">
+                    <div style="position:relative; padding:0 0 14px;">
+                      <span style="position:absolute; left:-17px; top:7px; width:7px; height:7px; border-radius:50%; background:#c6a24c; box-shadow:0 0 0 3px #17110a;"></span>
+                      <span style="font-family:'Cinzel',serif; font-size:11px; letter-spacing:.08em; color:#c6a24c;">{{ entry.stampH }}</span>
+                      <p style="margin:3px 0 0; font-size:14.5px; line-height:1.5; color:#cdbfa2;">{{ entry.text }}</p>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="display:flex; align-items:center; gap:12px; margin:16px 0 12px;">
+                  <span style="font-family:'Cinzel',serif; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#c6a24c;">Connections</span>
+                  <span style="flex:1; height:1px; background:linear-gradient(90deg,rgba(198,162,76,.45),transparent);"></span>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:7px;">
+                  <sc-for list="{{ selA.conns }}" as="conn" hint-placeholder-count="2">
+                    <button onClick="{{ conn.go }}" style="display:flex; align-items:center; gap:9px; padding:8px 12px; background:#181209; border:1px solid #322820; border-radius:8px; cursor:pointer; text-align:left; font-family:'EB Garamond',serif;" style-hover="background:rgba(198,162,76,.07); border-color:#5a4520;">
+                      <span style="font-size:12px; font-style:italic; color:#7a6c52; flex:none;">{{ conn.label }}</span>
+                      <span style="font-size:12px; color:#5a4520;">→</span>
+                      <span style="font-size:14.5px; color:#e3c878; flex:1;">{{ conn.to }}</span>
+                      <span style="width:8px; height:8px; border-radius:50%; flex:none; background:{{ conn.dot }};"></span>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+    </div>
+
+      </div>
+
+  <!-- ============ ROW 2: estados · journal/timeline · atividade ============ -->
+  <div style="display:flex; gap:56px; align-items:flex-start; flex-wrap:wrap;">
+
+    <!-- ================= 1C · ESTADOS ================= -->
+    <div id="1c" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <a href="#1c" style="font-family:'Cinzel',serif; font-weight:700; font-size:12px; color:#1a130c; background:#c6a24c; padding:2px 8px; border-radius:4px; text-decoration:none;">1C</a>
+        <span style="font-family:'Cinzel',serif; font-size:14px; color:#e3c878; letter-spacing:.08em;">Estados do Explorer</span>
+        <span style="font-family:'EB Garamond',serif; font-style:italic; font-size:13.5px; color:#8a7a5e;">vazio (0 nós) · carregando · erro</span>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <!-- vazio -->
+        <div data-screen-label="1C Estado vazio" style="width:760px; height:480px; position:relative; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 12px 36px rgba(0,0,0,.45); overflow:hidden; font-family:'EB Garamond',serif;">
+          <div style="position:absolute; inset:0; background:radial-gradient(90% 70% at 50% 40%, #1a140c, #100c08);"></div>
+          <div style="position:absolute; left:70px; top:80px; width:3px; height:3px; border-radius:50%; background:rgba(198,162,76,.25);"></div>
+          <div style="position:absolute; left:640px; top:120px; width:2px; height:2px; border-radius:50%; background:rgba(198,162,76,.2);"></div>
+          <div style="position:absolute; left:180px; top:360px; width:2px; height:2px; border-radius:50%; background:rgba(198,162,76,.18);"></div>
+          <div style="position:absolute; left:560px; top:390px; width:3px; height:3px; border-radius:50%; background:rgba(198,162,76,.22);"></div>
+          <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; text-align:center; padding:40px;">
+            <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#5a4520" stroke-width="1"><circle cx="12" cy="12" r="9" stroke-dasharray="2.5 3.5"/><circle cx="12" cy="12" r="1.6" fill="#c6a24c" stroke="none"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2" stroke="#4a3d28"/></svg>
+            <h3 style="margin:0; font-family:'Cinzel',serif; font-weight:600; font-size:22px; color:#e3c878; letter-spacing:.04em;">O mundo ainda é um mistério</h3>
+            <p style="margin:0; font-size:16.5px; font-style:italic; line-height:1.6; color:#9a8868; max-width:380px;">Cada pessoa, lugar e segredo que seu personagem descobrir se tornará uma estrela neste mapa. Volte à cena — e comece a revelar.</p>
+            <button style="display:inline-flex; align-items:center; gap:8px; margin-top:6px; padding:11px 24px; background:linear-gradient(180deg,#d4af5e,#bb8f3d); border:none; border-radius:24px; box-shadow:0 2px 0 #6b4f1c; font-family:'Cinzel',serif; font-weight:600; font-size:13.5px; color:#1a130c; cursor:pointer;" style-hover="filter:brightness(1.06);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a130c" stroke-width="2"><path d="M20 12H5M11 6l-6 6 6 6"/></svg>
+              Voltar à cena
+            </button>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:16px;">
+          <!-- carregando -->
+          <div data-screen-label="1C Carregando" style="width:372px; height:230px; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 12px 36px rgba(0,0,0,.45); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; font-family:'EB Garamond',serif;">
+            <div style="display:flex; gap:6px;">
+              <span style="width:6px; height:6px; border-radius:50%; background:#c6a24c; animation:tomePulse 1.2s infinite;"></span>
+              <span style="width:6px; height:6px; border-radius:50%; background:#c6a24c; animation:tomePulse 1.2s .2s infinite;"></span>
+              <span style="width:6px; height:6px; border-radius:50%; background:#c6a24c; animation:tomePulse 1.2s .4s infinite;"></span>
+            </div>
+            <p style="margin:0; font-size:15px; font-style:italic; color:#8a7a5e;">Abrindo o grimório…</p>
+            <p style="margin:0; font-size:12.5px; color:#6b5d46;">GET /brain/map</p>
+          </div>
+          <!-- erro -->
+          <div data-screen-label="1C Erro" style="width:372px; height:230px; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 12px 36px rgba(0,0,0,.45); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; font-family:'EB Garamond',serif; padding:24px; text-align:center;">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#c97c6a" stroke-width="1.6"><path d="M12 3 2.5 20h19L12 3z"/><path d="M12 10v4M12 17h.01"/></svg>
+            <p style="margin:0; font-family:'Cinzel',serif; font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:#d98a82;">A memória não respondeu</p>
+            <p style="margin:0; font-size:14px; font-style:italic; color:#8a7a5e; line-height:1.5;">Não foi possível ler /brain/map. O servidor local está de pé?</p>
+            <button style="padding:8px 18px; background:none; border:1px solid #5a4520; border-radius:8px; font-family:'Cinzel',serif; font-size:12px; color:#c6a24c; cursor:pointer;" style-hover="background:rgba(198,162,76,.07);">Tentar de novo</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 1D · JOURNAL / TIMELINE ================= -->
+    <div id="1d" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <a href="#1d" style="font-family:'Cinzel',serif; font-weight:700; font-size:12px; color:#1a130c; background:#c6a24c; padding:2px 8px; border-radius:4px; text-decoration:none;">1D</a>
+        <span style="font-family:'Cinzel',serif; font-size:14px; color:#e3c878; letter-spacing:.08em;">Journal &amp; Timeline</span>
+        <span style="font-family:'EB Garamond',serif; font-style:italic; font-size:13.5px; color:#8a7a5e;">abas funcionais · âncoras por sessão · coluna de leitura 640px</span>
+      </div>
+
+      <div data-screen-label="1D Journal Timeline" style="width:1180px; height:840px; display:flex; flex-direction:column; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 18px 50px rgba(0,0,0,.5); overflow:hidden; font-family:'EB Garamond',serif; color:#ece0c8;">
+        <!-- topbar -->
+        <div style="flex:none; height:54px; display:flex; align-items:center; gap:22px; padding:0 22px; background:linear-gradient(180deg,#221a10,#1a130c); border-bottom:1px solid #5a4520; position:relative;">
+          <div style="position:absolute; left:0; right:0; bottom:-2px; height:2px; background:linear-gradient(90deg,transparent,rgba(198,162,76,.6),transparent);"></div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c6a24c" stroke-width="1.5"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2V4zM5 4a2 2 0 0 0-2 2v12"/><path d="M9 8h6M9 12h6"/></svg>
+            <span style="font-family:'Cinzel',serif; font-weight:600; font-size:13px; letter-spacing:.2em; text-transform:uppercase; color:#e3c878;">Grimório da Memória</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:4px; margin-left:8px;">
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#9a8868; padding:6px 14px; border-radius:6px;" style-hover="background:rgba(198,162,76,.06); color:#cdbfa2;">Grafo</span>
+            <button onClick="{{ goJournal }}" style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; padding:6px 14px; border-radius:6px; border:none; cursor:pointer; color:{{ tabJournalColor }}; background:{{ tabJournalBg }};">Journal</button>
+            <button onClick="{{ goTimeline }}" style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; padding:6px 14px; border-radius:6px; border:none; cursor:pointer; color:{{ tabTimelineColor }}; background:{{ tabTimelineBg }};">Timeline</button>
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#9a8868; padding:6px 14px; border-radius:6px;" style-hover="background:rgba(198,162,76,.06); color:#cdbfa2;">Atividade</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="font-family:'Cinzel',serif; font-size:12px; color:#c6a24c; background:rgba(198,162,76,.07); border:1px solid #4a3d28; padding:4px 12px; border-radius:12px;">S3 · T12</span>
+        </div>
+
+        <div style="flex:1; display:grid; grid-template-columns:200px 1fr; overflow:hidden;">
+          <!-- âncoras -->
+          <nav style="border-right:1px solid #2a2118; background:#171209; padding:24px 16px; display:flex; flex-direction:column; gap:4px;">
+            <span style="font-family:'Cinzel',serif; font-size:10.5px; letter-spacing:.18em; text-transform:uppercase; color:#7a6c52; padding:0 10px 8px;">Sessões</span>
+            <sc-for list="{{ sessionAnchors }}" as="anc" hint-placeholder-count="3">
+              <button onClick="{{ anc.go }}" style="display:flex; align-items:center; gap:9px; padding:8px 10px; background:{{ anc.bg }}; border:none; border-radius:7px; cursor:pointer; text-align:left; font-family:'EB Garamond',serif;" style-hover="background:rgba(198,162,76,.06);">
+                <span style="font-family:'Cinzel',serif; font-size:11px; color:{{ anc.numColor }}; width:24px;">S{{ anc.n }}</span>
+                <span style="font-size:13.5px; color:{{ anc.labelColor }};">Sessão {{ anc.n }}</span>
+              </button>
+            </sc-for>
+            <div style="flex:1;"></div>
+            <p style="margin:0; padding:0 10px; font-size:12px; font-style:italic; color:#6b5d46; line-height:1.5;">O Journal é escrito pelo Mestre a cada turno; a Timeline resume o mundo.</p>
+          </nav>
+
+          <!-- leitura -->
+          <div ref="{{ readerRef }}" style="overflow-y:auto; background:radial-gradient(120% 80% at 50% -10%, #1c150d, #14100c);">
+            <sc-if value="{{ isJournal }}" hint-placeholder-val="{{ true }}">
+              <div style="max-width:640px; margin:0 auto; padding:36px 40px 60px;">
+                <sc-for list="{{ journal }}" as="sess" hint-placeholder-count="3">
+                  <div>
+                    <div id="{{ sess.anchorId }}" style="display:flex; align-items:center; gap:14px; margin:34px 0 18px;">
+                      <span style="flex:1; height:1px; background:linear-gradient(90deg,transparent,rgba(198,162,76,.45));"></span>
+                      <span style="font-family:'Cinzel',serif; font-size:13px; letter-spacing:.16em; text-transform:uppercase; color:#c6a24c;">Sessão {{ sess.n }}</span>
+                      <span style="flex:1; height:1px; background:linear-gradient(90deg,rgba(198,162,76,.45),transparent);"></span>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:11px;">
+                      <sc-for list="{{ sess.entries }}" as="e" hint-placeholder-count="4">
+                        <div style="display:flex; gap:14px; align-items:baseline;">
+                          <span style="flex:none; width:64px; text-align:right; font-family:'Cinzel',serif; font-size:11.5px; letter-spacing:.06em; color:{{ e.stampColor }};">{{ e.stamp }}</span>
+                          <p style="margin:0; flex:1; font-size:16.5px; line-height:1.6; color:{{ e.color }};">{{ e.text }}</p>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ isTimeline }}" hint-placeholder-val="{{ false }}">
+              <div style="max-width:640px; margin:0 auto; padding:36px 40px 60px;">
+                <div style="display:flex; align-items:center; gap:14px; margin:34px 0 22px;">
+                  <span style="flex:1; height:1px; background:linear-gradient(90deg,transparent,rgba(198,162,76,.45));"></span>
+                  <span style="font-family:'Cinzel',serif; font-size:13px; letter-spacing:.16em; text-transform:uppercase; color:#c6a24c;">Cronologia do Mundo</span>
+                  <span style="flex:1; height:1px; background:linear-gradient(90deg,rgba(198,162,76,.45),transparent);"></span>
+                </div>
+                <div style="display:flex; flex-direction:column; position:relative; padding-left:26px;">
+                  <div style="position:absolute; left:7px; top:10px; bottom:10px; width:1px; background:#322820;"></div>
+                  <sc-for list="{{ timeline }}" as="t" hint-placeholder-count="5">
+                    <div style="position:relative; padding:0 0 22px;">
+                      <span style="position:absolute; left:-24px; top:6px; width:9px; height:9px; border-radius:50%; background:#c6a24c; box-shadow:0 0 0 3px #14100c, 0 0 10px rgba(198,162,76,.4);"></span>
+                      <span style="font-family:'Cinzel',serif; font-size:11.5px; letter-spacing:.1em; color:#c6a24c;">{{ t.s }}</span>
+                      <p style="margin:4px 0 0; font-size:17.5px; line-height:1.6; color:#e6dac2;">{{ t.text }}</p>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 1E · ATIVIDADE ================= -->
+    <div id="1e" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <a href="#1e" style="font-family:'Cinzel',serif; font-weight:700; font-size:12px; color:#1a130c; background:#c6a24c; padding:2px 8px; border-radius:4px; text-decoration:none;">1E</a>
+        <span style="font-family:'Cinzel',serif; font-size:14px; color:#e3c878; letter-spacing:.08em;">Feed de Atividade</span>
+        <span style="font-family:'EB Garamond',serif; font-style:italic; font-size:13.5px; color:#8a7a5e;">auditoria do write pass · aplicados / rejeitados com motivo / erro — pra depurar a IA</span>
+      </div>
+
+      <div data-screen-label="1E Atividade" style="width:900px; height:840px; display:flex; flex-direction:column; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 18px 50px rgba(0,0,0,.5); overflow:hidden; font-family:'EB Garamond',serif; color:#ece0c8;">
+        <div style="flex:none; height:54px; display:flex; align-items:center; gap:22px; padding:0 22px; background:linear-gradient(180deg,#221a10,#1a130c); border-bottom:1px solid #5a4520; position:relative;">
+          <div style="position:absolute; left:0; right:0; bottom:-2px; height:2px; background:linear-gradient(90deg,transparent,rgba(198,162,76,.6),transparent);"></div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c6a24c" stroke-width="1.5"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+            <span style="font-family:'Cinzel',serif; font-weight:600; font-size:13px; letter-spacing:.2em; text-transform:uppercase; color:#e3c878;">Grimório da Memória</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:4px; margin-left:8px;">
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#9a8868; padding:6px 14px;">Grafo</span>
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#9a8868; padding:6px 14px;">Journal</span>
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#9a8868; padding:6px 14px;">Timeline</span>
+            <span style="font-family:'Cinzel',serif; font-size:12px; letter-spacing:.1em; color:#1a130c; background:linear-gradient(180deg,#d4af5e,#bb8f3d); padding:6px 14px; border-radius:6px;">Atividade</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="font-family:'Cinzel',serif; font-size:12px; color:#c6a24c; background:rgba(198,162,76,.07); border:1px solid #4a3d28; padding:4px 12px; border-radius:12px;">S3 · T12</span>
+        </div>
+
+        <div style="flex:1; overflow-y:auto; padding:28px 34px;">
+          <p style="margin:0 0 20px; font-size:14.5px; font-style:italic; color:#8a7a5e; max-width:560px; line-height:1.55;">Depois de cada turno, o escriba relê a cena e grava o que o protagonista aprendeu. Cada passe abaixo lista o que foi salvo — e o que foi rejeitado, com o motivo.</p>
+          <div style="display:flex; flex-direction:column; gap:14px;">
+            <sc-for list="{{ activity }}" as="pass" hint-placeholder-count="4">
+              <div style="background:#181209; border:1px solid {{ pass.border }}; border-radius:9px; padding:16px 20px;">
+                <div style="display:flex; align-items:center; gap:12px;">
+                  <span style="font-family:'Cinzel',serif; font-size:12.5px; letter-spacing:.08em; color:#e3c878;">{{ pass.stampH }}</span>
+                  <span style="font-size:12px; color:#6b5d46;">write pass</span>
+                  <div style="flex:1;"></div>
+                  <span style="font-size:12.5px; font-style:italic; color:{{ pass.summaryColor }};">{{ pass.summary }}</span>
+                </div>
+                <sc-if value="{{ pass.hasApplied }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex; flex-wrap:wrap; gap:7px; margin-top:12px;">
+                    <sc-for list="{{ pass.applied }}" as="cmd" hint-placeholder-count="2">
+                      <span style="display:inline-flex; align-items:center; gap:7px; font-size:13px; padding:4px 12px; border-radius:12px; background:rgba(132,160,92,.1); border:1px solid #4a5a34; color:#a9c47e;">
+                        <span style="font-family:'Cinzel',serif; font-size:11px;">{{ cmd.verb }}</span>{{ cmd.target }}
+                      </span>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ pass.hasRejected }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex; flex-direction:column; gap:7px; margin-top:12px;">
+                    <sc-for list="{{ pass.rejected }}" as="rej" hint-placeholder-count="1">
+                      <div style="display:flex; align-items:baseline; gap:10px; font-size:13px; padding:7px 12px; border-radius:9px; background:rgba(194,133,63,.08); border:1px solid #6e5326;">
+                        <span style="color:#c2853f; font-family:'Cinzel',serif; font-size:11px; flex:none;">✕ REJEITADO</span>
+                        <span style="color:#cdbfa2;">{{ rej.command }}</span>
+                        <span style="color:#8a7a5e; font-style:italic;">— {{ rej.reason }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ pass.hasError }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex; align-items:baseline; gap:10px; margin-top:12px; font-size:13px; padding:7px 12px; border-radius:9px; background:rgba(158,59,52,.12); border:1px solid #6e342f;">
+                    <span style="color:#d98a82; font-family:'Cinzel',serif; font-size:11px; flex:none;">! ERRO</span>
+                    <span style="color:#d98a82; font-style:italic;">{{ pass.error }}</span>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ROW 3: indicador no chat · integração ============ -->
+  <div style="display:flex; gap:56px; align-items:flex-start; flex-wrap:wrap;">
+
+    <!-- ================= 1F · INDICADOR NO CHAT ================= -->
+    <div id="1f" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <a href="#1f" style="font-family:'Cinzel',serif; font-weight:700; font-size:12px; color:#1a130c; background:#c6a24c; padding:2px 8px; border-radius:4px; text-decoration:none;">1F</a>
+        <span style="font-family:'Cinzel',serif; font-size:14px; color:#e3c878; letter-spacing:.08em;">Indicador "o escriba anota"</span>
+        <span style="font-family:'EB Garamond',serif; font-style:italic; font-size:13.5px; color:#8a7a5e;">vive à direita do composer · 3 estados · clique abre a Atividade (1E)</span>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <!-- estado: rodando -->
+        <div data-screen-label="1F Indicador rodando" style="width:720px; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 12px 36px rgba(0,0,0,.45); padding:22px 26px; font-family:'EB Garamond',serif;">
+          <p style="margin:0 0 72px; font-size:12.5px; font-style:italic; color:#6b5d46;">durante o write pass (hover mostra o tooltip)</p>
+          <div style="max-width:660px; display:flex; align-items:center; gap:12px;">
+            <div style="flex:1; display:flex; align-items:center; gap:12px; background:#100c08; border:1px solid #3a2e20; border-radius:30px; padding:6px 6px 6px 22px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7a6c52" stroke-width="1.6"><path d="M20 4 8 16l-4 4 1-5L17 3l3 1z"/></svg>
+              <span style="flex:1; font-size:16px; font-style:italic; color:#7a6c52;">O que você faz?</span>
+              <span style="padding:11px 22px; background:linear-gradient(180deg,#d4af5e,#bb8f3d); border-radius:24px; font-family:'Cinzel',serif; font-weight:600; font-size:14.5px; color:#1a130c;">Agir →</span>
+            </div>
+            <div style="position:relative; flex:none;">
+              <button aria-label="O escriba está anotando" style="display:flex; align-items:center; justify-content:center; width:40px; height:40px; background:rgba(198,162,76,.06); border:1px solid #4a3d28; border-radius:50%; cursor:pointer;">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c6a24c" stroke-width="1.6" style="animation:tomePulse 1.4s infinite;"><path d="M20 4 8 16l-4 4 1-5L17 3l3 1z"/></svg>
+              </button>
+              <span style="position:absolute; top:3px; right:3px; width:8px; height:8px; border-radius:50%; background:#c6a24c; box-shadow:0 0 8px rgba(198,162,76,.8); animation:tomePulse 1.4s infinite;"></span>
+              <div style="position:absolute; bottom:50px; right:0; width:220px; background:#221a10; border:1px solid #5a4520; border-radius:9px; padding:10px 14px; box-shadow:0 8px 24px rgba(0,0,0,.5);">
+                <p style="margin:0; font-size:13.5px; font-style:italic; color:#cdbfa2; line-height:1.45;">O escriba está anotando o que você descobriu nesta cena…</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- estado: concluído -->
+        <div data-screen-label="1F Indicador concluído" style="width:720px; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 12px 36px rgba(0,0,0,.45); padding:22px 26px; font-family:'EB Garamond',serif;">
+          <p style="margin:0 0 72px; font-size:12.5px; font-style:italic; color:#6b5d46;">ao terminar — toast discreto por ~5s, sem roubar atenção; clique leva à Atividade</p>
+          <div style="max-width:660px; display:flex; align-items:center; gap:12px;">
+            <div style="flex:1; display:flex; align-items:center; gap:12px; background:#100c08; border:1px solid #3a2e20; border-radius:30px; padding:6px 6px 6px 22px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7a6c52" stroke-width="1.6"><path d="M20 4 8 16l-4 4 1-5L17 3l3 1z"/></svg>
+              <span style="flex:1; font-size:16px; font-style:italic; color:#7a6c52;">O que você faz?</span>
+              <span style="padding:11px 22px; background:linear-gradient(180deg,#d4af5e,#bb8f3d); border-radius:24px; font-family:'Cinzel',serif; font-weight:600; font-size:14.5px; color:#1a130c;">Agir →</span>
+            </div>
+            <div style="position:relative; flex:none;">
+              <button aria-label="Memória atualizada" style="display:flex; align-items:center; justify-content:center; width:40px; height:40px; background:rgba(198,162,76,.06); border:1px solid #4a3d28; border-radius:50%; cursor:pointer;">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c6a24c" stroke-width="1.6"><path d="M20 4 8 16l-4 4 1-5L17 3l3 1z"/></svg>
+              </button>
+              <div style="position:absolute; bottom:50px; right:0; display:flex; align-items:center; gap:9px; white-space:nowrap; background:#221a10; border:1px solid #4a5a34; border-radius:18px; padding:8px 16px; box-shadow:0 8px 24px rgba(0,0,0,.5); animation:toastIn .3s ease; cursor:pointer;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a9c47e" stroke-width="2.2"><path d="m4 12.5 5 5L20 6.5"/></svg>
+                <span style="font-size:13.5px; color:#a9c47e;">Anotado:</span>
+                <span style="font-size:13.5px; color:#cdbfa2;">+ Vexcia · + Chave de Três Dentes · ~ Timeline</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- estado: com rejeição -->
+        <div data-screen-label="1F Indicador rejeição" style="width:720px; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 12px 36px rgba(0,0,0,.45); padding:22px 26px; font-family:'EB Garamond',serif;">
+          <p style="margin:0 0 72px; font-size:12.5px; font-style:italic; color:#6b5d46;">quando algo foi rejeitado — âmbar, nunca vermelho (não é erro do jogador)</p>
+          <div style="max-width:660px; display:flex; align-items:center; gap:12px;">
+            <div style="flex:1; display:flex; align-items:center; gap:12px; background:#100c08; border:1px solid #3a2e20; border-radius:30px; padding:6px 6px 6px 22px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7a6c52" stroke-width="1.6"><path d="M20 4 8 16l-4 4 1-5L17 3l3 1z"/></svg>
+              <span style="flex:1; font-size:16px; font-style:italic; color:#7a6c52;">O que você faz?</span>
+              <span style="padding:11px 22px; background:linear-gradient(180deg,#d4af5e,#bb8f3d); border-radius:24px; font-family:'Cinzel',serif; font-weight:600; font-size:14.5px; color:#1a130c;">Agir →</span>
+            </div>
+            <div style="position:relative; flex:none;">
+              <button aria-label="Memória atualizada com avisos" style="display:flex; align-items:center; justify-content:center; width:40px; height:40px; background:rgba(194,133,63,.08); border:1px solid #6e5326; border-radius:50%; cursor:pointer;">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c2853f" stroke-width="1.6"><path d="M20 4 8 16l-4 4 1-5L17 3l3 1z"/></svg>
+              </button>
+              <span style="position:absolute; top:3px; right:3px; width:8px; height:8px; border-radius:50%; background:#c2853f;"></span>
+              <div style="position:absolute; bottom:50px; right:0; display:flex; align-items:center; gap:9px; white-space:nowrap; background:#221a10; border:1px solid #6e5326; border-radius:18px; padding:8px 16px; box-shadow:0 8px 24px rgba(0,0,0,.5); cursor:pointer;">
+                <span style="font-size:13.5px; color:#c2853f;">Anotado com avisos:</span>
+                <span style="font-size:13.5px; color:#cdbfa2;">+ Mapa Rasgado · 1 rejeitado</span>
+                <span style="font-size:12.5px; font-style:italic; color:#8a7a5e;">ver por quê →</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 1G · INTEGRAÇÃO ================= -->
+    <div id="1g" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <a href="#1g" style="font-family:'Cinzel',serif; font-weight:700; font-size:12px; color:#1a130c; background:#c6a24c; padding:2px 8px; border-radius:4px; text-decoration:none;">1G</a>
+        <span style="font-family:'Cinzel',serif; font-size:14px; color:#e3c878; letter-spacing:.08em;">Integração com o jogo — duas propostas</span>
+        <span style="font-family:'EB Garamond',serif; font-style:italic; font-size:13.5px; color:#8a7a5e;">o jogador vive no chat; o Brain é consulta entre cenas</span>
+      </div>
+
+      <div style="display:flex; gap:20px; align-items:flex-start;">
+        <!-- opção overlay -->
+        <div style="display:flex; flex-direction:column; gap:8px; width:620px;">
+          <div data-screen-label="1G Integração overlay" style="width:620px; height:420px; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 12px 36px rgba(0,0,0,.45); overflow:hidden; position:relative; font-family:'EB Garamond',serif;">
+            <!-- jogo ao fundo (escurecido) -->
+            <div style="position:absolute; inset:0; filter:brightness(.45);">
+              <div style="height:52px; background:linear-gradient(180deg,#221a10,#1a130c); border-bottom:1px solid #5a4520; display:flex; align-items:center; gap:10px; padding:0 16px;">
+                <div style="width:34px; height:34px; border-radius:6px; background:#2a2118; box-shadow:0 0 0 1px #c6a24c;"></div>
+                <span style="font-family:'Cinzel',serif; font-weight:700; font-size:15px; color:#e3c878;">João</span>
+                <span style="font-family:'Cinzel',serif; font-size:10px; color:#c6a24c;">· NÍVEL 5</span>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 120px; height:368px;">
+                <div style="padding:20px 26px; background:radial-gradient(120% 80% at 50% -10%, #1c150d, #14100c);">
+                  <p style="margin:0; max-width:360px; font-size:12.5px; line-height:1.7; color:#e6dac2;">A névoa das docas engole o lampião. Vexcia estala os dedos: <em style="color:#cdbfa2;">"Discrição, goblin. O selo quebrado não é assunto de mercado."</em></p>
+                </div>
+                <div style="border-left:1px solid #2a2118; background:#1a130c;"></div>
+              </div>
+            </div>
+            <!-- overlay do brain -->
+            <div style="position:absolute; inset:22px 30px; background:#14100c; border:1px solid #5a4520; border-radius:8px; box-shadow:0 24px 60px rgba(0,0,0,.7), 0 0 0 200px rgba(8,6,4,.55); overflow:hidden; display:flex; flex-direction:column;">
+              <div style="height:38px; display:flex; align-items:center; gap:10px; padding:0 14px; background:linear-gradient(180deg,#221a10,#1a130c); border-bottom:1px solid #5a4520;">
+                <span style="font-family:'Cinzel',serif; font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:#e3c878;">Grimório da Memória</span>
+                <span style="font-family:'Cinzel',serif; font-size:9px; color:#1a130c; background:linear-gradient(180deg,#d4af5e,#bb8f3d); padding:3px 9px; border-radius:5px;">Grafo</span>
+                <span style="font-family:'Cinzel',serif; font-size:9px; color:#9a8868;">Journal</span>
+                <span style="font-family:'Cinzel',serif; font-size:9px; color:#9a8868;">Timeline</span>
+                <span style="font-family:'Cinzel',serif; font-size:9px; color:#9a8868;">Atividade</span>
+                <div style="flex:1;"></div>
+                <span style="font-size:11px; color:#9a8868;">Esc ✕</span>
+              </div>
+              <div style="flex:1; position:relative; background:radial-gradient(90% 70% at 50% 40%, #17110a, #100c08);">
+                <svg width="100%" height="100%" viewBox="0 0 560 300" fill="none">
+                  <path d="M140 150 260 90M260 90 400 140M260 90 300 210M400 140 300 210M140 150 300 210" stroke="rgba(198,162,76,.3)"/>
+                  <circle cx="140" cy="150" r="13" fill="#1a130c" stroke="#e3c878" stroke-width="1.5"/>
+                  <circle cx="260" cy="90" r="17" fill="#1a130c" stroke="#c97c6a" stroke-width="1.5"/>
+                  <circle cx="400" cy="140" r="11" fill="#1a130c" stroke="#9ab873" stroke-width="1.5"/>
+                  <circle cx="300" cy="210" r="12" fill="#1a130c" stroke="#7fb0b5" stroke-width="1.5"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <p style="margin:0; font-family:'EB Garamond',serif; font-size:14px; line-height:1.55; color:#9a8868; max-width:600px;"><strong style="color:#e3c878; font-family:'Cinzel',serif; font-size:12px; letter-spacing:.08em;">RECOMENDADA · OVERLAY</strong> — abre por botão no trilho ou tecla <span style="font-family:'Cinzel',serif; color:#c6a24c;">B</span>, fecha com Esc. Tela cheia = espaço real pro grafo; o chat congela atrás, reforçando "consulta entre cenas". Rota própria (#brain) preserva estado no refresh.</p>
+        </div>
+
+        <!-- opção painel lateral -->
+        <div style="display:flex; flex-direction:column; gap:8px; width:620px;">
+          <div data-screen-label="1G Integração painel" style="width:620px; height:420px; background:#14100c; border:1px solid #2a2118; border-radius:5px; box-shadow:0 12px 36px rgba(0,0,0,.45); overflow:hidden; font-family:'EB Garamond',serif;">
+            <div style="height:52px; background:linear-gradient(180deg,#221a10,#1a130c); border-bottom:1px solid #5a4520; display:flex; align-items:center; gap:10px; padding:0 16px;">
+              <div style="width:34px; height:34px; border-radius:6px; background:#2a2118; box-shadow:0 0 0 1px #c6a24c;"></div>
+              <span style="font-family:'Cinzel',serif; font-weight:700; font-size:15px; color:#e3c878;">João</span>
+              <span style="font-family:'Cinzel',serif; font-size:10px; color:#c6a24c;">· NÍVEL 5</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 300px; height:368px;">
+              <div style="padding:20px 26px; background:radial-gradient(120% 80% at 50% -10%, #1c150d, #14100c);">
+                <p style="margin:0; max-width:280px; font-size:12.5px; line-height:1.7; color:#e6dac2;">A névoa das docas engole o lampião. Vexcia estala os dedos: <em style="color:#cdbfa2;">"Discrição, goblin."</em></p>
+              </div>
+              <div style="border-left:1px solid #5a4520; background:#17110a; display:flex; flex-direction:column;">
+                <div style="height:34px; display:flex; align-items:center; gap:8px; padding:0 12px; border-bottom:1px solid #2a2118;">
+                  <span style="font-family:'Cinzel',serif; font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; color:#e3c878;">Memória</span>
+                  <div style="flex:1;"></div>
+                  <span style="font-size:11px; color:#9a8868;">⇥ recolher</span>
+                </div>
+                <div style="flex:1; position:relative;">
+                  <svg width="100%" height="100%" viewBox="0 0 300 334" fill="none">
+                    <path d="M80 120 170 80M170 80 230 170M170 80 120 230M230 170 120 230" stroke="rgba(198,162,76,.3)"/>
+                    <circle cx="80" cy="120" r="10" fill="#100c08" stroke="#e3c878" stroke-width="1.5"/>
+                    <circle cx="170" cy="80" r="13" fill="#100c08" stroke="#c97c6a" stroke-width="1.5"/>
+                    <circle cx="230" cy="170" r="9" fill="#100c08" stroke="#9ab873" stroke-width="1.5"/>
+                    <circle cx="120" cy="230" r="10" fill="#100c08" stroke="#7fb0b5" stroke-width="1.5"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p style="margin:0; font-family:'EB Garamond',serif; font-size:14px; line-height:1.55; color:#9a8868; max-width:600px;"><strong style="color:#cdbfa2; font-family:'Cinzel',serif; font-size:12px; letter-spacing:.08em;">ALTERNATIVA · PAINEL COLAPSÁVEL</strong> — substitui o CompactRail por um painel de 300–420px com mini-grafo. Consulta sem sair do chat, mas o grafo fica apertado e compete com a narrativa. Melhor como complemento futuro, não como casa principal.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;physics&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Grafo&quot;, &quot;description&quot;: &quot;Simulação force-directed rodando (desligue para congelar o layout)&quot;}, &quot;edgeLabels&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;zoom&quot;, &quot;sempre&quot;, &quot;nunca&quot;], &quot;default&quot;: &quot;zoom&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Grafo&quot;, &quot;description&quot;: &quot;Quando mostrar os rótulos das ligações (works_for, member_of…)&quot;}}">
+class Component extends DCLogic {
+  state = {
+    selA: "Vexcia",
+    selB: null,
+    offA: {},
+    offB: {},
+    searchA: "",
+    searchB: "",
+    tab: "journal",
+  };
+
+  // ---------- dados fake (mundo de Cinzalto) ----------
+  static TYPES = {
+    npc:     { label: "NPC",    bright: "#e3c878", dark: "#8a681f" },
+    place:   { label: "Lugar",  bright: "#9ab873", dark: "#55683a" },
+    faction: { label: "Facção", bright: "#c97c6a", dark: "#8a4438" },
+    quest:   { label: "Missão", bright: "#7fb0b5", dark: "#3f6b70" },
+    item:    { label: "Item",   bright: "#c2853f", dark: "#7c5222" },
+    lore:    { label: "Lore",   bright: "#a98fc9", dark: "#5f4a7a" },
+  };
+
+  static RAW = [
+    ["Vexcia","npc","active",["cinzalto","guild"],"S1.T3","S3.T12","Administradora da Scavengers Guild em Cinzalto. Paga bem, pergunta pouco — e nunca toca no que manda entregar.",[["S1.T3","Pagou pela entrega do caixote lacrado; ofereceu contratos futuros."],["S2.T8","Deixou escapar que teme a Ordem da Chama Muda."],["S3.T12","Pediu discrição absoluta sobre o selo quebrado."]],[["works_for","Scavengers Guild"],["knows_about","O Selo Quebrado"],["distrusts","Ordem da Chama Muda"]]],
+    ["Mestre Corvin","npc","active",["scholar"],"S2.T3","S2.T10","Erudito arruinado que traduz inscrições antigas para pagar dívidas de jogo.",[["S2.T3","Identificou o Amuleto de Ferro Frio à primeira vista — e empalideceu."],["S2.T10","Entregou o Mapa Rasgado em troca de silêncio sobre suas dívidas."]],[["owes_debt_to","Scavengers Guild"],["studies","Os Sete Selos"],["held","Mapa Rasgado da Cripta"],["frequents","Taverna do Javali Cego"]]],
+    ["Irmã Alba","npc","active",["chama-muda"],"S2.T6","S3.T9","Sacerdotisa da Ordem da Chama Muda. Fala em sussurros e sorri como quem reza.",[["S2.T6","Vista observando o Portão do Selo de Ferro à meia-noite."],["S3.T9","Liderava os cultistas no combate das docas — escapou."]],[["member_of","Ordem da Chama Muda"],["watches","Portão do Selo de Ferro"]]],
+    ["Dedos-Rápidos","npc","dead",["docas"],"S1.T7","S3.T4","Batedor de carteiras das Docas de Névoa. Sabia demais — e cobrou barato demais por isso.",[["S1.T7","Vendeu a rota de patrulha da Guarda por três moedas de prata."],["S3.T4","Encontrado morto nas docas, os bolsos revirados menos um."]],[["worked_for","Scavengers Guild"],["seen_at","Docas de Névoa"],["carried","Chave de Três Dentes"]]],
+    ["Capitão Roderic","npc","active",["guarda"],"S2.T2","S3.T6","Capitão da Guarda de Cinzalto. Honesto até onde o soldo permite.",[["S2.T2","Interrogou o grupo sobre o caixote de Vexcia; aceitou uma 'taxa'."],["S3.T6","Assumiu o caso dos estivadores desaparecidos."]],[["leads","Guarda de Cinzalto"],["investigates","Desaparecidos das Docas"]]],
+    ["Velha Marisa","npc","active",["taverna"],"S1.T5","S3.T2","Dona da Taverna do Javali Cego. Ouve tudo — e esquece pelo preço certo.",[["S1.T5","Indicou Vexcia como 'quem paga por mãos discretas'."],["S3.T2","Sussurrou que a névoa das docas 'anda com fome'."]],[["owns","Taverna do Javali Cego"],["knows_about","A Praga de Névoa"]]],
+    ["Tharek","npc","unknown",["selos"],"S2.T10","S2.T10","Um nome no verso do mapa: 'o guardião que restou'. Ninguém em Cinzalto admite conhecê-lo.",[["S2.T10","Nome encontrado escrito no verso do Mapa Rasgado."]],[["guards","Cripta de Valdrun"],["member_of","Círculo dos Sete Selos"]]],
+    ["Scavengers Guild","faction","active",["cinzalto"],"S1.T3","S3.T12","Guilda de recuperadores que vasculha as ruínas sob Cinzalto e vende o que desenterra.",[["S1.T3","Primeiro contrato aceito: a entrega de Vexcia."],["S2.T4","Descobriu-se que a guilda compra dívidas — inclusive a de Corvin."]],[["based_in","Cinzalto"],["rival_of","Guarda de Cinzalto"],["trades_at","Mercado das Cinzas"]]],
+    ["Ordem da Chama Muda","faction","active",["culto"],"S2.T6","S3.T9","Culto que prega o silêncio das chamas. Enterra segredos do Cataclismo — e quem os desenterra.",[["S2.T6","Símbolo da chama invertida visto no manto de Irmã Alba."],["S3.T9","Dois cultistas emboscaram o grupo nas docas."]],[["knows_about","O Cataclismo do Selo"],["opposes","Círculo dos Sete Selos"],["active_in","Docas de Névoa"]]],
+    ["Guarda de Cinzalto","faction","active",["cinzalto"],"S2.T2","S3.T6","Milícia da cidade. Mal paga, fácil de subornar, ocasionalmente útil.",[["S2.T2","Patrulha dobrada perto do Portão desde o selo quebrado."]],[["based_in","Cinzalto"]]],
+    ["Círculo dos Sete Selos","faction","unknown",["selos","antigo"],"S2.T10","S2.T10","A ordem que teria forjado os selos, extinta há séculos. Ou apenas oculta.",[["S2.T10","Mencionada nas notas de Corvin como 'os que juraram vigiar'."]],[["created","Os Sete Selos"]]],
+    ["Cinzalto","place","active",["cidade"],"S1.T1","S3.T6","Cidade construída sobre as ruínas do Cataclismo. A cinza cai como neve fina, o ano inteiro.",[["S1.T1","Chegada pela estrada do sul; a cinza já cobria as botas."],["S3.T6","Toque de recolher decretado nos bairros baixos."]],[["shaped_by","O Cataclismo do Selo"]]],
+    ["Portão do Selo de Ferro","place","active",["selos"],"S1.T9","S3.T12","Portão lacrado sob a muralha leste. O ferro sua frio mesmo no verão.",[["S1.T9","O caixote de Vexcia foi entregue a dez passos dele."],["S2.T7","O terceiro selo foi encontrado partido ao meio."]],[["located_in","Cinzalto"],["sealed_by","Os Sete Selos"]]],
+    ["Mercado das Cinzas","place","active",["comercio"],"S1.T4","S2.T3","Feira onde os recuperadores vendem o que as ruínas devolvem. Metade relíquia, metade golpe.",[["S1.T4","O Amuleto de Ferro Frio foi visto numa banca — barato demais."]],[["located_in","Cinzalto"]]],
+    ["Cripta de Valdrun","place","unknown",["ruinas"],"S2.T10","S3.T4","Cripta pré-Cataclismo, em algum lugar sob a cidade velha. O mapa mostra tudo — menos a entrada.",[["S2.T10","Metade do caminho revelada pelo Mapa Rasgado."],["S3.T4","A Chave de Três Dentes talvez abra o que o mapa esconde."]],[["beneath","Cinzalto"]]],
+    ["Taverna do Javali Cego","place","active",["taverna","docas"],"S1.T5","S3.T2","Taverna das docas. Cerveja ruim, informação boa, e ninguém enxerga nada — como o javali.",[["S1.T5","Base improvisada para ouvir os rumores do porto."]],[["located_in","Cinzalto"]]],
+    ["Docas de Névoa","place","active",["docas"],"S1.T7","S3.T9","Docas onde a névoa não levanta nem ao meio-dia. Os estivadores trabalham amarrados uns aos outros.",[["S3.T1","Sete estivadores desaparecidos em duas semanas."],["S3.T9","Emboscada da Chama Muda entre os contêineres."]],[["located_in","Cinzalto"],["afflicted_by","A Praga de Névoa"]]],
+    ["Entrega para Vexcia","quest","resolved",["guild"],"S1.T3","S1.T9","Entregar um caixote lacrado ao pé do Portão, sem abrir. Cumprido — mas a curiosidade ficou.",[["S1.T3","Aceita: 20 moedas de ouro, metade adiantada."],["S1.T9","Entregue. Algo dentro do caixote estava gelado."]],[["given_by","Vexcia"],["led_to","Portão do Selo de Ferro"]]],
+    ["O Selo Quebrado","quest","active",["selos","principal"],"S2.T7","S3.T12","Descobrir quem partiu o terceiro selo do Portão — e o que isso libertou.",[["S2.T7","O selo partido descoberto na inspeção noturna."],["S3.T12","Vexcia sabe mais do que diz; a Chama Muda também."]],[["involves","Portão do Selo de Ferro"],["involves","Ordem da Chama Muda"],["hinted_by","Os Sete Selos"]]],
+    ["Desaparecidos das Docas","quest","active",["docas"],"S3.T1","S3.T9","Sete estivadores sumiram nas Docas de Névoa em duas semanas. A Guarda paga por respostas.",[["S3.T1","Cartaz de recompensa: 15 moedas por informação."],["S3.T9","Os cultistas das docas não pareciam surpresos."]],[["involves","Docas de Névoa"],["involves","Dedos-Rápidos"],["posted_by","Guarda de Cinzalto"]]],
+    ["A Dívida de Corvin","quest","active",["scholar"],"S2.T4","S2.T10","Corvin traduz o resto do mapa — se sua dívida com a guilda desaparecer primeiro.",[["S2.T4","Proposta feita entre canecas na taverna."]],[["involves","Mestre Corvin"],["involves","Scavengers Guild"]]],
+    ["Amuleto de Ferro Frio","item","active",["selos"],"S1.T4","S2.T3","Amuleto de ferro que gela perto do Portão. Veio do mesmo lote que o caixote de Vexcia?",[["S1.T4","Comprado no Mercado das Cinzas por uma ninharia suspeita."],["S2.T3","Corvin: 'isto é um fragmento de selo. Livre-se dele. Ou não.'"]],[["found_in","Mercado das Cinzas"],["resonates_with","Portão do Selo de Ferro"]]],
+    ["Chave de Três Dentes","item","active",["docas"],"S3.T4","S3.T4","Chave pesada de três dentes, tirada do corpo de Dedos-Rápidos. Não abre nenhuma porta conhecida.",[["S3.T4","Recuperada antes que a Guarda chegasse ao corpo."]],[["taken_from","Dedos-Rápidos"],["may_open","Cripta de Valdrun"]]],
+    ["Mapa Rasgado da Cripta","item","active",["ruinas"],"S2.T10","S2.T10","Metade de um mapa da Cripta de Valdrun. Falta exatamente a metade com a entrada.",[["S2.T10","Obtido de Corvin; o verso traz o nome 'Tharek'."]],[["depicts","Cripta de Valdrun"],["names","Tharek"]]],
+    ["O Cataclismo do Selo","lore","",["historia"],"S1.T9","S2.T7","Há duzentos anos, algo quebrou sob a cidade velha. A cinza começou a cair — e nunca parou.",[["S1.T9","Versão popular ouvida na taverna: 'o dia em que o chão tossiu'."],["S2.T7","Corvin: os selos não comemoram o Cataclismo. Eles o contêm."]],[["explains","Cinzalto"]]],
+    ["Os Sete Selos","lore","",["selos"],"S2.T3","S3.T12","Sete selos conteriam 'o que dorme embaixo'. Segundo Corvin, três já falharam.",[["S2.T3","Primeira menção nas notas de Corvin."],["S3.T12","Se o terceiro foi o mais recente — quem quebrou os outros dois?"]],[["binds","O Cataclismo do Selo"],["kept_by","Círculo dos Sete Selos"]]],
+    ["A Praga de Névoa","lore","unknown",["docas"],"S3.T2","S3.T2","Dizem que a névoa das docas adoece a memória de quem dorme nela. Os estivadores negam. E esquecem.",[["S3.T2","Rumor da Velha Marisa, cobrado em prata."]],[["affects","Docas de Névoa"]]],
+  ];
+
+  static JOURNAL = [
+    { n: 3, entries: [
+      ["S3.T1","Scene start: Docas de Névoa, madrugada. Cartaz de recompensa da Guarda."],
+      ["S3.T2","Rumor comprado de Velha Marisa: a névoa 'anda com fome'."],
+      ["S3.T4","Dedos-Rápidos encontrado morto. Item ganho: Chave de Três Dentes."],
+      ["S3.T7","Check: Furtividade SUCCESS vs DC 18 (aproximar dos contêineres)."],
+      ["S3.T9","Combat starts: 2 cultistas da Chama Muda. Irmã Alba à distância."],
+      ["S3.T11","Combat ends: VICTORY. Dano sofrido: 14. Condição: Abalado 1."],
+      ["S3.T12","Vexcia pede discrição sobre o selo quebrado. Sessão pausada."],
+    ]},
+    { n: 2, entries: [
+      ["S2.T2","Interrogatório do Capitão Roderic; 'taxa' paga: 5 mo."],
+      ["S2.T3","Corvin identifica o Amuleto de Ferro Frio como fragmento de selo."],
+      ["S2.T5","Check: Diplomacia CRITICAL SUCCESS vs DC 20 (convencer Corvin)."],
+      ["S2.T7","Descoberta: o terceiro selo do Portão está partido. Quest: O Selo Quebrado."],
+      ["S2.T10","Item ganho: Mapa Rasgado da Cripta. Nome no verso: 'Tharek'."],
+    ]},
+    { n: 1, entries: [
+      ["S1.T1","Session start. Import: João (Goblin Rogue 5). Local: Cinzalto."],
+      ["S1.T3","Quest accepted: Entrega para Vexcia (20 mo, metade adiantada)."],
+      ["S1.T6","Check: Ladroagem FAILURE vs DC 17 (abrir o caixote — melhor assim)."],
+      ["S1.T9","Quest resolved: Entrega para Vexcia. O caixote estava gelado."],
+    ]},
+  ];
+
+  static TIMELINE = [
+    ["S1","João chega a Cinzalto sob a cinza fina e aceita a entrega de Vexcia."],
+    ["S1","O caixote lacrado é deixado ao pé do Portão do Selo de Ferro. Dentro, algo gelado."],
+    ["S2","Mestre Corvin reconhece o Amuleto de Ferro Frio como fragmento de selo."],
+    ["S2","O terceiro dos Sete Selos é encontrado partido ao meio."],
+    ["S3","Estivadores desaparecem nas Docas de Névoa; a Guarda oferece recompensa."],
+    ["S3","Dedos-Rápidos é morto; a Chave de Três Dentes muda de mãos."],
+  ];
+
+  static ACTIVITY = [
+    { stamp:"S3.T12", applied:["UPDATE Vexcia.md","UPDATE O Selo Quebrado.md","APPEND Journal.md"], rejected:[] },
+    { stamp:"S3.T11", applied:["APPEND Journal.md","UPDATE Irmã Alba.md"], rejected:[] },
+    { stamp:"S3.T4", applied:["CREATE Chave de Três Dentes.md","UPDATE Dedos-Rápidos.md","APPEND Journal.md","APPEND Timeline.md"], rejected:[{ command:"UPDATE A Praga de Névoa.md", reason:"nó não existe — o comando correto seria CREATE" }] },
+    { stamp:"S2.T10", applied:["CREATE Mapa Rasgado da Cripta.md","CREATE Tharek.md","UPDATE Mestre Corvin.md"], rejected:[{ command:"CREATE Corvin.md", reason:"duplicata de 'Mestre Corvin' (nome normalizado já existe)" }] },
+    { stamp:"S2.T8", applied:[], rejected:[], error:"write pass abortado: o modelo não respondeu em 60s (timeout)" },
+    { stamp:"S2.T7", applied:["CREATE O Selo Quebrado.md","UPDATE Portão do Selo de Ferro.md","APPEND Timeline.md"], rejected:[] },
+  ];
+
+  // ---------- helpers ----------
+  humanStamp(s) {
+    const m = /^S(\d+)\.T(\d+)$/.exec(s || "");
+    return m ? `Sessão ${m[1]} · Turno ${m[2]}` : s;
+  }
+
+  buildData() {
+    const nodes = Component.RAW.map((r) => ({
+      name: r[0], type: r[1], status: r[2], tags: r[3],
+      created: r[4], updated: r[5], desc: r[6],
+      log: r[7].map(([stamp, text]) => ({ stamp, text })),
+      conns: r[8].map(([label, to]) => ({ label, to })),
+    }));
+    const byName = new Map(nodes.map((n) => [n.name, n]));
+    const edges = [];
+    for (const n of nodes) for (const c of n.conns) {
+      if (byName.has(c.to)) edges.push({ a: n.name, b: c.to, label: c.label });
+    }
+    const degree = new Map(nodes.map((n) => [n.name, 0]));
+    for (const e of edges) {
+      degree.set(e.a, degree.get(e.a) + 1);
+      degree.set(e.b, degree.get(e.b) + 1);
+    }
+    return { nodes, byName, edges, degree };
+  }
+
+  componentDidMount() {
+    this.data = this.buildData();
+    this._graphs = [];
+    this._initTimer = setInterval(() => this.tryInit(), 120);
+    this.tryInit();
+  }
+
+  componentWillUnmount() {
+    clearInterval(this._initTimer);
+    for (const g of this._graphs || []) g.destroy();
+  }
+
+  tryInit() {
+    if (!this.data) this.data = this.buildData();
+    if (this.cA && !this.graphA) {
+      this.graphA = this.makeGraph(this.cA, "constellation", "A");
+      this._graphs.push(this.graphA);
+      this.graphA.setSelected(this.state.selA, false);
+    }
+    if (this.cB && !this.graphB) {
+      this.graphB = this.makeGraph(this.cB, "parchment", "B");
+      this._graphs.push(this.graphB);
+    }
+    if (this.graphA) clearInterval(this._initTimer);
+  }
+
+  makeGraph(canvas, themeName, key) {
+    const comp = this;
+    const TYPES = Component.TYPES;
+    const themes = {
+      constellation: {
+        bg(ctx, w, h) {
+          ctx.fillStyle = "#0f0b07"; ctx.fillRect(0, 0, w, h);
+          const g = ctx.createRadialGradient(w/2, h*0.4, 0, w/2, h*0.4, Math.max(w,h)*0.7);
+          g.addColorStop(0, "rgba(38,29,16,.9)"); g.addColorStop(1, "rgba(15,11,7,0)");
+          ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+        },
+        stars: true,
+        edge: "rgba(198,162,76,.22)", edgeHi: "rgba(227,200,120,.85)",
+        edgeLabelBg: "#171209", edgeLabelText: "#9a8868",
+        nodeFill: "#1a130c", label: "#b6a585", labelHi: "#f0e2bc",
+        colorOf: (t) => TYPES[t].bright, glow: true,
+        selRing: "#e3c878", searchRing: "#e3c878",
+      },
+      parchment: {
+        bg(ctx, w, h) {
+          ctx.fillStyle = "#d8c9a2"; ctx.fillRect(0, 0, w, h);
+          const g = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w,h)*0.75);
+          g.addColorStop(0, "rgba(238,226,196,.65)"); g.addColorStop(1, "rgba(88,66,34,.38)");
+          ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+          ctx.strokeStyle = "rgba(90,69,32,.5)";
+          ctx.strokeRect(10.5, 10.5, w - 21, h - 21);
+        },
+        stars: false,
+        edge: "rgba(90,70,40,.42)", edgeHi: "rgba(58,42,20,.95)",
+        edgeLabelBg: "#e6d8b4", edgeLabelText: "#5c4726",
+        nodeFill: "#efe4c6", label: "#4a3a20", labelHi: "#211708",
+        colorOf: (t) => TYPES[t].dark, glow: false,
+        selRing: "#3a2a12", searchRing: "#8a681f",
+      },
+    };
+    const theme = themes[themeName];
+    const g = {
+      canvas, theme, key,
+      ctx: canvas.getContext("2d"),
+      nodes: [], zoom: 1, panX: 0, panY: 0,
+      hover: null, selected: null, dragNode: null, panning: false,
+      moved: 0, raf: 0, stars: [],
+      filters: Object.fromEntries(Object.keys(TYPES).map((t) => [t, true])),
+      search: "",
+    };
+    // seed positions
+    const N = comp.data.nodes.length;
+    g.nodes = comp.data.nodes.map((n, i) => {
+      const a = (i / N) * Math.PI * 2;
+      const r = 160 + (i % 5) * 46;
+      const deg = comp.data.degree.get(n.name);
+      return { ...n, deg, x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0,
+        r: Math.min(19, 7.5 + deg * 1.5) };
+    });
+    g.map = new Map(g.nodes.map((n) => [n.name, n]));
+    g.edges = comp.data.edges.map((e) => ({ ...e, na: g.map.get(e.a), nb: g.map.get(e.b) }));
+    for (let i = 0; i < 70; i++) g.stars.push([Math.random(), Math.random(), Math.random() * 0.14 + 0.05]);
+
+    const resize = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (!w || !h) return;
+      canvas.width = w * dpr; canvas.height = h * dpr;
+      g.w = w; g.h = h; g.dpr = dpr;
+      if (!g._centered) { g.panX = w / 2; g.panY = h / 2; g._centered = true; }
+    };
+    resize();
+    g.ro = new ResizeObserver(resize);
+    g.ro.observe(canvas);
+
+    const visible = (n) => g.filters[n.type];
+    const toWorld = (sx, sy) => [(sx - g.panX) / g.zoom, (sy - g.panY) / g.zoom];
+    const pick = (sx, sy) => {
+      const [wx, wy] = toWorld(sx, sy);
+      let best = null, bd = 1e9;
+      for (const n of g.nodes) {
+        if (!visible(n)) continue;
+        const d = Math.hypot(n.x - wx, n.y - wy);
+        if (d < n.r + 7 && d < bd) { bd = d; best = n; }
+      }
+      return best;
+    };
+
+    const tick = () => {
+      if ((comp.props.physics ?? true) === false) return;
+      const ns = g.nodes;
+      for (let i = 0; i < ns.length; i++) {
+        const a = ns[i];
+        for (let j = i + 1; j < ns.length; j++) {
+          const b = ns[j];
+          let dx = a.x - b.x, dy = a.y - b.y;
+          let d2 = dx * dx + dy * dy || 1;
+          if (d2 > 260 * 260) continue;
+          const f = 2600 / d2;
+          const d = Math.sqrt(d2);
+          dx /= d; dy /= d;
+          a.vx += dx * f; a.vy += dy * f;
+          b.vx -= dx * f; b.vy -= dy * f;
+        }
+      }
+      for (const e of g.edges) {
+        const dx = e.nb.x - e.na.x, dy = e.nb.y - e.na.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const f = (d - 128) * 0.012;
+        e.na.vx += (dx / d) * f; e.na.vy += (dy / d) * f;
+        e.nb.vx -= (dx / d) * f; e.nb.vy -= (dy / d) * f;
+      }
+      for (const n of ns) {
+        n.vx -= n.x * 0.0016; n.vy -= n.y * 0.0016;
+        n.vx *= 0.86; n.vy *= 0.86;
+        if (n !== g.dragNode) { n.x += n.vx; n.y += n.vy; }
+      }
+    };
+
+    const glyph = (ctx, n, c, s) => {
+      ctx.strokeStyle = c; ctx.fillStyle = c; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      switch (n.type) {
+        case "npc":
+          ctx.arc(0, -s * 0.35, s * 0.32, 0, Math.PI * 2);
+          ctx.moveTo(-s * 0.55, s * 0.55);
+          ctx.arc(0, s * 0.62, s * 0.56, Math.PI, 0);
+          ctx.stroke(); break;
+        case "place":
+          ctx.moveTo(0, -s * 0.6); ctx.lineTo(s * 0.55, s * 0.5); ctx.lineTo(-s * 0.55, s * 0.5); ctx.closePath();
+          ctx.stroke(); break;
+        case "faction":
+          ctx.moveTo(-s * 0.35, -s * 0.6); ctx.lineTo(-s * 0.35, s * 0.62); ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(-s * 0.35, -s * 0.55); ctx.lineTo(s * 0.55, -s * 0.28); ctx.lineTo(-s * 0.35, 0);
+          ctx.closePath(); ctx.fill(); break;
+        case "quest":
+          ctx.font = `700 ${Math.round(s * 1.5)}px Cinzel, serif`;
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText("!", 0, s * 0.05); break;
+        case "item":
+          ctx.moveTo(0, -s * 0.62); ctx.lineTo(s * 0.5, 0); ctx.lineTo(0, s * 0.62); ctx.lineTo(-s * 0.5, 0); ctx.closePath();
+          ctx.stroke(); break;
+        case "lore":
+          ctx.moveTo(0, -s * 0.4); ctx.quadraticCurveTo(-s * 0.62, -s * 0.62, -s * 0.62, s * 0.4);
+          ctx.quadraticCurveTo(-s * 0.25, s * 0.25, 0, s * 0.45);
+          ctx.quadraticCurveTo(s * 0.25, s * 0.25, s * 0.62, s * 0.4);
+          ctx.quadraticCurveTo(s * 0.62, -s * 0.62, 0, -s * 0.4);
+          ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0, -s * 0.4); ctx.lineTo(0, s * 0.45); ctx.stroke();
+          break;
+      }
+    };
+
+    const draw = () => {
+      const { ctx, w, h, dpr } = g;
+      if (!w) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      theme.bg(ctx, w, h);
+      if (theme.stars) {
+        for (const [sx, sy, sa] of g.stars) {
+          ctx.fillStyle = `rgba(198,162,76,${sa})`;
+          ctx.fillRect(sx * w, sy * h, 1.6, 1.6);
+        }
+      }
+      ctx.translate(g.panX, g.panY);
+      ctx.scale(g.zoom, g.zoom);
+
+      const focus = g.hover || (g.selected ? g.map.get(g.selected) : null);
+      const neighbors = new Set();
+      if (focus) {
+        neighbors.add(focus.name);
+        for (const e of g.edges) {
+          if (e.a === focus.name) neighbors.add(e.b);
+          if (e.b === focus.name) neighbors.add(e.a);
+        }
+      }
+      const q = g.search.trim().toLowerCase();
+      const matches = q ? new Set(g.nodes.filter((n) => n.name.toLowerCase().includes(q)).map((n) => n.name)) : null;
+      const dimOf = (name) => {
+        if (matches && !matches.has(name)) return 0.14;
+        if (focus && !neighbors.has(name)) return 0.16;
+        return 1;
+      };
+
+      const labelMode = comp.props.edgeLabels ?? "zoom";
+      const showEdgeLabels = labelMode === "sempre" || (labelMode === "zoom" && g.zoom >= 1.45);
+
+      // edges
+      for (const e of g.edges) {
+        if (!visible(e.na) || !visible(e.nb)) continue;
+        const hi = focus && (e.a === focus.name || e.b === focus.name);
+        const alpha = Math.min(dimOf(e.a), dimOf(e.b));
+        ctx.globalAlpha = hi ? 1 : alpha;
+        ctx.strokeStyle = hi ? theme.edgeHi : theme.edge;
+        ctx.lineWidth = (hi ? 1.6 : 1) / g.zoom;
+        ctx.beginPath(); ctx.moveTo(e.na.x, e.na.y); ctx.lineTo(e.nb.x, e.nb.y); ctx.stroke();
+        if ((showEdgeLabels || (hi && labelMode !== "nunca")) && alpha > 0.5) {
+          const mx = (e.na.x + e.nb.x) / 2, my = (e.na.y + e.nb.y) / 2;
+          const fs = 10.5 / Math.max(g.zoom, 1);
+          ctx.font = `italic ${fs}px "EB Garamond", serif`;
+          const tw = ctx.measureText(e.label).width;
+          ctx.fillStyle = theme.edgeLabelBg;
+          ctx.globalAlpha = (hi ? 1 : alpha) * 0.92;
+          ctx.fillRect(mx - tw / 2 - 4, my - fs * 0.75, tw + 8, fs * 1.5);
+          ctx.globalAlpha = hi ? 1 : alpha;
+          ctx.fillStyle = theme.edgeLabelText;
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(e.label, mx, my);
+        }
+      }
+
+      // nodes
+      for (const n of g.nodes) {
+        if (!visible(n)) continue;
+        const c = theme.colorOf(n.type);
+        const isSel = g.selected === n.name;
+        const isHover = g.hover === n;
+        const alpha = isSel || isHover ? 1 : dimOf(n.name);
+        ctx.globalAlpha = alpha;
+        if (theme.glow && alpha > 0.5) {
+          ctx.shadowColor = c; ctx.shadowBlur = isSel || isHover ? 22 : 10;
+        }
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+        ctx.fillStyle = theme.nodeFill; ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.lineWidth = (isSel ? 2.4 : 1.6) / Math.sqrt(g.zoom);
+        ctx.strokeStyle = c; ctx.stroke();
+        if (isSel) {
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.r + 5, 0, Math.PI * 2);
+          ctx.strokeStyle = theme.selRing; ctx.lineWidth = 1 / g.zoom;
+          ctx.setLineDash([3 / g.zoom, 3 / g.zoom]); ctx.stroke(); ctx.setLineDash([]);
+        }
+        if (matches && matches.has(n.name)) {
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.r + 4, 0, Math.PI * 2);
+          ctx.strokeStyle = theme.searchRing; ctx.lineWidth = 1.4 / g.zoom; ctx.stroke();
+        }
+        ctx.save(); ctx.translate(n.x, n.y);
+        glyph(ctx, n, c, n.r * 0.62);
+        ctx.restore();
+        // label
+        const showLabel = g.zoom >= 0.8 || n.deg >= 4 || isSel || isHover;
+        if (showLabel && alpha > 0.3) {
+          const fs = Math.max(11, 12.5 / Math.sqrt(g.zoom));
+          ctx.font = `500 ${fs}px "EB Garamond", serif`;
+          ctx.textAlign = "center"; ctx.textBaseline = "top";
+          ctx.fillStyle = isSel || isHover ? theme.labelHi : theme.label;
+          ctx.fillText(n.name, n.x, n.y + n.r + 5);
+        }
+        ctx.globalAlpha = 1;
+      }
+    };
+
+    const loop = () => { tick(); draw(); g.raf = requestAnimationFrame(loop); };
+    g.raf = requestAnimationFrame(loop);
+
+    // events
+    const onDown = (ev) => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+      g.moved = 0; g.downAt = [sx, sy];
+      const n = pick(sx, sy);
+      if (n) g.dragNode = n; else g.panning = true;
+      canvas.style.cursor = "grabbing";
+      canvas.setPointerCapture(ev.pointerId);
+    };
+    const onMove = (ev) => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+      if (g.dragNode) {
+        g.moved += 1;
+        const [wx, wy] = toWorld(sx, sy);
+        g.dragNode.x = wx; g.dragNode.y = wy;
+        g.dragNode.vx = 0; g.dragNode.vy = 0;
+      } else if (g.panning) {
+        g.moved += 1;
+        g.panX += ev.movementX; g.panY += ev.movementY;
+      } else {
+        const n = pick(sx, sy);
+        g.hover = n;
+        canvas.style.cursor = n ? "pointer" : "grab";
+      }
+    };
+    const onUp = (ev) => {
+      const wasClick = g.moved < 4;
+      if (wasClick) {
+        const rect = canvas.getBoundingClientRect();
+        const n = pick(ev.clientX - rect.left, ev.clientY - rect.top);
+        if (n) { g.selected = n.name; comp.onGraphSelect(key, n.name); }
+        else { g.selected = null; comp.onGraphSelect(key, null); }
+      }
+      g.dragNode = null; g.panning = false;
+      canvas.style.cursor = "grab";
+    };
+    const onWheel = (ev) => {
+      ev.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+      const factor = Math.exp(-ev.deltaY * 0.0016);
+      const z = Math.min(3.2, Math.max(0.35, g.zoom * factor));
+      const [wx, wy] = toWorld(sx, sy);
+      g.zoom = z;
+      g.panX = sx - wx * z; g.panY = sy - wy * z;
+      comp.forceUpdate();
+    };
+    const onLeave = () => { g.hover = null; };
+    canvas.addEventListener("pointerdown", onDown);
+    canvas.addEventListener("pointermove", onMove);
+    canvas.addEventListener("pointerup", onUp);
+    canvas.addEventListener("pointerleave", onLeave);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+
+    g.setSelected = (name, center) => {
+      g.selected = name;
+      if (name && center) {
+        const n = g.map.get(name);
+        if (n) { g.panX = g.w / 2 - n.x * g.zoom; g.panY = g.h / 2 - n.y * g.zoom; }
+      }
+    };
+    g.destroy = () => {
+      cancelAnimationFrame(g.raf);
+      g.ro.disconnect();
+      canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointerleave", onLeave);
+      canvas.removeEventListener("wheel", onWheel);
+    };
+    return g;
+  }
+
+  onGraphSelect(key, name) {
+    if (key === "A") this.setState({ selA: name });
+    else this.setState({ selB: name });
+  }
+
+  // ---------- view builders ----------
+  statusView(status) {
+    const s = status || "—";
+    const map = {
+      active:   { color: "#a9c47e", border: "#4a5a34" },
+      resolved: { color: "#9a8868", border: "#3a2e20" },
+      dead:     { color: "#d98a82", border: "#6e342f" },
+      unknown:  { color: "#8a7a5e", border: "#322820" },
+    };
+    const m = map[s] || { color: "#9a8868", border: "#3a2e20" };
+    return { status: s, statusColor: m.color, statusBorder: m.border };
+  }
+
+  nodeView(name, key) {
+    if (!this.data) this.data = this.buildData();
+    const n = this.data.byName.get(name);
+    if (!n) return null;
+    const T = Component.TYPES[n.type];
+    const hex = T.bright;
+    const rgb = `${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)}`;
+    return {
+      name: n.name,
+      typeLabel: T.label,
+      typeColor: hex,
+      typeBorder: `rgba(${rgb},.45)`,
+      typeBg: `rgba(${rgb},.08)`,
+      ...this.statusView(n.status),
+      createdH: this.humanStamp(n.created),
+      updatedH: this.humanStamp(n.updated),
+      tags: n.tags,
+      desc: n.desc,
+      log: n.log.map((l) => ({ stampH: l.stamp, text: l.text })),
+      conns: n.conns.map((c) => ({
+        label: c.label,
+        to: c.to,
+        dot: this.data.byName.has(c.to) ? Component.TYPES[this.data.byName.get(c.to).type].bright : "#3e3322",
+        go: () => {
+          const g = key === "A" ? this.graphA : this.graphB;
+          if (g && this.data.byName.has(c.to)) {
+            g.setSelected(c.to, true);
+            this.onGraphSelect(key, c.to);
+          }
+        },
+      })),
+    };
+  }
+
+  chipsFor(key) {
+    if (!this.data) this.data = this.buildData();
+    const filters = (key === "A" ? this.graphA : this.graphB)?.filters
+      || Object.fromEntries(Object.keys(Component.TYPES).map((t) => [t, true]));
+    const counts = {};
+    for (const n of this.data.nodes) counts[n.type] = (counts[n.type] || 0) + 1;
+    return Object.entries(Component.TYPES).map(([t, T]) => {
+      const on = filters[t];
+      const hex = T.bright;
+      const rgb = `${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)}`;
+      return {
+        label: T.label,
+        count: counts[t] || 0,
+        dot: on ? hex : "#3e3322",
+        bg: on ? `rgba(${rgb},.09)` : "transparent",
+        border: on ? `rgba(${rgb},.4)` : "#322820",
+        color: on ? "#cdbfa2" : "#6b5d46",
+        countColor: on ? hex : "#4a3d28",
+        opacity: "1",
+        toggle: () => {
+          const g = key === "A" ? this.graphA : this.graphB;
+          if (g) { g.filters[t] = !g.filters[t]; this.forceUpdate(); }
+        },
+      };
+    });
+  }
+
+  renderVals() {
+    if (!this.data) this.data = this.buildData();
+    const { selA, selB, tab } = this.state;
+    const selAView = selA ? this.nodeView(selA, "A") : null;
+    const selBView = selB ? this.nodeView(selB, "B") : null;
+    const nEdges = this.data.edges.length;
+    const nNodes = this.data.nodes.length;
+    const zoomA = this.graphA ? this.graphA.zoom : 1;
+
+    return {
+      // graph A
+      canvasARef: (el) => { this.cA = el; },
+      selA: selAView,
+      hasSelA: !!selAView,
+      drawerATransform: selAView ? "translateX(0)" : "translateX(102%)",
+      closeA: () => { if (this.graphA) this.graphA.selected = null; this.setState({ selA: null }); },
+      chipsA: this.chipsFor("A"),
+      searchA: this.state.searchA,
+      onSearchA: (e) => {
+        const v = e.target.value;
+        this.setState({ searchA: v });
+        if (this.graphA) this.graphA.search = v;
+      },
+      statsA: `${nNodes} nós · ${nEdges} ligações`,
+      zoomHintA: zoomA >= 1.45
+        ? "zoom alto — rótulos das ligações visíveis"
+        : "aproxime (scroll) para revelar os rótulos das ligações",
+
+      // graph B
+      canvasBRef: (el) => { this.cB = el; },
+      selB: selBView,
+      hasSelB: !!selBView,
+      noSelB: !selBView,
+      closeB: () => { if (this.graphB) this.graphB.selected = null; this.setState({ selB: null }); },
+      chipsB: this.chipsFor("B"),
+      searchB: this.state.searchB,
+      onSearchB: (e) => {
+        const v = e.target.value;
+        this.setState({ searchB: v });
+        if (this.graphB) this.graphB.search = v;
+      },
+      statsB: `${nNodes} nós revelados · toque num selo para abrir`,
+
+      // journal / timeline
+      isJournal: tab === "journal",
+      isTimeline: tab === "timeline",
+      goJournal: () => this.setState({ tab: "journal" }),
+      goTimeline: () => this.setState({ tab: "timeline" }),
+      tabJournalColor: tab === "journal" ? "#1a130c" : "#9a8868",
+      tabJournalBg: tab === "journal" ? "linear-gradient(180deg,#d4af5e,#bb8f3d)" : "transparent",
+      tabTimelineColor: tab === "timeline" ? "#1a130c" : "#9a8868",
+      tabTimelineBg: tab === "timeline" ? "linear-gradient(180deg,#d4af5e,#bb8f3d)" : "transparent",
+      readerRef: (el) => { this.readerEl = el; },
+      sessionAnchors: Component.JOURNAL.map((s) => ({
+        n: s.n,
+        bg: "transparent",
+        numColor: "#c6a24c",
+        labelColor: "#cdbfa2",
+        go: () => {
+          if (this.state.tab !== "journal") this.setState({ tab: "journal" });
+          setTimeout(() => {
+            const el = this.readerEl && this.readerEl.querySelector(`[id="sess-${s.n}"]`);
+            if (el && this.readerEl) this.readerEl.scrollTop = el.offsetTop - 20;
+          }, 30);
+        },
+      })),
+      journal: Component.JOURNAL.map((s) => ({
+        n: s.n,
+        anchorId: `sess-${s.n}`,
+        entries: s.entries.map(([stamp, text]) => {
+          const isCheck = /Check:|Combat/.test(text);
+          return {
+            stamp,
+            text,
+            stampColor: "#c6a24c",
+            color: isCheck ? "#a9c47e" : "#cdbfa2",
+          };
+        }),
+      })),
+      timeline: Component.TIMELINE.map(([s, text]) => ({ s, text })),
+
+      // activity
+      activity: Component.ACTIVITY.map((p) => {
+        const applied = p.applied.map((cmd) => {
+          const m = /^(CREATE|UPDATE|APPEND)\s+(.+)\.md$/.exec(cmd);
+          const verb = m ? { CREATE: "+", UPDATE: "~", APPEND: "»" }[m[1]] : "·";
+          return { verb, target: m ? m[2] : cmd };
+        });
+        const hasError = !!p.error;
+        const hasRejected = p.rejected.length > 0;
+        return {
+          stampH: this.humanStamp(p.stamp),
+          applied,
+          hasApplied: applied.length > 0,
+          rejected: p.rejected,
+          hasRejected,
+          hasError,
+          error: p.error || "",
+          border: hasError ? "#6e342f" : hasRejected ? "#6e5326" : "#322820",
+          summary: hasError ? "falhou" : `${applied.length} aplicados${hasRejected ? ` · ${p.rejected.length} rejeitado` : ""}`,
+          summaryColor: hasError ? "#d98a82" : hasRejected ? "#c2853f" : "#8a7a5e",
+        };
+      }),
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CheckResult, Combat } from "@pf2e/shared";
+import { ScribeIndicator, type ScribeState } from "../brain/ScribeIndicator.js";
 import { CombatPanel } from "./CombatPanel.js";
 import { FeatherIcon, ArrowRightIcon } from "./icons.js";
 import { RollMedallion } from "./RollMedallion.js";
@@ -20,9 +21,10 @@ interface Props {
   phase: "rules" | "narrative" | null;
   combat: Combat | null;
   onSend: (text: string) => void;
+  scribe: ScribeState;
 }
 
-export function Scene({ log, busy, phase, combat, onSend }: Props) {
+export function Scene({ log, busy, phase, combat, onSend, scribe }: Props) {
   const [input, setInput] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -62,25 +64,28 @@ export function Scene({ log, busy, phase, combat, onSend }: Props) {
         </div>
       </div>
 
-      <div className="composer">
-        <FeatherIcon size={18} />
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          placeholder="What do you do?"
-          rows={1}
-          disabled={busy}
-          aria-label="Your action"
-        />
-        <button className="btn-act" onClick={submit} disabled={busy || input.trim().length === 0}>
-          Act <ArrowRightIcon size={15} style={{ verticalAlign: "-2px" }} />
-        </button>
+      <div className="composer-row">
+        <div className="composer">
+          <FeatherIcon size={18} />
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder="What do you do?"
+            rows={1}
+            disabled={busy}
+            aria-label="Your action"
+          />
+          <button className="btn-act" onClick={submit} disabled={busy || input.trim().length === 0}>
+            Act <ArrowRightIcon size={15} style={{ verticalAlign: "-2px" }} />
+          </button>
+        </div>
+        <ScribeIndicator scribe={scribe} />
       </div>
     </section>
   );

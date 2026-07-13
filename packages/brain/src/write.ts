@@ -144,6 +144,11 @@ export class WritePassQueue {
     void this.drain();
   }
 
+  /** Há pass rodando ou aguardando? (alimenta o indicador "escriba anotando"). */
+  get busy(): boolean {
+    return this.running || this.pending.length > 0;
+  }
+
   private async drain(): Promise<void> {
     if (this.running) return;
     this.running = true;

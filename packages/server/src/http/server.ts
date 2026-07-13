@@ -10,10 +10,12 @@ import {
   runTurn,
   type StreamEvent,
 } from "../gm/agent.js";
+import { graphView } from "@pf2e/brain";
 import {
   brainActivityLog,
   brainSessionStart,
   brainStore,
+  brainWriting,
 } from "../gm/brain.js";
 import { createSession, getSession } from "../gm/sessions.js";
 import { parsePathbuilder } from "../pathbuilder/parse.js";
@@ -120,6 +122,11 @@ app.get("/brain/map", (_req, res) => {
   res.json({ map: brainStore().readMap(), meta: brainStore().meta() });
 });
 
+/** Grafo estruturado para a UI: nós tipados + edges resolvidas. */
+app.get("/brain/graph", (_req, res) => {
+  res.json({ ...graphView(brainStore()), meta: brainStore().meta() });
+});
+
 /** Conteúdo Markdown de um nó. */
 app.get("/brain/node/:stem", (req, res) => {
   const node = brainStore().readNode(String(req.params.stem ?? ""));
@@ -140,7 +147,7 @@ app.get("/brain/journal", (_req, res) => {
 
 /** Trilha de auditoria dos write passes (aplicados/rejeitados). */
 app.get("/brain/activity", (_req, res) => {
-  res.json({ activity: brainActivityLog() });
+  res.json({ activity: brainActivityLog(), writing: brainWriting() });
 });
 
 // Global error handler: body-parser (malformed JSON), large payload, etc.
