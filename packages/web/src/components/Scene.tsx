@@ -4,6 +4,7 @@ import { ScribeIndicator, type ScribeState } from "../brain/ScribeIndicator.js";
 import { CombatPanel } from "./CombatPanel.js";
 import { FeatherIcon, ArrowRightIcon } from "./icons.js";
 import { RollMedallion } from "./RollMedallion.js";
+import type { SceneImagesState } from "./useSceneImages.js";
 
 export type LogItem =
   | { kind: "narration"; text: string }
@@ -22,9 +23,20 @@ interface Props {
   combat: Combat | null;
   onSend: (text: string) => void;
   scribe: ScribeState;
+  sceneImages: SceneImagesState;
+  onIllustrate: (key: string, narration: string) => void;
 }
 
-export function Scene({ log, busy, phase, combat, onSend, scribe }: Props) {
+export function Scene({
+  log,
+  busy,
+  phase,
+  combat,
+  onSend,
+  scribe,
+  sceneImages,
+  onIllustrate,
+}: Props) {
   const [input, setInput] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -49,7 +61,15 @@ export function Scene({ log, busy, phase, combat, onSend, scribe }: Props) {
       <div className="log" ref={logRef}>
         <div className="narr">
           {log.map((item, i) => (
-            <LogRow key={i} item={item} dropCap={i === firstNarr} />
+            <LogRow
+              key={i}
+              item={item}
+              dropCap={i === firstNarr}
+              imageKey={`n${i}`}
+              turnBusy={busy}
+              sceneImages={sceneImages}
+              onIllustrate={onIllustrate}
+            />
           ))}
           {busy && (
             <div className="typing">
@@ -91,16 +111,67 @@ export function Scene({ log, busy, phase, combat, onSend, scribe }: Props) {
   );
 }
 
-function LogRow({ item, dropCap }: { item: LogItem; dropCap: boolean }) {
+interface LogRowProps {
+  item: LogItem;
+  dropCap: boolean;
+  imageKey: string;
+  turnBusy: boolean;
+  sceneImages: SceneImagesState;
+  onIllustrate: (key: string, narration: string) => void;
+}
+
+function LogRow({ item, dropCap, imageKey, turnBusy, sceneImages, onIllustrate }: LogRowProps) {
   if (item.kind === "player") {
     return <div className="row player">{item.text}</div>;
   }
   if (item.kind === "narration") {
-    return <div className={`row narration${dropCap ? " first" : ""}`}>{item.text}</div>;
+    const { images, activeKey, error } = sceneImages;
+    const url = images[imageKey];
+    const painting = activeKey === imageKey;
+    const rowError = error && error.key === imageKey ? error.message : null;
+    return (
+      <div className={`row narration${dropCap ? " first" : ""}`}>
+        {item.text}
+        {url && (
+          <a href={url} target="_blank" rel="noreferrer" className="scene-img-link">
+            <img className="scene-img" src={url} alt="Illustration of this scene" />
+          </a>
+        )}
+        {painting && (
+          <div className="scene-img-loading" role="status">
+            <span className="dots">
+              <i />
+              <i />
+              <i />
+            </span>
+            Painting the scene… (the GM sets down the dice for a minute)
+          </div>
+        )}
+        {rowError && <div className="scene-img-error">{rowError}</div>}
+        {!url && !painting && !turnBusy && activeKey === null && (
+          <button
+            className="illus-btn"
+            onClick={() => onIllustrate(imageKey, item.text)}
+            title="Generate an illustration of this scene (local, ~1 min)"
+          >
+            <BrushIcon /> Illustrate scene
+          </button>
+        )}
+      </div>
+    );
   }
   return (
     <div className="row rollrow">
       <RollMedallion result={item.result} />
     </div>
+  );
+}
+
+function BrushIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M20 3c-3 1-8.5 5.5-11 9l3 3c3.5-2.5 8-8 9-11l-1-1z" />
+      <path d="M9 12c-2.5.5-4 2-4.5 4.5C4.2 18 3.5 19 2.5 19.5c1.5 1.5 4.5 2 6.5.5 1.5-1.2 2-2.5 2-4" />
+    </svg>
   );
 }

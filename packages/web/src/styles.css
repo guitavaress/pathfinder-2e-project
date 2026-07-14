@@ -1809,3 +1809,76 @@ textarea.json {
     max-width: 70vw;
   }
 }
+
+/* --- Illustrate scene (imagem gerada por narração) ------------------------ */
+.illus-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid var(--line-soft);
+  border-radius: 15px;
+  color: var(--muted);
+  font-family: var(--serif);
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.row.narration:hover .illus-btn,
+.illus-btn:focus-visible {
+  opacity: 1;
+}
+.illus-btn:hover {
+  border-color: var(--gold-border);
+  color: var(--gold-bright);
+}
+.scene-img-link {
+  display: block;
+  margin-top: 12px;
+}
+.scene-img {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.scene-img-loading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 10px;
+  color: var(--muted-2);
+  font-style: italic;
+  font-size: 14px;
+}
+.scene-img-loading .dots {
+  display: inline-flex;
+  gap: 4px;
+}
+.scene-img-loading .dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--gold);
+  animation: tomePulse 1.1s infinite;
+}
+.scene-img-loading .dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.scene-img-loading .dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+/* Falha de geração: âmbar, nunca vermelho — não é erro do jogador. */
+.scene-img-error {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-left: 2px solid #6e5326;
+  color: #c2853f;
+  font-size: 13.5px;
+  font-style: italic;
+}

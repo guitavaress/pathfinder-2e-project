@@ -31,6 +31,7 @@ export default defineConfig({
     proxy: {
       // Encaminha as chamadas de API para o backend do GM.
       "/character": apiProxy,
+      // Cobre também /scene-image (job de ilustração) e /scene-images (PNGs).
       "/scene": apiProxy,
       "/health": apiProxy,
       "/brain": apiProxy,

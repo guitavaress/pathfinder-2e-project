@@ -8,6 +8,7 @@ import { FullSheet } from "./components/FullSheet.js";
 import { HeroBanner } from "./components/HeroBanner.js";
 import { ImportScreen } from "./components/ImportScreen.js";
 import { Scene, type LogItem } from "./components/Scene.js";
+import { useSceneImages } from "./components/useSceneImages.js";
 
 /** Tab do Brain a partir do hash (#brain, #brain/journal…); null = fechado. */
 function brainTabFromHash(): BrainTab | null {
@@ -28,6 +29,7 @@ export function App() {
   const [fullSheetOpen, setFullSheetOpen] = useState(false);
   const [brainTab, setBrainTab] = useState<BrainTab | null>(brainTabFromHash);
   const { scribe, onTurnStart, onTurnDone } = useScribe();
+  const { images, activeKey, error: imageError, illustrate } = useSceneImages(sessionId);
 
   // Rota hash do Grimório (#brain preserva estado no refresh).
   useEffect(() => {
@@ -158,6 +160,8 @@ export function App() {
           combat={state.combat}
           onSend={handleSend}
           scribe={scribe}
+          sceneImages={{ images, activeKey, error: imageError }}
+          onIllustrate={illustrate}
         />
         <CompactRail
           character={character}

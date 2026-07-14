@@ -59,6 +59,7 @@ import {
 import {
   brainJournal,
   brainKnowledge,
+  brainSceneContext,
   brainTurnStamp,
   queueBrainWrite,
 } from "./brain.js";
@@ -2844,6 +2845,45 @@ async function runNarrativeStage(
     role: "assistant",
     content: trimToCompleteSentence(narration),
   });
+}
+
+/**
+ * Destilação para a feature "Ilustrar cena": narração → prosa visual EN para
+ * o modelo de imagem. MESMO modelo residente, temp baixa. Só entra texto
+ * visível ao jogador (narração + brain) — LORE.md nunca; a âncora de estilo
+ * é somada em código no módulo image/ (engine garante o estilo, não o prompt).
+ */
+export async function distillScenePrompt(
+  session: Session,
+  narration: string,
+): Promise<string> {
+  const c = session.character;
+  const context = brainSceneContext(narration);
+  const prompt = [
+    "Convert this RPG scene into a prompt for an image generator.",
+    "Write ONE paragraph of visual prose in English, 100 words maximum:",
+    "setting, characters (appearance, pose), action, lighting, mood.",
+    "Concrete and pictorial only — no game mechanics, no dice, no numbers.",
+    "Describe people and places by appearance, not by name.",
+    "Output only the paragraph, nothing else.",
+    "",
+    `The protagonist is ${c.name}, a ${c.ancestry} ${c.className}.`,
+    context ? `\nWhat is known about those present:\n${context}` : "",
+    "",
+    "Scene narration:",
+    narration.slice(0, 1500),
+  ].join("\n");
+
+  const resp = await client.chat.completions.create({
+    model: NARRATIVE_MODEL,
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.1,
+    max_tokens: 250,
+    ...NO_REASONING,
+  });
+  const text = (resp.choices[0]?.message?.content ?? "").trim();
+  // Destilação vazia não derruba o job: a narração crua ainda é um prompt válido.
+  return (text || narration).slice(0, 1200);
 }
 
 /** Cliente do write pass do brain: MESMO modelo residente, temp baixa. */

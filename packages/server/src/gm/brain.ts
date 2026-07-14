@@ -11,6 +11,7 @@ import {
   BrainStore,
   durableJournalLines,
   knowledgeBlock,
+  relevantStems,
   runWritePass,
   WritePassQueue,
   type BrainActivity,
@@ -114,6 +115,28 @@ export function queueBrainWrite(
     });
   }
   queue.push(bundle);
+}
+
+/**
+ * Contexto visual para a destilação de imagem: aparência do protagonista
+ * (Protagonist.md — o usuário edita à mão) + nós citados na narração.
+ * Só conhecimento revelado: o brain É o que o jogador viu.
+ */
+export function brainSceneContext(text: string): string {
+  if (!brainEnabled()) return "";
+  try {
+    const s = brainStore();
+    const parts: string[] = [];
+    const prot = s.readNode("Protagonist");
+    if (prot) parts.push(`Protagonist (always describe them this way):\n${prot.body.slice(0, 300)}`);
+    for (const stem of relevantStems(s.readMap(), text)) {
+      const node = s.readNode(stem);
+      if (node) parts.push(`${stem}:\n${node.body.slice(0, 300)}`);
+    }
+    return parts.join("\n\n");
+  } catch {
+    return "";
+  }
 }
 
 export function brainActivityLog(): BrainActivity[] {
