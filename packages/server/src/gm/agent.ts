@@ -63,6 +63,7 @@ import {
   queueBrainWrite,
 } from "./brain.js";
 import { loadLore, loadWorld } from "./lore.js";
+import { saveSession } from "./save.js";
 import {
   NARRATIVE_SYSTEM_PROMPT,
   RULES_SYSTEM_PROMPT,
@@ -2902,6 +2903,9 @@ export async function runTurn(
       },
       brainComplete,
     );
+
+    // Save-game da campanha: todo turno completo persiste o ponto de retomada.
+    saveSession(session);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[GM] turn ERROR:", message);

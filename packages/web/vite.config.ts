@@ -34,6 +34,7 @@ export default defineConfig({
       "/scene": apiProxy,
       "/health": apiProxy,
       "/brain": apiProxy,
+      "/campaign": apiProxy,
     },
   },
 });

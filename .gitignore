@@ -49,3 +49,7 @@ LORE.md
 WORLD.md
 packages/server/scripts/bestiary-battery-transcripts/
 /brain/
+# Campanhas arquivadas (Nova campanha nunca apaga, arquiva)
+/brain-archive-*/
+# Imagens de cena geradas (feature Ilustrar, branch feat/scene-image)
+/scene-images/

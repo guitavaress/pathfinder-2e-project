@@ -77,8 +77,8 @@ describe("view: parseLog/parseConnections", () => {
 
 describe("view: graphView", () => {
   it("monta nós tipados e edges apenas para alvos existentes", () => {
-    writeFileSync(join(dir, "Vexcia.md"), VEXCIA);
-    writeFileSync(join(dir, "Scouts Guild.md"), GUILD);
+    writeFileSync(join(dir, "nodes", "Vexcia.md"), VEXCIA);
+    writeFileSync(join(dir, "nodes", "Scouts Guild.md"), GUILD);
     const g = graphView(store);
     expect(g.nodes.map((n) => n.stem).sort()).toEqual(["Scouts Guild", "Vexcia"]);
     const vexcia = g.nodes.find((n) => n.stem === "Vexcia")!;
@@ -92,7 +92,7 @@ describe("view: graphView", () => {
   });
 
   it("off-grid (Protagonist/Journal/Timeline) nunca entra no grafo", () => {
-    writeFileSync(join(dir, "Vexcia.md"), VEXCIA);
+    writeFileSync(join(dir, "nodes", "Vexcia.md"), VEXCIA);
     const g = graphView(store);
     expect(g.nodes.map((n) => n.stem)).toEqual(["Vexcia"]);
   });

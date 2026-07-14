@@ -4,15 +4,17 @@
  * sem embeddings — o grafo é derivado dos arquivos, e o usuário pode editar
  * qualquer .md na mão (escape hatch humano).
  *
- * Off-grid (não são nós do grafo): Protagonist.md (raiz), Journal.md
- * (diário de sessão, append-only), Timeline.md (cronologia in-world,
- * append-only), map.json, meta.json.
+ * Layout: nós do grafo em `nodes/*.md`; a raiz é só sistema — Protagonist.md,
+ * Journal.md (diário de sessão, append-only), Timeline.md (cronologia
+ * in-world, append-only), map.json, meta.json, save.json. Brains do layout
+ * antigo (nós na raiz) são migrados automaticamente no ensureInit.
  */
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -34,10 +36,17 @@ export interface BrainMeta {
 export class BrainStore {
   constructor(readonly dir: string) {}
 
+  /** Subdiretório dos nós do grafo. */
+  private get nodesDir(): string {
+    return join(this.dir, "nodes");
+  }
+
   // ------------------------------------------------------------------ init
   /** Cria o diretório e os arquivos-base se não existirem (idempotente). */
   ensureInit(protagonist?: { name: string; summary: string }): void {
     mkdirSync(this.dir, { recursive: true });
+    mkdirSync(this.nodesDir, { recursive: true });
+    this.migrateFlatLayout();
     const journal = join(this.dir, "Journal.md");
     if (!existsSync(journal)) writeFileSync(journal, "# Journal\n");
     const timeline = join(this.dir, "Timeline.md");
@@ -54,6 +63,19 @@ export class BrainStore {
       );
     }
     if (!existsSync(join(this.dir, "map.json"))) this.rebuildMap();
+  }
+
+  /** Layout antigo (nós .md na raiz) → nodes/. Idempotente; roda no boot. */
+  private migrateFlatLayout(): void {
+    let moved = 0;
+    for (const f of readdirSync(this.dir)) {
+      if (!f.endsWith(".md")) continue;
+      const stem = f.slice(0, -3);
+      if (this.isOffGrid(stem)) continue;
+      renameSync(join(this.dir, f), join(this.nodesDir, f));
+      moved += 1;
+    }
+    if (moved > 0) this.rebuildMap();
   }
 
   // ------------------------------------------------------------------ meta
@@ -98,15 +120,15 @@ export class BrainStore {
   /** Path seguro de um nó; null quando o stem é inválido ou escapa do dir. */
   nodePath(stem: string): string | null {
     if (!STEM_RE.test(stem) || this.isOffGrid(stem)) return null;
-    const p = resolve(this.dir, `${stem}.md`);
-    if (!p.startsWith(resolve(this.dir) + "/")) return null;
+    const p = resolve(this.nodesDir, `${stem}.md`);
+    if (!p.startsWith(resolve(this.nodesDir) + "/")) return null;
     return p;
   }
 
   /** Stems dos nós do grafo (exclui off-grid). */
   listStems(): string[] {
-    if (!existsSync(this.dir)) return [];
-    return readdirSync(this.dir)
+    if (!existsSync(this.nodesDir)) return [];
+    return readdirSync(this.nodesDir)
       .filter((f) => f.endsWith(".md"))
       .map((f) => f.slice(0, -3))
       .filter((s) => !this.isOffGrid(s))

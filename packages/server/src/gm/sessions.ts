@@ -8,6 +8,8 @@ export interface Session {
   state: GameState;
   /** History of messages exchanged with the model (user/assistant/tool). */
   messages: ChatCompletionMessageParam[];
+  /** True quando restaurada de um save — o primeiro turno vira recap. */
+  resumed?: boolean;
 }
 
 const sessions = new Map<string, Session>();
