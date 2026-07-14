@@ -33,6 +33,7 @@ export default defineConfig({
       "/character": apiProxy,
       "/scene": apiProxy,
       "/health": apiProxy,
+      "/brain": apiProxy,
     },
   },
 });

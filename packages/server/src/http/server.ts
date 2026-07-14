@@ -10,6 +10,13 @@ import {
   runTurn,
   type StreamEvent,
 } from "../gm/agent.js";
+import { graphView } from "@pf2e/brain";
+import {
+  brainActivityLog,
+  brainSessionStart,
+  brainStore,
+  brainWriting,
+} from "../gm/brain.js";
 import { createSession, getSession } from "../gm/sessions.js";
 import { parsePathbuilder } from "../pathbuilder/parse.js";
 
@@ -68,6 +75,8 @@ app.post("/character/import", (req, res) => {
     }
     const character = parsePathbuilder(req.body);
     const session = createSession(character);
+    // Brain: semeia o Protagonist.md e abre nova sessão no relógio S.T.
+    brainSessionStart(character);
     res.json({
       sessionId: session.id,
       character,
@@ -101,6 +110,44 @@ app.post("/scene/turn", async (req, res) => {
   const playerText = typeof text === "string" && text.trim() ? text : KICKOFF;
   await runTurn(session, playerText, send);
   res.end();
+});
+
+// ---------------------------------------------------------------------------
+// Brain do protagonista (grafo de conhecimento revelado) — leitura JSON.
+// A UI de grafo vem depois; por ora as rotas alimentam qualquer cliente.
+// ---------------------------------------------------------------------------
+
+/** Índice {stem: descrição} do grafo. */
+app.get("/brain/map", (_req, res) => {
+  res.json({ map: brainStore().readMap(), meta: brainStore().meta() });
+});
+
+/** Grafo estruturado para a UI: nós tipados + edges resolvidas. */
+app.get("/brain/graph", (_req, res) => {
+  res.json({ ...graphView(brainStore()), meta: brainStore().meta() });
+});
+
+/** Conteúdo Markdown de um nó. */
+app.get("/brain/node/:stem", (req, res) => {
+  const node = brainStore().readNode(String(req.params.stem ?? ""));
+  if (!node) {
+    res.status(404).json({ error: "No such node." });
+    return;
+  }
+  res.json(node);
+});
+
+/** Diário de sessão (append-only). */
+app.get("/brain/journal", (_req, res) => {
+  res.json({
+    journal: brainStore().readOffGrid("Journal"),
+    timeline: brainStore().readOffGrid("Timeline"),
+  });
+});
+
+/** Trilha de auditoria dos write passes (aplicados/rejeitados). */
+app.get("/brain/activity", (_req, res) => {
+  res.json({ activity: brainActivityLog(), writing: brainWriting() });
 });
 
 // Global error handler: body-parser (malformed JSON), large payload, etc.

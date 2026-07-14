@@ -48,3 +48,4 @@ LORE.md
 # Use WORLD.example.md como modelo. Caminho via WORLD_PATH.
 WORLD.md
 packages/server/scripts/bestiary-battery-transcripts/
+/brain/

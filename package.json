@@ -5,6 +5,7 @@
   "description": "RPG solo web local baseado em Pathfinder 2e, com Game Master gerado por IA (Claude).",
   "workspaces": [
     "packages/shared",
+    "packages/brain",
     "packages/server",
     "packages/web"
   ],
