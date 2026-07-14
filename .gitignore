@@ -49,3 +49,6 @@ LORE.md
 WORLD.md
 packages/server/scripts/bestiary-battery-transcripts/
 /brain/
+
+# Imagens de cena geradas (feature Ilustrar) — artefato runtime local
+/scene-images/

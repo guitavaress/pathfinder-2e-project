@@ -18,6 +18,13 @@ import {
   brainWriting,
 } from "../gm/brain.js";
 import { createSession, getSession } from "../gm/sessions.js";
+import { isUp as comfyIsUp, COMFY_DOWN_HINT } from "../image/comfy.js";
+import {
+  queueSceneImage,
+  sceneImageDir,
+  sceneImageEnabled,
+  sceneImageStatus,
+} from "../image/sceneImage.js";
 import { parsePathbuilder } from "../pathbuilder/parse.js";
 
 const app = express();
@@ -148,6 +155,45 @@ app.get("/brain/journal", (_req, res) => {
 /** Trilha de auditoria dos write passes (aplicados/rejeitados). */
 app.get("/brain/activity", (_req, res) => {
   res.json({ activity: brainActivityLog(), writing: brainWriting() });
+});
+
+// ---------------------------------------------------------------------------
+// Ilustrar cena: narração → destilação (Gemma) → ComfyUI/Z-Image → PNG.
+// Job assíncrono single-flight; a UI acompanha por polling em /scene-image/status.
+// ---------------------------------------------------------------------------
+
+if (sceneImageEnabled()) {
+  // Primeiro static do projeto: serve os PNGs gerados (dir gitignorado).
+  app.use("/scene-images", express.static(sceneImageDir()));
+}
+
+/** Enfileira a ilustração de uma narração. 202 = aceito; polling em /status. */
+app.post("/scene-image", async (req, res) => {
+  if (!sceneImageEnabled()) {
+    res.status(503).json({ error: "Ilustração desligada (SCENE_IMAGE_DISABLED=1)." });
+    return;
+  }
+  const { sessionId, key, narration } = req.body ?? {};
+  const session = getSession(String(sessionId ?? ""));
+  if (!session) {
+    res.status(404).json({ error: "Session not found." });
+    return;
+  }
+  if (typeof narration !== "string" || !narration.trim()) {
+    res.status(400).json({ error: "Envie a narração a ilustrar em `narration`." });
+    return;
+  }
+  if (!(await comfyIsUp())) {
+    res.status(503).json({ error: COMFY_DOWN_HINT() });
+    return;
+  }
+  const accepted = queueSceneImage(session, String(key ?? "scene"), narration);
+  res.status(202).json({ accepted });
+});
+
+/** Estado do job atual/último ({phase, url?, error?, jobKey?}). */
+app.get("/scene-image/status", (_req, res) => {
+  res.json(sceneImageStatus());
 });
 
 // Global error handler: body-parser (malformed JSON), large payload, etc.

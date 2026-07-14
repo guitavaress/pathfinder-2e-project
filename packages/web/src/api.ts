@@ -15,6 +15,37 @@ export type StreamEvent =
   | { type: "done" }
   | { type: "error"; message: string };
 
+/** Espelha o SceneImageSnapshot do server (packages/server/src/image/queue.ts). */
+export interface SceneImageStatus {
+  phase: "idle" | "distilling" | "generating" | "done" | "error";
+  url?: string;
+  error?: string;
+  jobKey?: string;
+}
+
+/** Enfileira a ilustração de uma narração (202). Erros viram Error com a dica. */
+export async function requestSceneImage(
+  sessionId: string,
+  key: string,
+  narration: string,
+): Promise<void> {
+  const res = await fetch("/scene-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, key, narration }),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Illustration failed (HTTP ${res.status}).`);
+  }
+}
+
+export async function fetchSceneImageStatus(): Promise<SceneImageStatus> {
+  const res = await fetch("/scene-image/status");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as SceneImageStatus;
+}
+
 export async function importCharacter(rawJson: string): Promise<ImportResult> {
   const res = await fetch("/character/import", {
     method: "POST",

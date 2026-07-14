@@ -14,7 +14,8 @@
     "test": "npm run test --workspaces --if-present",
     "dev:server": "npm run dev --workspace @pf2e/server",
     "dev:web": "npm run dev --workspace @pf2e/web",
-    "data:pf2e": "npm run data:pf2e --workspace @pf2e/server"
+    "data:pf2e": "npm run data:pf2e --workspace @pf2e/server",
+    "comfy": "bash scripts/comfy.sh"
   },
   "engines": {
     "node": ">=20"
