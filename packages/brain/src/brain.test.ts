@@ -262,7 +262,7 @@ describe("write pass", () => {
       bundles: [{ playerText: "x", mechanical: "", narration: "y" }],
       stamp: "S1.T3",
       complete: async () => {
-        throw new Error("LM Studio offline");
+        throw new Error("LLM server offline");
       },
     });
     expect(broken.error).toContain("offline");

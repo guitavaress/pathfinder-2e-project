@@ -2,7 +2,7 @@
  * Write pass: depois que a resposta do turno já foi streamada, o MESMO modelo
  * residente extrai o que vale lembrar e emite comandos CRUD delimitados
  * (parse + gates em commands.ts). O cliente de modelo é INJETADO (`complete`)
- * — este pacote não conhece OpenAI/LM Studio e é testável sem GPU.
+ * — este pacote não conhece OpenAI nem o servidor local, e é testável sem GPU.
  *
  * Fronteira do conhecimento revelado É estrutural: o bundle só carrega texto
  * que o JOGADOR viu (mensagem, resumo player-safe, narração). LORE.md nunca
@@ -128,8 +128,8 @@ export async function runWritePass(opts: {
 
 /**
  * Fila single-flight com coalescência: turnos que chegam durante um pass
- * pendente são agrupados no próximo (LM Studio serializa requests — geração
- * de fundo não pode atrasar o rules stage do turno seguinte).
+ * pendente são agrupados no próximo (o modelo local atende uma requisição por
+ * vez — geração de fundo não pode atrasar o rules stage do turno seguinte).
  */
 export class WritePassQueue {
   private pending: TurnBundle[] = [];

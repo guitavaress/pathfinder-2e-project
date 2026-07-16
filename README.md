@@ -23,10 +23,10 @@ decisions — with NPCs, a living world, and skill checks following the PF2e rul
 
 ## How it works
 
-The GM runs on **local models via [LM Studio](https://lmstudio.ai/)**, in a **two-stage pipeline**
-per turn. By default **one model** drives both stages — each stage runs its own *context* (system
-prompt + message thread), not its own model, so LM Studio keeps a single model resident and never
-swaps weights mid-turn:
+The GM runs on a **local model served by [llama.cpp](https://github.com/ggml-org/llama.cpp)**, in a
+**two-stage pipeline** per turn. **One model** drives both stages — each stage runs its own *context*
+(system prompt + message thread), not its own model, so a single set of weights stays resident and
+nothing is swapped mid-turn:
 
 1. **Rules context** — resolves the PF2e mechanics with *tool use*: rolls checks and Strikes
    (`roll_check`), runs combat (`start_combat`/`end_combat`/`end_turn`/`spend_actions`), uses
@@ -47,19 +47,24 @@ over-budget creatures before they enter play, never lets a creature above party 
 counts defeated enemies toward the budget so "reinforcement waves" can't recreate a TPK. The web UI
 shows a combat HUD (HP bars, action pips, MAP) and rich roll medallions.
 
-The server talks to LM Studio through its **OpenAI-compatible API** (`http://localhost:1234/v1`).
-Running the project inside **WSL with LM Studio on the Windows host** also works: start the Windows
-server with network access (`lms server start --bind 0.0.0.0 --port 1234`) and point
-`LMSTUDIO_BASE_URL` at the WSL default gateway (`ip route show default | awk '{print $3}'`).
+The server talks to `llama-server` through its **OpenAI-compatible API**, at `LLM_BASE_URL`
+(default `http://127.0.0.1:1234/v1`). Any OpenAI-compatible local server works (LM Studio, Ollama);
+only two things are actually required:
 
-- **Default (`GM_MODEL`):** one model for both stages — `google/gemma-4-12b`
-  (Gemma 4 12B, official, Q4). It fits entirely in ~12 GB VRAM (no CPU offload) and follows
-  instructions well. No per-turn model swap.
-  ⚠️ Its native context is huge (256K); keep the LM Studio **Context Length** modest (e.g. 16k–32k) so
-  the KV cache fits alongside the weights on 12 GB. Confirm the exact model key with `lms ls`.
-- **Two-model mode (opt-in):** set `RULES_MODEL` and `NARRATIVE_MODEL` to different models for
-  specialization (e.g. a stronger narrator). Needs enough VRAM for both to stay resident, otherwise
-  LM Studio swaps weights each turn (minutes/turn on ~12 GB).
+- **`--jinja`** — tool calling lives or dies on it, and the whole rules stage is tool calling.
+- **Enough context.** Both stages sit around 7k tokens of fixed prompt before any history
+  (rules: system + the tool schemas; narrative: system + setting + lore + sheet + memory), so a
+  16k window is the practical floor and 64k gives the history windows room to breathe.
+
+> **WSL note:** prefer `127.0.0.1` over `localhost` in `LLM_BASE_URL`. `llama-server` binds IPv4
+> only unless told otherwise, and on WSL2 `localhost` resolves to IPv6 `::1` first.
+
+- **Default (`GM_MODEL`):** one model for both stages — Gemma 4 12B (Q4). It fits entirely in
+  ~12 GB VRAM (no CPU offload) and follows instructions well. llama.cpp serves whatever GGUF you
+  loaded and ignores the `model` field on requests, so `GM_MODEL` only feeds the `/health` check,
+  which substring-matches it against `GET /v1/models`.
+- **Two-model mode (opt-in):** `RULES_MODEL` / `NARRATIVE_MODEL`. llama.cpp serves one model per
+  server, so a real split needs a second `llama-server` — not reachable through a single base URL.
 - **Inference cost:** zero — everything runs on your machine.
 
 ## Structure
@@ -68,7 +73,7 @@ server with network access (`lms server start --bind 0.0.0.0 --port 1234`) and p
 packages/
 ├── shared/   # shared TS types (Character, GameState, Combat, CheckResult...)
 ├── brain/    # protagonist memory graph: markdown nodes + wikilinks, write-pass gates, graph view
-├── server/   # Node/Express: REST API + GM agent (LM Studio) + combat engine + PF2e rules data
+├── server/   # Node/Express: REST API + GM agent (llama.cpp) + combat engine + PF2e rules data
 │   └── scripts/feat-audit/   # GM regression suite: 7039 feats classified + 75-scenario battery
 └── web/      # React/Vite: import, sheet, narrative scene + combat HUD (streaming via SSE)
 ```
@@ -76,22 +81,26 @@ packages/
 ## Requirements
 
 - Node.js 20+
-- [LM Studio](https://lmstudio.ai/) installed, with its local server running (`lms server start`)
-- NVIDIA GPU: a model that fully fits in ~12 GB runs smoothly; the default
-  `google/gemma-4-12b` (Gemma 4 12B, Q4) fits entirely on 12 GB
-  (keep the context modest). Two-model mode needs enough VRAM for both models to stay resident.
+- An OpenAI-compatible local LLM server, started **with tool calling enabled**
+  ([llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server --jinja`, or LM Studio/Ollama)
+- NVIDIA GPU: a model that fully fits in ~12 GB runs smoothly; the default Gemma 4 12B (Q4) fits
+  entirely on 12 GB alongside a 64k KV cache quantized to `q8_0`.
 
 ## Setup
 
 ```bash
-# 1. Install LM Studio (https://lmstudio.ai/download), start its server, and download the model
-lms server start
-lms get google/gemma-4-12b   # GM_MODEL (drives both stages); then `lms ls` to confirm the exact key
-# Optional two-model mode: also `lms get google/gemma-3-27b` and set NARRATIVE_MODEL
+# 1. Serve the model. llama.cpp, Gemma 4 12B (Q4) on a 12 GB card:
+llama-server -m gemma-4-12b-it-UD-Q4_K_XL.gguf \
+  -ngl 99 -fa on -c 65536 \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  --jinja --reasoning off \
+  --host 127.0.0.1 --port 1234
+#    --jinja is REQUIRED: without it there is no tool calling, and the rules stage is tool calling.
+#    Optional: --model-draft <MTP draft gguf> --spec-type draft-mtp  (speculative decoding, ~3x faster)
 
 # 2. Project dependencies
 npm install
-cp .env.example .env   # adjust GM_MODEL / LMSTUDIO_BASE_URL (RULES/NARRATIVE_MODEL optional)
+cp .env.example .env   # adjust LLM_BASE_URL / GM_MODEL
 
 # 3. PF2e rules dataset (local index the GM consults)
 #    Downloads the dataset from the foundryvtt/pf2e repo (~26k entries: actions, feats,
@@ -127,8 +136,8 @@ npm run dev:web      # frontend at http://localhost:5173
 ```
 
 Open `http://localhost:5173`, import `exemplo_personagem.json` (a level 5 Goblin Rogue) or your own
-Pathbuilder 2e export, and start playing. (LM Studio must be running with the models downloaded; the
-server loads them on demand.) If you already have a campaign going, the import screen shows a
+Pathbuilder 2e export, and start playing. (The LLM server must already be up with the model loaded —
+`llama-server` has no load-on-demand.) If you already have a campaign going, the import screen shows a
 **Continue campaign** card instead — one click resumes where you left off.
 
 ## Memory: the Brain
@@ -163,7 +172,7 @@ npm run build
 
 A reusable audit suite exercises the GM (model + engine) against real PF2e feats, grouped by
 mechanical archetype, with hard assertions (action economy vs dataset cost, DC validity,
-state-vs-narrative consistency). Uses the GPU/LM Studio while running:
+state-vs-narrative consistency). Uses the GPU/LLM server while running:
 
 ```bash
 cd packages/server

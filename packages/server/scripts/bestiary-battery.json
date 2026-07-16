@@ -1,5 +1,5 @@
 {
-  "comment": "Bateria GPU do bestiary (PR1) — 5 encontros com monstros conhecidos. NÃO roda automaticamente: exige OK explícito do usuário (LM Studio). Cada caso: prompt do jogador + asserções sobre o estado/summary.",
+  "comment": "Bateria GPU do bestiary (PR1) — 5 encontros com monstros conhecidos. NÃO roda automaticamente: exige OK explícito do usuário (GPU/llama.cpp). Cada caso: prompt do jogador + asserções sobre o estado/summary.",
   "cases": [
     {
       "id": "giant-rats-cellar",
