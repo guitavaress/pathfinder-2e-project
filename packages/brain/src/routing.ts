@@ -11,7 +11,7 @@ import type { BrainStore } from "./store.js";
 export function relevantStems(
   map: Record<string, string>,
   text: string,
-  k = 3,
+  k = 6,
 ): string[] {
   const t = normalizeName(text);
   if (!t) return [];
@@ -21,20 +21,27 @@ export function relevantStems(
     .slice(0, k);
 }
 
-const BLOCK_CAP = 1500;
-const NODE_CAP = 450;
-const JOURNAL_TAIL = 12;
+/**
+ * Orçamento do bloco de memória. Redimensionado em 2026-07-16 para o contexto
+ * de 64k do llama.cpp: com os 8192 do LM Studio o narrador recebia ~400 tokens
+ * do Brain INTEIRO — o grafo lembrava, mas quase nada disso chegava à narração.
+ * Segue capado (contexto é orçamento, não lago, e um 12B se perde em contexto
+ * longo demais), só que num teto que cabe a memória de verdade: ~1,6k tokens.
+ */
+const BLOCK_CAP = 6000;
+const NODE_CAP = 1200;
+const JOURNAL_TAIL = 20;
+const MAP_ENTRIES = 60;
 
 /**
  * Bloco "o que o protagonista sabe" para o prompt do narrador: one-liners do
- * map + cauda do Journal + corpo dos nós citados no texto do turno. Capado —
- * contexto de 12B é orçamento, não lago.
+ * map + cauda do Journal + corpo dos nós citados no texto do turno.
  */
 export function knowledgeBlock(store: BrainStore, turnText: string): string {
   const map = store.readMap();
   const parts: string[] = [];
 
-  const entries = Object.entries(map).slice(0, 30);
+  const entries = Object.entries(map).slice(0, MAP_ENTRIES);
   if (entries.length) {
     parts.push(
       "Known entities: " + entries.map(([s, d]) => `${s} (${d})`).join("; "),

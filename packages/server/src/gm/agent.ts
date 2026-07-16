@@ -73,22 +73,36 @@ import type { Session } from "./sessions.js";
 
 /**
  * Single model that drives both stages by default. Each stage runs its own
- * CONTEXT (system prompt + message thread), not its own model — so LM Studio
- * keeps one model resident across the turn instead of swapping weights (which
- * on ~12 GB VRAM costs minutes per turn). Gemma 4 12B (official, Q4) is the
- * default: it fits entirely in ~12 GB VRAM (no CPU offload) and follows
- * instructions well. Keep the LM Studio context modest so its KV cache fits.
+ * CONTEXT (system prompt + message thread), not its own model — one set of
+ * weights stays resident across the turn instead of being swapped (which on
+ * ~12 GB VRAM costs minutes per turn). Gemma 4 12B (Q4) is the default: it fits
+ * entirely in ~12 GB VRAM (no CPU offload) and follows instructions well.
+ *
+ * llama.cpp serves whatever GGUF was loaded at startup and IGNORES the `model`
+ * field on requests; this value only feeds the /health check, which matches it
+ * against GET /v1/models. Servers that do route by model (LM Studio, Ollama)
+ * need it to be the exact key.
  */
-const GM_MODEL = process.env.GM_MODEL ?? "google/gemma-4-12b";
+const GM_MODEL = process.env.GM_MODEL ?? "gemma-4-12b-it";
 /** Model for the RULES/tools stage. Defaults to GM_MODEL; override only to
- * split across two models (needs enough VRAM to avoid a per-turn swap). */
+ * split across two models (needs a second server, one model each). */
 export const RULES_MODEL = process.env.RULES_MODEL ?? GM_MODEL;
 /** Model for the NARRATIVE stage. Defaults to GM_MODEL; override only to split
- * across two models (needs enough VRAM to avoid a per-turn swap). */
+ * across two models (needs a second server, one model each). */
 export const NARRATIVE_MODEL = process.env.NARRATIVE_MODEL ?? GM_MODEL;
-/** LM Studio's OpenAI-compatible base URL (the server runs locally on :1234). */
-const LMSTUDIO_BASE_URL =
-  process.env.LMSTUDIO_BASE_URL ?? "http://localhost:1234/v1";
+/**
+ * The LLM server's OpenAI-compatible base URL (llama.cpp's llama-server by
+ * default, on :1234). `LMSTUDIO_BASE_URL` is the pre-2026-07-16 name, still
+ * honored so an old .env keeps working.
+ *
+ * 127.0.0.1 and NOT localhost: llama-server binds IPv4 only unless told
+ * otherwise, and on WSL2 `localhost` resolves to IPv6 ::1 first — the same trap
+ * that forced the Vite proxy onto a literal IP (packages/web/vite.config.ts).
+ */
+export const LLM_BASE_URL =
+  process.env.LLM_BASE_URL ??
+  process.env.LMSTUDIO_BASE_URL ??
+  "http://127.0.0.1:1234/v1";
 const MAX_ITERATIONS = 8;
 /**
  * Combatant ids que JÁ levaram dano de Strike da engine neste turno — usado
@@ -236,18 +250,52 @@ function enterDying(session: Session, crit: boolean): string {
     ? `${session.character.name} drops to 0 HP and DIES instantly (dying ${dying}).`
     : `${session.character.name} drops to 0 HP: DYING ${dying}, unconscious. Recovery checks decide their fate on the following turns.`;
 }
-/** How many recent history messages the rules stage sees as context. */
-const RULES_CONTEXT_TURNS = 6;
-/** How many recent history messages the narrative stage sees (bounds context
- * growth so long sessions don't overflow the model's window). */
-const NARRATIVE_CONTEXT_MESSAGES = 30;
-/** LM Studio extension: disable "thinking" on reasoning models (e.g. gemma-4).
- * Without this they burn the token budget on `reasoning_content` we never show,
- * starving the visible output (empty narration). Cast because the OpenAI type
- * doesn't list "none"; LM Studio accepts it and non-reasoning models ignore it. */
+/**
+ * Janelas de histórico por estágio. Dimensionadas em 2026-07-16 para o contexto
+ * de 64k do llama.cpp (antes eram 6/30, para os 8192 do LM Studio — medido: os
+ * dois estágios raspavam o teto).
+ *
+ * Custo medido nesta máquina: prompt de ~16k faz prefill em ~7s (2200 tok/s), e
+ * a janela deslizante invalida o cache de prefixo do llama.cpp a cada turno
+ * assim que o histórico passa da janela (a mensagem mais antiga cai e o prefixo
+ * muda). Por isso as janelas são generosas mas não gulosas: um 12B também perde
+ * qualidade com contexto longo demais ("lost in the middle").
+ */
+/** Quantas mensagens recentes o rules stage vê. Ele resolve a mecânica DESTE
+ * turno; contexto demais só o confunde. ~2,1k tokens. */
+const RULES_CONTEXT_TURNS = 16;
+/** Quantas mensagens recentes o narrador vê — é o fio da história, e o que mais
+ * ataca a sensação de one-shot. ~40 turnos, ~10,5k tokens. */
+const NARRATIVE_CONTEXT_MESSAGES = 80;
+/** Disables "thinking" on reasoning models (e.g. gemma-4): without it they burn
+ * the token budget on `reasoning_content` we never show, starving the visible
+ * output (empty narration). Cast because the OpenAI type doesn't list "none".
+ * Redundant against a llama-server started with `--reasoning off` (it accepts
+ * and ignores the field), but kept so the GM behaves on servers that honor it. */
 const NO_REASONING = { reasoning_effort: "none" } as unknown as {
   reasoning_effort: "low";
 };
+
+/**
+ * Samplers pinned in code, not inherited from whoever serves the model.
+ *
+ * The server applies its own defaults to anything we omit, and they differ by
+ * vendor: llama.cpp ships `repeat_penalty: 1.0` (off) where LM Studio applied
+ * ~1.1 — that alone changes how repetitive the narration gets. Doctrine
+ * "engine garante" extends here: the GM must behave the same regardless of the
+ * backend, and the feat-audit battery's baseline was measured with these on.
+ * Values match Gemma's recommended sampling. `top_p` stays per-call (the
+ * narrative stage runs tighter than the rules stage).
+ *
+ * These are llama.cpp/LM Studio extensions to the OpenAI schema, so the cast is
+ * the same escape hatch NO_REASONING uses: unknown keys ride along in the JSON
+ * body and are ignored by servers that don't implement them.
+ */
+const SAMPLERS = {
+  top_k: 64,
+  min_p: 0.05,
+  repeat_penalty: 1.1,
+} as unknown as Record<never, never>;
 
 /** Events emitted during a turn, forwarded to the client via SSE. */
 export type StreamEvent =
@@ -258,8 +306,8 @@ export type StreamEvent =
   | { type: "done" }
   | { type: "error"; message: string };
 
-// LM Studio ignores the API key, but the OpenAI SDK requires a non-empty one.
-const client = new OpenAI({ baseURL: LMSTUDIO_BASE_URL, apiKey: "lm-studio" });
+// Local servers ignore the API key, but the OpenAI SDK requires a non-empty one.
+const client = new OpenAI({ baseURL: LLM_BASE_URL, apiKey: "local" });
 
 /** Tool definitions in the OpenAI function-calling format. */
 const TOOLS: ChatCompletionTool[] = [
@@ -2460,6 +2508,8 @@ async function runRulesStage(
       messages,
       tools: TOOLS,
       temperature: 0.3,
+      top_p: 0.95,
+      ...SAMPLERS,
       ...NO_REASONING,
     });
     const message = resp.choices[0]?.message;
@@ -2782,9 +2832,13 @@ async function runNarrativeStage(
     // Combat narration runs cooler: less creative license = fewer flipped facts.
     temperature: inCombat ? 0.4 : 0.6,
     // Hard length cap so the scene can't ramble (the "1-3 paragraphs" limit in
-    // the prompt is a soft ask; this enforces it).
-    max_tokens: 450,
+    // the prompt is a soft ask; this enforces it). 450 cortava narrações
+    // legítimas no meio da frase (play-test 2026-07-12: comeu o crit do
+    // nocaute); com 64k de contexto o teto sobe e a continuação vira exceção,
+    // sem soltar o freio do rambling.
+    max_tokens: 700,
     top_p: 0.9,
+    ...SAMPLERS,
     ...NO_REASONING,
   });
 
@@ -2824,6 +2878,7 @@ async function runNarrativeStage(
         temperature: inCombat ? 0.4 : 0.6,
         max_tokens: 110,
         top_p: 0.9,
+        ...SAMPLERS,
         ...NO_REASONING,
       });
       for await (const chunk of cont) {
@@ -2854,6 +2909,8 @@ async function brainComplete(prompt: string): Promise<string> {
     messages: [{ role: "user", content: prompt }],
     temperature: 0.1,
     max_tokens: 500,
+    top_p: 0.95,
+    ...SAMPLERS,
     ...NO_REASONING,
   });
   return resp.choices[0]?.message?.content ?? "";

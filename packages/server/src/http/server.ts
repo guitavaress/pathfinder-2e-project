@@ -5,6 +5,7 @@ import "../env.js";
 import cors from "cors";
 import express from "express";
 import {
+  LLM_BASE_URL,
   NARRATIVE_MODEL,
   RULES_MODEL,
   runTurn,
@@ -31,24 +32,24 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 const PORT = Number(process.env.PORT ?? 3001);
-const LMSTUDIO_BASE_URL =
-  process.env.LMSTUDIO_BASE_URL ?? "http://localhost:1234/v1";
 
 const KICKOFF =
   "Begin the adventure by narrating the opening scene described under 'Opening scene' in the Setting. Introduce ONLY what is physically present around my character right now — keep it grounded and mundane. Reveal nothing cosmic, secret, or from the GM-only lore. Keep it short (1-3 paragraphs) and end with a single, concrete hook for my first action.";
 
-/** Checks whether LM Studio is reachable and which configured models are present. */
-async function checkLmStudio(): Promise<{
+/** Checks whether the LLM server is reachable and serving the configured model. */
+async function checkLlmServer(): Promise<{
   reachable: boolean;
   models: Record<string, boolean>;
 }> {
   const wanted = { rules: RULES_MODEL, narrative: NARRATIVE_MODEL };
   try {
-    const res = await fetch(`${LMSTUDIO_BASE_URL}/models`);
+    const res = await fetch(`${LLM_BASE_URL}/models`);
     if (!res.ok) return { reachable: false, models: { rules: false, narrative: false } };
     const data = (await res.json()) as { data?: { id?: string }[] };
     const ids = (data.data ?? []).map((m) => m.id ?? "");
-    // LM Studio reports each model's key as the id; match exact or substring.
+    // Substring both ways: LM Studio reports the model key as the id, while
+    // llama.cpp reports the GGUF path ("models/gemma-4-12b-it-UD-Q4_K_XL.gguf"),
+    // so the configured key is a fragment of it.
     const has = (key: string) =>
       ids.some((id) => id === key || id.includes(key) || key.includes(id));
     return {
@@ -61,11 +62,11 @@ async function checkLmStudio(): Promise<{
 }
 
 app.get("/health", async (_req, res) => {
-  const lmstudio = await checkLmStudio();
+  const llm = await checkLlmServer();
   res.json({
     ok: true,
     models: { rules: RULES_MODEL, narrative: NARRATIVE_MODEL },
-    lmstudio,
+    llm,
   });
 });
 
@@ -273,22 +274,24 @@ app.listen(PORT, async () => {
     RULES_MODEL === NARRATIVE_MODEL
       ? `GM model (single, two contexts): ${RULES_MODEL}`
       : `rules: ${RULES_MODEL} | narrative: ${NARRATIVE_MODEL}`;
-  console.log(`LM Studio: ${LMSTUDIO_BASE_URL} | ${modelLine}`);
-  const { reachable, models } = await checkLmStudio();
+  console.log(`LLM server: ${LLM_BASE_URL} | ${modelLine}`);
+  const { reachable, models } = await checkLlmServer();
   if (!reachable) {
     console.warn(
-      `WARNING: LM Studio not reachable at ${LMSTUDIO_BASE_URL}. Run: lms server start`,
+      `WARNING: no LLM server at ${LLM_BASE_URL}. Start it with: gemma-up`,
     );
     return;
   }
+  // O servidor responde, mas serve outro modelo — o jogo roda e o GM erra de um
+  // jeito difícil de diagnosticar. Avisar apontando o que ele REALMENTE carregou.
   if (!models.rules) {
     console.warn(
-      `WARNING: rules model "${RULES_MODEL}" not found. Run: lms get ${RULES_MODEL}`,
+      `WARNING: rules model "${RULES_MODEL}" doesn't match what the server has loaded. Check GET ${LLM_BASE_URL}/models and adjust GM_MODEL (or reload the server with gemma-up).`,
     );
   }
   if (!models.narrative) {
     console.warn(
-      `WARNING: narrative model "${NARRATIVE_MODEL}" not found. Run: lms get ${NARRATIVE_MODEL}`,
+      `WARNING: narrative model "${NARRATIVE_MODEL}" doesn't match what the server has loaded. Check GET ${LLM_BASE_URL}/models and adjust NARRATIVE_MODEL.`,
     );
   }
 });

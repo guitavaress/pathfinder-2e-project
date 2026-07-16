@@ -3,7 +3,7 @@
  * reações e casters — modelo + engine de ponta a ponta, nos moldes do
  * feat-audit (servidor temporário na :3101, morto ao final; transcripts).
  *
- * SÓ RODA COM OK EXPLÍCITO DO USUÁRIO (usa GPU/LM Studio).
+ * SÓ RODA COM OK EXPLÍCITO DO USUÁRIO (usa GPU/llama.cpp).
  *
  * Uso: npx tsx scripts/run-bestiary-battery.ts [--case=id] [--port=3101]
  */

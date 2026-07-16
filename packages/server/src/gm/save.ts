@@ -12,8 +12,13 @@ import { z } from "zod";
 import { brainDir } from "./brain.js";
 import type { Session } from "./sessions.js";
 
-/** Cauda do histórico restaurada no Continue — contexto de 12B é orçamento. */
-export const SAVE_MESSAGE_TAIL = 30;
+/**
+ * Cauda do histórico restaurada no Continue. Tem que acompanhar o
+ * NARRATIVE_CONTEXT_MESSAGES do agent.ts: se o save guardar menos do que o
+ * narrador enxerga, retomar a campanha entrega um fio mais curto do que a
+ * sessão tinha antes de fechar — o jogo esqueceria ao salvar, não ao jogar.
+ */
+export const SAVE_MESSAGE_TAIL = 80;
 
 export const SaveGameSchema = z.object({
   version: z.literal(1),

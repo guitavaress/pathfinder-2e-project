@@ -1,6 +1,6 @@
 # CLAUDE.md — guia do projeto para agentes
 
-RPG solo de Pathfinder 2e, web, 100% local (LM Studio, custo zero de API). Monorepo
+RPG solo de Pathfinder 2e, web, 100% local (llama.cpp, custo zero de API). Monorepo
 npm workspaces: `packages/shared` (tipos zod), `packages/brain` (grafo de memória em
 markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, SSE).
 
@@ -9,7 +9,9 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
 1. **Engine garante, prompt reforça.** Com modelo local 12B, toda regra que importa
    ganha enforcement em código (`packages/server/src/gm/combat.ts` + guards em
    `agent.ts`). Prompt é mitigação, nunca garantia. Tools validam entrada — jamais
-   aceitar default silencioso (o bug clássico: `dc ?? 0` fabricava crits).
+   aceitar default silencioso (o bug clássico: `dc ?? 0` fabricava crits). Vale
+   também para o backend: samplers vão fixados em código (`SAMPLERS` no
+   `agent.ts`), não herdados dos defaults de quem serve o modelo.
 2. **Classificar antes de corrigir.** Toda falha do GM é diagnosticada como
    [MODELO] × [CÓDIGO] × [FALTA DE DEFINIÇÃO] antes do fix. Fix de prompt que
    reincide é promovido a código (escada de escalação).
@@ -29,13 +31,25 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
 - Não mergear na `main` sem aprovação explícita do usuário (ele play-testa antes).
 - Baterias longas de GPU (auditorias com o modelo) só iniciam com OK explícito.
 
+## Modelo (llama.cpp, desde 2026-07-16)
+
+`llama-server` no WSL com `gemma-4-12b-it` Q4 + draft MTP, `-c 65536`, KV `q8_0`,
+`--jinja` (**sem isso não há tool calling — o rules stage inteiro morre**),
+`--reasoning off`, bind `127.0.0.1:1234`. Sobe/desce com `gemma-up`/`gemma-down`
+(`~/.local/bin`). `LLM_BASE_URL` no `.env` usa **`127.0.0.1`, nunca `localhost`**
+(bind é IPv4-only e no WSL2 `localhost` cai em `::1`). llama.cpp **ignora** o campo
+`model` do request — serve o GGUF carregado; `GM_MODEL` só alimenta o `/health`.
+Não tem JIT load: servidor fora do ar = jogo fora do ar, sem fallback.
+Medido nesta máquina: ~116 tok/s de geração, ~2200 tok/s de prefill.
+
 ## Comandos
 
 ```bash
+gemma-up / gemma-down    # sobe/derruba o llama-server (porta 1234)
 npm test                 # unit tests (vitest, packages/server + packages/brain)
 npm run build            # tsc + vite em todos os workspaces
 npm run data:pf2e        # (re)gera o dataset de regras do foundryvtt/pf2e
-# Auditoria de feats (suite de regressão do GM — usa GPU/LM Studio):
+# Auditoria de feats (suite de regressão do GM — usa GPU/llama.cpp):
 cd packages/server
 npx tsx scripts/feat-audit/classify-feats.ts     # classifica os 7039 feats
 npx tsx scripts/feat-audit/select-battery.ts     # regenera battery.json (sobrescreve!)
@@ -44,7 +58,9 @@ npx tsx scripts/feat-audit/run-feat-tests.ts     # roda a bateria (--side/--arch
 
 ## Arquitetura do turno (GM)
 
-`runTurn` = 2 estágios com o MESMO modelo residente (contextos separados):
+`runTurn` = 2 estágios com o MESMO modelo residente (contextos separados). Janelas
+de histórico dimensionadas para os 64k (`RULES_CONTEXT_TURNS=16`,
+`NARRATIVE_CONTEXT_MESSAGES=80`, `SAVE_MESSAGE_TAIL=80` acompanha o narrador):
 1. **Rules** (`runRulesStage`): tool loop (roll_check, cast_spell, rest,
    start_combat, end_combat, end_turn, spend_actions, use_item, update_state,
    lookup_rule, get_character) → resumo mecânico determinístico. `rest` cura
