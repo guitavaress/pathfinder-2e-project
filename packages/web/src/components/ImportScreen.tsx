@@ -1,13 +1,16 @@
 import { useRef, useState } from "react";
+import type { CampaignInfo } from "../api.js";
 import { StarIcon, UploadIcon } from "./icons.js";
 
 interface Props {
   onImport: (rawJson: string) => void;
+  onContinue: () => void;
+  campaign: CampaignInfo | null;
   error: string | null;
   busy: boolean;
 }
 
-export function ImportScreen({ onImport, error, busy }: Props) {
+export function ImportScreen({ onImport, onContinue, campaign, error, busy }: Props) {
   const [json, setJson] = useState("");
   const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -30,10 +33,44 @@ export function ImportScreen({ onImport, error, busy }: Props) {
       </div>
 
       <div className="import-right">
-        <h1>Begin your story</h1>
+        {campaign?.exists && campaign.character && (
+          <div className="continue-card">
+            <div className="continue-kicker">Saved campaign</div>
+            <h2 className="continue-title">
+              {campaign.character.name}
+              <span className="continue-sub">
+                {campaign.character.ancestry} {campaign.character.className} · level{" "}
+                {campaign.character.level} · session {campaign.meta?.session ?? "?"}
+              </span>
+            </h2>
+            {campaign.recap && campaign.recap.length > 0 && (
+              <ul className="continue-recap">
+                {campaign.recap.map((line, i) => (
+                  <li key={i}>{line.replace(/^-\s*/, "")}</li>
+                ))}
+              </ul>
+            )}
+            {campaign.savedAt && (
+              <div className="continue-saved">
+                Last played {new Date(campaign.savedAt).toLocaleString()}
+              </div>
+            )}
+            <button className="btn-primary" disabled={busy} onClick={onContinue}>
+              {busy ? "Opening…" : "Continue campaign"}
+            </button>
+          </div>
+        )}
+
+        <h1>{campaign?.exists ? "Or begin anew" : "Begin your story"}</h1>
         <p className="lead">
           Import a character built in Pathbuilder 2e — drag the <code>.json</code> file or paste its
           contents below.
+          {campaign?.exists && (
+            <em className="continue-warn">
+              {" "}
+              Starting a new campaign archives the current one (nothing is deleted).
+            </em>
+          )}
         </p>
 
         <input

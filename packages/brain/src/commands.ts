@@ -40,6 +40,36 @@ export interface ApplyReport {
 
 const MAX_COMMANDS = 4;
 const MAX_BODY = 2500;
+/** Dedup da Timeline: Jaccard de palavras ≥ este limiar contra a cauda = duplicata. */
+export const TIMELINE_SIMILARITY = 0.6;
+const TIMELINE_DEDUP_TAIL = 10;
+
+function timelineWords(line: string): Set<string> {
+  return new Set(
+    normalizeName(line.replace(/^-\s*(\[S\d+\]\s*)?/, ""))
+      .split(" ")
+      .filter(Boolean),
+  );
+}
+
+/** Quase-duplicata de alguma entrada existente? (o modelo adora recontar). */
+export function isNearDuplicateTimeline(
+  line: string,
+  existing: string[],
+  threshold = TIMELINE_SIMILARITY,
+): boolean {
+  const a = timelineWords(line);
+  if (a.size === 0) return true;
+  for (const other of existing) {
+    const b = timelineWords(other);
+    if (b.size === 0) continue;
+    let inter = 0;
+    for (const w of a) if (b.has(w)) inter += 1;
+    const union = a.size + b.size - inter;
+    if (union > 0 && inter / union >= threshold) return true;
+  }
+  return false;
+}
 
 const HEADER_RE = /^===\s*(CREATE|UPDATE|TIMELINE|JOURNAL)(?:\s+([^=\n]+?\.md))?\s*===\s*$/gim;
 
@@ -118,8 +148,38 @@ export function applyCommands(
         report.rejected.push({ command: label, reason: "no '- ' entry lines" });
         continue;
       }
-      if (cmd.kind === "timeline") store.appendTimeline(lines, stamp);
-      else store.appendJournal(lines, stamp);
+      if (cmd.kind === "timeline") {
+        // Dedup gate: o modelo reconta o mesmo evento com outras palavras —
+        // quase-duplicatas da cauda (e do próprio comando) não entram.
+        const tail = store
+          .readOffGrid("Timeline")
+          .split("\n")
+          .filter((l) => l.startsWith("- "))
+          .slice(-TIMELINE_DEDUP_TAIL);
+        const kept: string[] = [];
+        let dropped = 0;
+        for (const line of lines) {
+          if (isNearDuplicateTimeline(line, [...tail, ...kept])) dropped += 1;
+          else kept.push(line);
+        }
+        if (kept.length === 0) {
+          report.rejected.push({
+            command: label,
+            reason: "near-duplicate of existing timeline entries",
+          });
+          continue;
+        }
+        store.appendTimeline(kept, stamp);
+        report.applied.push(label);
+        if (dropped > 0) {
+          report.rejected.push({
+            command: label,
+            reason: `${dropped} near-duplicate line(s) skipped`,
+          });
+        }
+        continue;
+      }
+      store.appendJournal(lines, stamp);
       report.applied.push(label);
       continue;
     }

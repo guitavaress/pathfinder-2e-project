@@ -15,6 +15,30 @@ export type StreamEvent =
   | { type: "done" }
   | { type: "error"; message: string };
 
+/** Espelha o GET /campaign do server (metadados do save + recap da Timeline). */
+export interface CampaignInfo {
+  exists: boolean;
+  character?: { name: string; ancestry: string; className: string; level: number };
+  meta?: { session: number; turn: number };
+  savedAt?: string;
+  recap?: string[];
+}
+
+export async function fetchCampaign(): Promise<CampaignInfo> {
+  const res = await fetch("/campaign");
+  if (!res.ok) return { exists: false };
+  return (await res.json()) as CampaignInfo;
+}
+
+export async function continueCampaign(): Promise<ImportResult> {
+  const res = await fetch("/campaign/continue", { method: "POST" });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Continue failed (HTTP ${res.status}).`);
+  }
+  return (await res.json()) as ImportResult;
+}
+
 export async function importCharacter(rawJson: string): Promise<ImportResult> {
   const res = await fetch("/character/import", {
     method: "POST",

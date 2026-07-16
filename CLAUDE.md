@@ -1,8 +1,8 @@
 # CLAUDE.md — guia do projeto para agentes
 
 RPG solo de Pathfinder 2e, web, 100% local (LM Studio, custo zero de API). Monorepo
-npm workspaces: `packages/shared` (tipos zod), `packages/server` (Express + agente GM),
-`packages/web` (React/Vite, SSE).
+npm workspaces: `packages/shared` (tipos zod), `packages/brain` (grafo de memória em
+markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, SSE).
 
 ## Doutrinas do projeto (não negociáveis)
 
@@ -24,15 +24,15 @@ npm workspaces: `packages/shared` (tipos zod), `packages/server` (Express + agen
 
 - **Nunca** deixar `dev:server` rodando em background (colide com o :3001 do usuário).
   Servidores temporários de teste usam a porta **3101** e são derrubados ao final.
-- `.env`, `LORE.md`, `WORLD.md` e `data/pf2e/generated/` são **gitignorados** — nunca
-  commitá-los.
+- `.env`, `LORE.md`, `WORLD.md`, `data/pf2e/generated/`, `/brain/`, `/brain-archive-*/`
+  e `/scene-images/` são **gitignorados** — nunca commitá-los.
 - Não mergear na `main` sem aprovação explícita do usuário (ele play-testa antes).
 - Baterias longas de GPU (auditorias com o modelo) só iniciam com OK explícito.
 
 ## Comandos
 
 ```bash
-npm test                 # unit tests (vitest, packages/server)
+npm test                 # unit tests (vitest, packages/server + packages/brain)
 npm run build            # tsc + vite em todos os workspaces
 npm run data:pf2e        # (re)gera o dataset de regras do foundryvtt/pf2e
 # Auditoria de feats (suite de regressão do GM — usa GPU/LM Studio):
@@ -72,3 +72,22 @@ npx tsx scripts/feat-audit/run-feat-tests.ts     # roda a bateria (--side/--arch
    menor em combate, sem tools.
 
 SSE: `delta`/`check`/`state`/`phase`/`done`/`error`; o combate vai dentro de `state`.
+
+## Brain e continuidade de campanha
+
+Pós-`done`, um **write pass** coalescido (fila single-flight em `gm/brain.ts`) deixa o
+modelo gravar o turno como grafo markdown em `brain/` (gitignorado): nós em
+`brain/nodes/*.md` (front-matter + `## Log` carimbado S.T + `## Connections` wikilinks);
+off-grid (Journal/Timeline/Protagonist/map.json/meta.json/save.json) na raiz. Gates em
+`packages/brain/src/commands.ts` rejeitam lixo (mention gate, nome inválido, dedup de nó,
+TIMELINE quase-duplicada por Jaccard ≥0.6) — rejeição é auditável no activity feed (âmbar
+na UI), nunca silenciosa. UI "Grimório da Memória" abre com a tecla B.
+
+Continuidade (`gm/save.ts` + `gm/recap.ts` + rotas em `http/server.ts`): `saveSession`
+grava `brain/save.json` após cada turno (personagem + estado + cauda de 30 msgs).
+`GET /campaign` alimenta o card "Continue campaign"; `POST /campaign/continue` restaura a
+sessão e é (junto com nova campanha) o **único** dono do `brainBumpSession` — S conta
+sentadas reais, não imports. Turno vazio com `session.resumed` usa `resumeKickoff`: a
+engine monta o recap (`buildRecapData`: cauda da Timeline + quests ativas + última cena) e
+o modelo só narra — o que não está no recap não aconteceu. Import com campanha existente
+**arquiva** o brain em `brain-archive-<data>/` (nunca apaga).

@@ -11,10 +11,15 @@ decisions — with NPCs, a living world, and skill checks following the PF2e rul
 > the rules dataset), Multiple Attack Penalty, automatic damage with crits and Sneak Attack,
 > conditions validated against the official list, activity Frequency and Requirements enforced,
 > enemy turns resolved in code, item grounding with **real quantities** (`use_item` throws the bomb
-> your sheet actually carries, with its real statblock), **encounter difficulty enforced by the
-> GM Core XP budget for your real party size** (solo play gets solo-sized encounters — the engine
-> trims whatever the model over-declares), and full **dying/recovery rules** — you can actually die.
-> Validated by a 75-scenario feat-audit regression battery (75/75 PASS) and 108 unit tests.
+> your sheet actually carries, with its real statblock), **named enemies with their official
+> bestiary statblocks** (real AC/HP/saves/attacks, code-driven reactions like Reactive Strike,
+> enemy spellcasters, persistent damage), real **rest rules** (overnight / Treat Wounds),
+> **encounter difficulty enforced by the GM Core XP budget for your real party size** (solo play
+> gets solo-sized encounters — the engine trims whatever the model over-declares), and full
+> **dying/recovery rules** — you can actually die. Between sittings the game **remembers**: a
+> markdown memory graph (the Brain) grows as you play, and **campaign continuity** lets you close
+> the game mid-scene and pick up exactly where you left off, with a "Previously…" recap.
+> Validated by a 75-scenario feat-audit regression battery (75/75 PASS) and 195 unit tests.
 
 ## How it works
 
@@ -25,7 +30,8 @@ swaps weights mid-turn:
 
 1. **Rules context** — resolves the PF2e mechanics with *tool use*: rolls checks and Strikes
    (`roll_check`), runs combat (`start_combat`/`end_combat`/`end_turn`/`spend_actions`), uses
-   consumables from the sheet (`use_item`), looks up rules (`lookup_rule`), updates state
+   consumables from the sheet (`use_item`), casts spells with real slots and saves (`cast_spell`),
+   rests with the real recovery rules (`rest`), looks up rules (`lookup_rule`), updates state
    (`update_state`), and produces a numbered mechanical summary. Dice, damage, action costs, conditions, and dying checks all come from **code**, not the
    model — the engine validates every tool input and rejects what the sheet can't support.
 2. **Narrative context** — receives that summary and writes the immersive scene (streaming),
@@ -61,6 +67,7 @@ server with network access (`lms server start --bind 0.0.0.0 --port 1234`) and p
 ```
 packages/
 ├── shared/   # shared TS types (Character, GameState, Combat, CheckResult...)
+├── brain/    # protagonist memory graph: markdown nodes + wikilinks, write-pass gates, graph view
 ├── server/   # Node/Express: REST API + GM agent (LM Studio) + combat engine + PF2e rules data
 │   └── scripts/feat-audit/   # GM regression suite: 7039 feats classified + 75-scenario battery
 └── web/      # React/Vite: import, sheet, narrative scene + combat HUD (streaming via SSE)
@@ -121,12 +128,34 @@ npm run dev:web      # frontend at http://localhost:5173
 
 Open `http://localhost:5173`, import `exemplo_personagem.json` (a level 5 Goblin Rogue) or your own
 Pathbuilder 2e export, and start playing. (LM Studio must be running with the models downloaded; the
-server loads them on demand.)
+server loads them on demand.) If you already have a campaign going, the import screen shows a
+**Continue campaign** card instead — one click resumes where you left off.
+
+## Memory: the Brain
+
+After each turn, a **write pass** lets the GM record what happened as a markdown knowledge graph in
+`brain/` (gitignored — it's *your* story): one file per entity in `brain/nodes/` with typed
+front-matter, a session-stamped `## Log`, and `## Connections` wikilinks; Journal, Timeline, and
+Protagonist live at the root. Every command the model proposes goes through **gates in code**
+(mention gate, name validation, node dedup, near-duplicate Timeline detection) — rejections are
+auditable in the activity feed, never silent. The narrator reads relevant nodes back each turn, so
+NPCs remember you. Press **B** in game to open the **Grimório da Memória**: a constellation graph
+UI over the whole thing. Opt out with `BRAIN_DISABLED=1`; relocate with `BRAIN_PATH`.
+
+## Campaign continuity
+
+The server writes `brain/save.json` after every turn: character, state (HP, conditions, spell
+slots, consumed items), and the recent narrative thread. Reopen the game and the **Continue
+campaign** card restores all of it; the first turn then narrates a **deterministic "Previously…"
+recap** — the engine assembles the facts (Timeline tail, open quests, the last scene) and the model
+only narrates them, so the recap can't invent what didn't happen. Importing a new character starts
+a **new campaign** and archives the current one to `brain-archive-<date>/` — nothing is ever
+deleted. Session numbers count real sittings.
 
 ## Tests and build
 
 ```bash
-npm test         # 108 unit tests: combat engine, dice/degrees, dying/recovery, encounter budget, use_item, parser
+npm test         # 195 unit tests: combat engine, dice/degrees, dying/recovery, encounter budget, use_item, spells, rest, brain graph + gates, save-game/recap, parser
 npm run build
 ```
 

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Character, GameState } from "@pf2e/shared";
-import { importCharacter, streamTurn } from "./api.js";
+import {
+  continueCampaign,
+  fetchCampaign,
+  importCharacter,
+  streamTurn,
+  type CampaignInfo,
+} from "./api.js";
 import { BrainOverlay, type BrainTab } from "./brain/BrainOverlay.js";
 import { useScribe } from "./brain/ScribeIndicator.js";
 import { CompactRail } from "./components/CompactRail.js";
@@ -27,7 +33,15 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [fullSheetOpen, setFullSheetOpen] = useState(false);
   const [brainTab, setBrainTab] = useState<BrainTab | null>(brainTabFromHash);
+  const [campaign, setCampaign] = useState<CampaignInfo | null>(null);
   const { scribe, onTurnStart, onTurnDone } = useScribe();
+
+  // Campanha salva? (alimenta o card "Continue campaign" na tela de entrada)
+  useEffect(() => {
+    void fetchCampaign()
+      .then(setCampaign)
+      .catch(() => setCampaign({ exists: false }));
+  }, []);
 
   // Rota hash do Grimório (#brain preserva estado no refresh).
   useEffect(() => {
@@ -134,6 +148,24 @@ export function App() {
     [runTurn],
   );
 
+  const handleContinue = useCallback(async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await continueCampaign();
+      setSessionId(result.sessionId);
+      setCharacter(result.character);
+      setState(result.state);
+      setLog([]);
+      // Texto vazio numa sessão retomada dispara o "Previously…" no server.
+      await runTurn(result.sessionId, "");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [runTurn]);
+
   const handleSend = useCallback(
     (text: string) => {
       if (!sessionId) return;
@@ -144,7 +176,15 @@ export function App() {
   );
 
   if (!sessionId || !character || !state) {
-    return <ImportScreen onImport={handleImport} error={error} busy={busy} />;
+    return (
+      <ImportScreen
+        onImport={handleImport}
+        onContinue={() => void handleContinue()}
+        campaign={campaign}
+        error={error}
+        busy={busy}
+      />
+    );
   }
 
   return (

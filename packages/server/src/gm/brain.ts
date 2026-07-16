@@ -24,19 +24,33 @@ let store: BrainStore | null = null;
 let queue: WritePassQueue | null = null;
 const activity: BrainActivity[] = [];
 
+/** Diretório da campanha (brain + save.json moram juntos; um archive leva tudo). */
+export function brainDir(): string {
+  return process.env.BRAIN_PATH ?? DEFAULT_DIR;
+}
+
+/** Reseta os singletons (usado ao arquivar a campanha — o dir muda embaixo). */
+export function resetBrainStore(): void {
+  store = null;
+}
+
 export function brainEnabled(): boolean {
   return process.env.BRAIN_DISABLED !== "1";
 }
 
 export function brainStore(): BrainStore {
   if (!store) {
-    store = new BrainStore(process.env.BRAIN_PATH ?? DEFAULT_DIR);
+    store = new BrainStore(brainDir());
     store.ensureInit();
   }
   return store;
 }
 
-/** Nova sessão de jogo: semeia o Protagonist.md e abre S+1 no relógio. */
+/**
+ * Semeia o Protagonist.md de uma campanha. NÃO avança o relógio de sessão —
+ * S só incrementa quando uma sentada realmente começa (Continue/Nova campanha,
+ * via brainBumpSession), não a cada import de JSON.
+ */
 export function brainSessionStart(character: Character): void {
   if (!brainEnabled()) return;
   try {
@@ -45,9 +59,18 @@ export function brainSessionStart(character: Character): void {
       name: character.name,
       summary: `${character.ancestry} ${character.className}, level ${character.level}. The protagonist — everything in this memory is what THEY have learned.`,
     });
-    s.bumpSession();
   } catch (err) {
     console.warn("[brain] session start failed:", err instanceof Error ? err.message : err);
+  }
+}
+
+/** Abre uma nova sentada de jogo no relógio S.T (dono único do bump de S). */
+export function brainBumpSession(): void {
+  if (!brainEnabled()) return;
+  try {
+    brainStore().bumpSession();
+  } catch (err) {
+    console.warn("[brain] bump session failed:", err instanceof Error ? err.message : err);
   }
 }
 
