@@ -286,14 +286,132 @@ describe("sentinela do dataset", () => {
       "dataset ausente — rode `npm run data:pf2e` (sem ele a cobertura de regras não roda)",
     ).toBe(true);
     const files = readdirSync(generatedDir).filter((f) => f.endsWith(".json"));
+    // Import TOTAL (Fase 1.5): todas as categorias do core + manifest + uuids.
+    // `misc.json` morreu — era a vala comum que ninguém lia.
     expect(files.sort()).toEqual([
       "actions.json",
+      "ancestries.json",
+      "armies.json",
+      "backgrounds.json",
       "bestiary.json",
+      "campaign.json",
+      "classes.json",
       "conditions.json",
+      "deities.json",
+      "effects.json",
       "equipment.json",
+      "familiars.json",
       "feats.json",
-      "misc.json",
+      "hazards.json",
+      "heritages.json",
+      "kits.json",
+      "macros.json",
+      "manifest.json",
+      "pregens.json",
       "spells.json",
+      "uuid-index.json",
+      "vehicles.json",
     ]);
+  });
+});
+
+describe.skipIf(!hasGenerated)("import total (Fase 1.5): zero perda e grafo", () => {
+  const manifest = hasGenerated
+    ? (JSON.parse(readFileSync(join(generatedDir, "manifest.json"), "utf8")) as {
+        ref: string;
+        sourceDocs: number;
+        written: number;
+        withRules: number;
+        byType: Record<string, number>;
+        categories: Record<string, number>;
+      })
+    : null;
+
+  it("manifest prova zero perda no ref 7.8.0", () => {
+    expect(manifest!.ref).toBe("7.8.0");
+    // Censo 2026-07-26: 27.940 docs com type+name nos packs. O vão até
+    // sourceDocs são documentos NÃO-Item (journals/rolltables, sem `type`).
+    expect(manifest!.written).toBe(27940);
+    expect(manifest!.sourceDocs - manifest!.written).toBeLessThanOrEqual(200);
+    // Os tipos que o importador antigo DESCARTAVA inteiros:
+    expect(manifest!.byType.hazard).toBe(1106);
+    expect(manifest!.byType.character).toBe(140);
+    expect(manifest!.byType.ammo).toBe(203);
+    expect(manifest!.byType.vehicle).toBe(92);
+    // E os volumes-âncora:
+    expect(manifest!.byType.feat).toBe(7039);
+    expect(manifest!.byType.npc).toBe(6447);
+    expect(manifest!.byType.effect).toBe(2815);
+    // Rule elements preservados (27% do dataset tem):
+    expect(manifest!.withRules).toBeGreaterThanOrEqual(7600);
+  });
+
+  it("misc.json morreu e toda categoria do manifest existe no disco", () => {
+    const files = new Set(readdirSync(generatedDir));
+    expect(files.has("misc.json")).toBe(false);
+    for (const cat of Object.keys(manifest!.categories)) {
+      expect(files.has(`${cat}.json`), `${cat}.json ausente`).toBe(true);
+    }
+  });
+
+  it("todo selfEffect de feat resolve para um effect existente", () => {
+    const uuidIndex = JSON.parse(
+      readFileSync(join(generatedDir, "uuid-index.json"), "utf8"),
+    ) as Record<string, { name: string; category: string }>;
+    const broken: string[] = [];
+    for (const f of raw("feats.json")) {
+      const se = (f as { selfEffect?: string }).selfEffect;
+      if (!se) continue;
+      const target = uuidIndex[se];
+      if (!target || target.category !== "effects") {
+        broken.push(`${f.name} -> ${se} (${target?.category ?? "inexistente"})`);
+      }
+    }
+    expect(broken).toEqual([]);
+  });
+
+  it("rule elements chegam VERBATIM (spot-checks do censo)", () => {
+    const featByName = new Map(raw("feats.json").map((r) => [r.name, r]));
+    const condByName = new Map(raw("conditions.json").map((r) => [r.name, r]));
+    // Off-Guard: o -2 de CA que a engine hard-coda em effectiveAC.
+    const og = condByName.get("Off-Guard") as { rules?: Record<string, unknown>[] };
+    expect(og?.rules).toEqual([
+      { key: "FlatModifier", selector: "ac", slug: "off-guard", type: "circumstance", value: -2 },
+    ]);
+    // Frightened: penalidade de status em TUDO, dirigida pelo valor (badge).
+    const fr = condByName.get("Frightened") as { rules?: Record<string, unknown>[] };
+    expect(fr?.rules?.[0]).toMatchObject({
+      key: "FlatModifier",
+      selector: "all",
+      type: "status",
+      value: "-@item.badge.value",
+    });
+    // Nimble Dodge: toggle + FlatModifier de circunstância na CA.
+    const nd = featByName.get("Nimble Dodge") as { rules?: Record<string, unknown>[] };
+    expect(nd?.rules?.map((r) => r.key)).toEqual(["RollOption", "FlatModifier"]);
+  });
+
+  it("taxonomia NATIVA de feat importada (a que o classify recriava na mão)", () => {
+    const cats: Record<string, number> = {};
+    for (const f of raw("feats.json")) {
+      const c = (f as { featCategory?: string }).featCategory ?? "??";
+      cats[c] = (cats[c] ?? 0) + 1;
+    }
+    expect(cats["??"] ?? 0).toBe(0); // todo feat tem categoria
+    expect(cats.class).toBe(3914);
+    expect(cats.ancestry).toBe(1554);
+    expect(cats.skill).toBe(320);
+    expect(cats.pfsboon).toBe(157); // os que o testable() filtrava por REGEX
+  });
+
+  it("hazards têm statblock utilizável quando o dado o traz", () => {
+    const hazards = raw("hazards.json");
+    expect(hazards.length).toBe(1106);
+    const hidden = hazards.find((h) => h.name === "Hidden Pit") as {
+      statblock?: { ac: number; hp: number };
+      hazard?: { stealth: number | null; isComplex: boolean };
+    };
+    expect(hidden?.statblock).toMatchObject({ ac: 10, hp: 12 });
+    expect(hidden?.hazard).toMatchObject({ stealth: 8, isComplex: false });
   });
 });
