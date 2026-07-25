@@ -72,6 +72,7 @@ import {
   queueBrainWrite,
 } from "./brain.js";
 import { loadLore, loadWorld } from "./lore.js";
+import { pickVoice, voiceDirective } from "./voice-gate.js";
 import { saveSession } from "./save.js";
 import {
   NARRATIVE_SYSTEM_PROMPT,
@@ -2987,11 +2988,24 @@ async function runNarrativeStage(
   // A linha de PLAYER STATE fecha o modo de falha do limbo: vida/consciência
   // do personagem SEMPRE explícitas, mesmo em turno sem rolagem.
   const stateLine = playerStateLine(session);
+  // Gate "uma voz por vez" (ADR-004): decidido em código, injetado aqui — a
+  // posição mais obedecida do contexto. Persona de NO MÁXIMO um companheiro;
+  // os demais recebem ordem explícita de silêncio.
+  const companions = session.state.companions ?? [];
+  const voiceLine = voiceDirective(
+    pickVoice(companions, {
+      playerText: typeof lastUser?.content === "string" ? lastUser.content : "",
+      mechanical,
+      turn: session.messages.filter((m) => m.role === "user").length,
+    }),
+    companions,
+  );
+  const tail = [stateLine, voiceLine].filter(Boolean).join("\n");
   const resultsMessage: ChatCompletionMessageParam = {
     role: "user",
     content: mechanical
-      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. These lines are COMPLETE: if the player's message declared an item, attack, or ability that does NOT appear below, it DID NOT HAPPEN — the engine rejected or ignored it (usually the item isn't in their Equipment). Show its absence in-fiction ("your hand finds no such flask in your pack") instead of narrating it working. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}\n${stateLine}`
-      : `[GM ENGINE] No roll was needed and NO mechanical effect happened (no damage, no healing, no item consumed). Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot, and do NOT narrate items/abilities taking mechanical effect.\n${stateLine}`,
+      ? `[GM ENGINE — WHAT ACTUALLY HAPPENED THIS TURN. Narrate EVERY numbered line below, in order, faithfully: never flip a miss into a hit, never omit a blow that landed on the player. These lines are COMPLETE: if the player's message declared an item, attack, or ability that does NOT appear below, it DID NOT HAPPEN — the engine rejected or ignored it (usually the item isn't in their Equipment). Show its absence in-fiction ("your hand finds no such flask in your pack") instead of narrating it working. Don't quote the raw terms or numbers; show them as story.]\n${mechanical}\n${tail}`
+      : `[GM ENGINE] No roll was needed and NO mechanical effect happened (no damage, no healing, no item consumed). Resolve the player's declared action plainly and stay in the CURRENT scene — do NOT invent new locations, events, or plot, and do NOT narrate items/abilities taking mechanical effect.\n${tail}`,
   };
 
   const inCombat = session.state.combat?.active === true;
