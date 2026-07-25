@@ -54,14 +54,20 @@ action, custo lido da taxonomia do dataset); camada determinística de
 conformidade do dataset; e dois bugs de bloqueio corrigidos (arquivamento de
 campanha colidindo, e a bateria rodando contra o brain real do jogador).
 
-**Piso atualizado: 291 testes unitários e 71/75 na feat-audit.** O 75/75 citado
-antes é de 2026-07-05, medido no LM Studio antes da migração para llama.cpp, com
-a bateria quebrada entre 14/07 e 25/07 — não é comparável.
+**Piso atualizado (gate de 2026-07-26, pós-Fase 1.5): 305 testes unitários e
+73/75 na feat-audit — 73 PASS · 1 FAIL · 1 SUSPECT.** O 75/75 citado antes é de
+2026-07-05, medido no LM Studio antes da migração para llama.cpp, com a bateria
+quebrada entre 14/07 e 25/07 — não é comparável. Progressão na stack atual:
+71/75 (25/07) → 73/75 (26/07, após o fix do `[ENGINE CHECK]` + `lookup_rule`
+pela ficha + import total).
 
-Das 4 não-PASS do baseline, **3 são a mesma causa** (o modelo chama `lookup_rule`
-e encerra o turno sem resolver nada) e **1 é falso positivo do juiz** (o regex de
-golpe falso casa `"the steel bites into nothing but the mountain air"` sem
-entender a negação).
+Os 2 não-PASS do gate são AMBOS do juiz, não do jogo (exemplares documentados
+para o item 2 da fila): FAIL `Flying Blade` — mecânica perfeita (Strike com
+target, miss narrado como miss), o regex de golpe falso casou `"the blade
+missing your chest by mere inches as it bites into the dirt"`; SUSPECT
+`Esoteric Wayfinder` — a escalação disparou, o modelo respondeu "não se aplica
+na cena" (free action de exploração numa taverna) e a engine DECLAROU o vazio ao
+narrador; o juiz não distingue isso de fuga da mecânica.
 
 ---
 

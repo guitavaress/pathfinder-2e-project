@@ -107,8 +107,10 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   (`gm/tool-schemas.ts`), a economia de ação real (reação/free action) e uma
   camada determinística de conformidade do dataset. O item "GBNF" saiu por
   impossibilidade técnica, não por desistência — ver **ADR-006**. Piso de teste
-  atualizado: **291 unitários** e **71/75 na feat-audit** (o 75/75 antigo é de
-  2026-07-05, medido no LM Studio antes da migração, e não é comparável).
+  atualizado: **305 unitários** e **73/75 na feat-audit** (gate de 26/07; os 2
+  não-PASS são falso positivo/cegueira do juiz, documentados no ROADMAP; o
+  75/75 antigo é de 2026-07-05, medido no LM Studio antes da migração, e não é
+  comparável).
 
 ### ADR-004 — Companheiros: split mecânico/narrativo, "uma voz por vez"
 - **Status:** Proposto.
