@@ -180,7 +180,10 @@ describe("start_combat re-chamado (play-test 2026-07-11)", () => {
       noop,
     );
     expect(s.state.combat!.combatants).toHaveLength(4);
-    expect(out.content).toContain("already active");
+    // Chamada inócua: nada foi iniciado, então volta como rejeição — sem isso
+    // ela marcava `mechanicalResolved` e desligava a escada de escalação.
+    expect(out.content).toMatch(/already ACTIVE/);
+    expect(out.isError).toBe(true);
   });
 });
 

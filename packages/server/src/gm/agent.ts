@@ -1386,8 +1386,15 @@ export async function executeTool(
             summaryLine: "- Reinforcements held back by the encounter budget: none joined.",
           };
         }
+        // `isError` porque NADA aconteceu: sem isso a chamada entrava na lista
+        // que marca `mechanicalResolved`, e um no-op passava por turno
+        // resolvido — desligando a escada de escalação justamente no padrão que
+        // ela existe para pegar (bateria 2026-07-25: Hunted Shot chamou
+        // lookup_rule + start_combat e fechou o turno com 0 ações gastas).
         return {
-          content: "Combat is already active — did not restart. Use roll_check to act.",
+          content:
+            "Combat is already ACTIVE — nothing was started and no action was spent. This call resolved NOTHING. Act with roll_check (Strike), spend_actions (activity without a roll) or end_combat.",
+          isError: true,
         };
       }
 
@@ -2468,10 +2475,14 @@ export async function runRulesStage(
    * respondia por 3 das 4 falhas da bateria de 2026-07-25 (Double Shot,
    * Shake it Off, Esoteric Wayfinder).
    */
-  const escalate = async (label: string, budget: number): Promise<void> => {
+  const escalate = async (
+    label: string,
+    budget: number,
+    done: () => boolean,
+  ): Promise<void> => {
     for (let i = 0; i < budget; i++) {
       await runIteration(`${label}${i}`);
-      if (mechanicalResolved || endedTurn) return;
+      if (done()) return;
     }
   };
 
@@ -2492,7 +2503,17 @@ export async function runRulesStage(
         content:
           "[ENGINE CHECK] Combat is still ACTIVE but you resolved NO actions for the player's message. Decide now: (a) the message describes attacks or checks → resolve them with roll_check; (b) it is an activity/feat WITHOUT a roll → you still MUST pay its cost with spend_actions (and apply its effect with update_state); (c) the message means the fight is over (fleeing, disengaging, sparing, surrender, foes gone) → call end_combat; (d) the player is genuinely only speaking mid-combat → reply exactly 'dialogue only'. Never leave a fight hanging when the story has moved past it.",
       });
-      await escalate("recheck", 3);
+      // Em combate, "resolvido" é ter GASTO ação, encerrado o turno ou fechado
+      // o combate — não um `mechanicalResolved` genérico, que uma chamada
+      // inócua (start_combat num combate já ativo) conseguia satisfazer.
+      await escalate(
+        "recheck",
+        3,
+        () =>
+          endedTurn ||
+          !session.state.combat?.active ||
+          (playerOf(session.state.combat)?.actionsRemaining ?? 3) < 3,
+      );
     }
   }
 
@@ -2517,7 +2538,7 @@ export async function runRulesStage(
           ? `[ENGINE CHECK] The player invoked "${invoked}", which has RULES (an action, usually with a check), but you resolved NOTHING mechanically. Resolve it now: roll_check with its listed skill vs a real DC (lookup_rule first if unsure) and apply any effect with update_state. Only if it truly cannot apply in this scene, answer in one line why.`
           : "[ENGINE CHECK] You looked rules up but resolved NOTHING mechanically — consulting is not resolving, and a turn cannot end on a lookup. Resolve it now: roll_check against a real DC for what the player attempted, spend_actions if it costs actions without a roll, or update_state for its effect. Only if it truly cannot apply in this scene, answer in one line why.",
       });
-      await escalate("activity-recheck", 2);
+      await escalate("activity-recheck", 2, () => mechanicalResolved);
     }
   }
 
