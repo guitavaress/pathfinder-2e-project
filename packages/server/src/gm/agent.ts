@@ -2083,7 +2083,7 @@ export function triggerEnemyReactions(
     if (!reaction) continue;
     enemy.reactionAvailable = false;
     lines.push(
-      strikeAtPlayer(session, enemy, player, strikeProfileFor(enemy), emit, {
+      strikeAt(session, enemy, player, strikeProfileFor(enemy), emit, {
         reactionName: reaction.name,
       }),
     );
@@ -2140,28 +2140,30 @@ function applyPersistentTicks(
 }
 
 /**
- * Um Strike de inimigo contra o jogador — usado pelo turno inimigo E pelas
- * reações (Reactive Strike). Usa o MAP corrente do inimigo (RAW: o MAP só
- * reseta no começo do turno DELE, então a reação fora do turno herda o
- * acumulado), aplica dano/persistente e devolve a linha player-safe.
+ * Um Strike resolvido pela engine entre dois combatentes — turno inimigo,
+ * reações (Reactive Strike) e turno de ALIADO (Fase 2). Usa o MAP corrente do
+ * atacante (RAW: o MAP só reseta no começo do turno DELE, então a reação fora
+ * do turno herda o acumulado), aplica dano/persistente e devolve a linha
+ * player-safe. Só o JOGADOR tem o subsistema de dying/estado persistente da
+ * sessão; aliado/inimigo a 0 HP fica `defeated` (inconsciente) e pronto.
  */
-function strikeAtPlayer(
+function strikeAt(
   session: Session,
-  enemy: Combatant,
-  player: Combatant,
+  attacker: Combatant,
+  target: Combatant,
   profile: StrikeProfile,
   emit: (e: StreamEvent) => void,
   opts: { reactionName?: string } = {},
 ): string {
   const strikeName = profile.label === "Strike" ? "Strike" : `${profile.label} Strike`;
-  const map = mapPenalty(enemy.mapProgress, profile.agile);
+  const map = mapPenalty(attacker.mapProgress, profile.agile);
   const mapTag = map ? ` [MAP ${map}${profile.agile ? " agile" : ""}]` : "";
   // Same condition math as player Strikes (off-guard/frightened both ways).
-  const ac = effectiveAC(player);
+  const ac = effectiveAC(target);
   const reactionTag = opts.reactionName ? `Reaction (${opts.reactionName}): ` : "";
-  const label = `${reactionTag}${enemy.name} ${strikeName} vs ${player.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
-  const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(enemy), ac);
-  enemy.mapProgress += 1;
+  const label = `${reactionTag}${attacker.name} ${strikeName} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
+  const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(attacker), ac);
+  attacker.mapProgress += 1;
   const crit = result.degree === "criticalSuccess";
   const hit = crit || result.degree === "success";
   let dmgLine = "";
@@ -2174,42 +2176,48 @@ function strikeAtPlayer(
     }));
     amount = parts.reduce((sum, p) => sum + p.rolled, 0);
     if (crit) amount *= 2;
-    const before = player.currentHp;
-    applyDamage(player, amount);
-    session.state.currentHp = player.currentHp;
+    const before = target.currentHp;
+    applyDamage(target, amount);
+    if (target.kind === "player") session.state.currentHp = target.currentHp;
     // Dano persistente do ataque (dados do statblock) vira condição no
     // hit; mesmo tipo não empilha (mantém a existente).
     let persistentNote = "";
     for (const p of profile.persistent) {
-      const already = player.conditions.some((x) =>
+      const already = target.conditions.some((x) =>
         new RegExp(`^persistent\\s+${p.type}\\s+damage`, "i").test(x.trim()),
       );
       if (already) continue;
       const cond = `persistent ${p.type} damage ${p.formula}`;
-      player.conditions = [...player.conditions, cond];
-      session.state.conditions = [...session.state.conditions, cond];
+      target.conditions = [...target.conditions, cond];
+      if (target.kind === "player") {
+        session.state.conditions = [...session.state.conditions, cond];
+      }
       persistentNote += ` + persistent ${p.type} damage`;
     }
-    const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
+    const down = target.defeated
+      ? target.kind === "player"
+        ? ` — ${enterDying(session, crit)}`
+        : ` — ${target.name} goes DOWN`
+      : "";
     const typeNote =
       parts.length === 1 && parts[0]!.type
         ? ` ${parts[0]!.type}`
         : parts.length > 1
           ? ` (${parts.map((p) => `${crit ? p.rolled * 2 : p.rolled} ${p.type || "damage"}`).join(" + ")})`
           : "";
-    dmgLine = ` for ${amount}${typeNote}${persistentNote}; ${player.name} ${before}→${player.currentHp} HP${down}`;
+    dmgLine = ` for ${amount}${typeNote}${persistentNote}; ${target.name} ${before}→${target.currentHp} HP${down}`;
   }
   const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
   result.attack = {
-    attacker: enemy.name,
-    target: player.name,
-    attackerKind: "enemy",
+    attacker: attacker.name,
+    target: target.name,
+    attackerKind: attacker.kind,
     outcome: crit ? "criticalHit" : hit ? "hit" : "miss",
     damage: amount,
     damageType: profile.damage[0]?.type || null,
   };
   emit({ type: "check", result });
-  const line = `- ${reactionTag}${enemy.name} ${strikeName} vs ${player.name}${mapTag} → ${verb}${dmgLine}.`;
+  const line = `- ${reactionTag}${attacker.name} ${strikeName} vs ${target.name}${mapTag} → ${verb}${dmgLine}.`;
   emit({ type: "state", state: session.state });
   return line;
 }
@@ -2334,6 +2342,19 @@ export function resolveEnemyTurns(
   const player = playerOf(combat);
   if (!player) return lines;
 
+  // Defensores vivos do lado do jogador, na ordem de iniciativa do array. O
+  // revide DISTRIBUI os golpes por round-robin determinístico entre eles —
+  // sem aliados a lista é só o jogador e o comportamento é o de sempre.
+  const defenders = () =>
+    combat.combatants.filter(
+      (c) => (c.kind === "player" || c.kind === "ally") && !c.defeated,
+    );
+  let rr = 0;
+  const nextTarget = (): Combatant | undefined => {
+    const d = defenders();
+    return d.length ? d[rr++ % d.length] : undefined;
+  };
+
   // Strict initiative: enemies act AFTER the player's turn, ordered so that
   // those SLOWER than the player finish this round first, and those FASTER than
   // the player act LAST — i.e. right before the player's next turn (the correct
@@ -2349,18 +2370,21 @@ export function resolveEnemyTurns(
     // acumulado — RAW).
     enemy.mapProgress = 0;
     // Caster conjura sua melhor magia (2 ações) e fica com 1 Strike; os
-    // demais fazem os 2 Strikes de sempre.
-    const castLine = enemySpellTurn(session, enemy, player, emit);
+    // demais fazem os 2 Strikes de sempre. Política determinística: a magia
+    // vai no JOGADOR (casters focam o líder) — com ele caído, ninguém conjura.
+    const castLine = !player.defeated
+      ? enemySpellTurn(session, enemy, player, emit)
+      : null;
     if (castLine) lines.push(castLine);
-    if (player.defeated) break;
     // Statblock real (via sourceName) quando houver; senão benchmark do nível.
     const profile = strikeProfileFor(enemy);
     const strikes = castLine ? 1 : 2;
     for (let strike = 0; strike < strikes; strike++) {
-      if (player.defeated) break;
-      lines.push(strikeAtPlayer(session, enemy, player, profile, emit));
+      const target = nextTarget();
+      if (!target) break;
+      lines.push(strikeAt(session, enemy, target, profile, emit));
     }
-    if (player.defeated) break;
+    if (defenders().length === 0) break;
   }
 
   const status = combatStatus(combat);
@@ -2397,6 +2421,45 @@ function partyBlock(session: Session): string {
 }
 
 /**
+ * Turnos dos ALIADOS (Fase 2/ADR-004), resolvidos em código como o turno
+ * inimigo — o modelo nunca gerencia companheiro. Aliados agem depois do
+ * jogador e ANTES do revide inimigo, em ordem de iniciativa: 2 Strikes com MAP
+ * (statblock real via sourceName, senão benchmark), alvo = primeiro inimigo
+ * vivo. Aliado caster luta como marcial por enquanto (conjuração de aliado é
+ * tarefa futura registrada no ROADMAP — exigiria política própria de alvo).
+ */
+export function resolveAllyTurns(
+  session: Session,
+  emit: (e: StreamEvent) => void,
+): string[] {
+  const combat = session.state.combat;
+  const lines: string[] = [];
+  if (!combat?.active) return lines;
+  const allies = combat.combatants.filter((c) => c.kind === "ally" && !c.defeated);
+  if (allies.length === 0) return lines;
+
+  for (const ally of allies) {
+    // Turno DELE começa: MAP reseta (idêntico ao inimigo).
+    ally.mapProgress = 0;
+    const profile = strikeProfileFor(ally);
+    for (let strike = 0; strike < 2; strike++) {
+      const target = livingEnemy(combat);
+      if (!target) break;
+      lines.push(strikeAt(session, ally, target, profile, emit));
+    }
+    if (!combat.combatants.some((c) => c.kind === "enemy" && !c.defeated)) break;
+  }
+
+  // Aliados podem fechar a luta sozinhos (o revide inimigo nem chega a rodar).
+  if (combatStatus(combat) === "victory") {
+    combat.active = false;
+    lines.push("- Combat ends: VICTORY.");
+  }
+  if (lines.length) emit({ type: "state", state: session.state });
+  return lines;
+}
+
+/**
  * Live combat state injected into the rules stage so the model always knows the
  * fight is ongoing, whose HP is what, and how many actions the player has left.
  * Returns "" when not in combat.
@@ -2420,7 +2483,7 @@ function combatStateBlock(session: Session): string {
       : "",
     "Combatants:",
     roster,
-    "To attack, call roll_check with the target's id/name; on a hit the engine applies damage automatically. Do NOT roll for the enemies — after the player's turn the engine resolves the enemies' Strikes back at the player automatically. Only call end_turn if the player passes or ends with actions to spare. If the fight is over without a kill (foes flee/surrender/are spared, or the player disengages and the scene moves on), you MUST call end_combat — never keep resolving non-combat messages inside a stale combat.",
+    "To attack, call roll_check with the target's id/name; on a hit the engine applies damage automatically. Do NOT roll for enemies OR allies — after the player's turn the engine resolves the ally companions' turns and the enemies' Strikes automatically. Only call end_turn if the player passes or ends with actions to spare. If the fight is over without a kill (foes flee/surrender/are spared, or the player disengages and the scene moves on), you MUST call end_combat — never keep resolving non-combat messages inside a stale combat.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -2470,9 +2533,15 @@ export async function runRulesStage(
         degree,
       },
     });
+    // Solo, cair fecha o combate (derrota) e este ramo roda com o combate já
+    // inativo. Com ALIADOS vivos o combate segue ativo enquanto o jogador
+    // sangra — este ramo então também move o mundo (aliados lutam, inimigos
+    // revidam neles) para a luta não congelar.
+    const dyingCombat = session.state.combat;
     let line: string;
     if (newDying >= 4) {
       session.state.conditions = ["dead"];
+      if (dyingCombat?.active) dyingCombat.active = false;
       line = `Recovery check: ${DEGREE_EN[degree]} (d20 ${die} vs DC ${10 + dyingNow}) — dying reaches 4. ${session.character.name} DIES. This is final.`;
     } else if (newDying === 0) {
       const wounded = conditionValueIn(session.state.conditions, "wounded") + 1;
@@ -2480,6 +2549,16 @@ export async function runRulesStage(
       conds = conds.filter((c) => !/^unconscious$/i.test(c));
       session.state.conditions = setValuedCondition(conds, "wounded", wounded);
       session.state.currentHp = 1;
+      // Combate ainda ativo (aliados seguraram a luta): o combatente do
+      // jogador REVIVE junto com o estado — estado nunca mente.
+      if (dyingCombat?.active) {
+        const youNow = playerOf(dyingCombat);
+        if (youNow) {
+          youNow.defeated = false;
+          youNow.currentHp = 1;
+          youNow.conditions = [...session.state.conditions];
+        }
+      }
       line = `Recovery check: ${DEGREE_EN[degree]} (d20 ${die} vs DC ${10 + dyingNow}) — ${session.character.name} STABILIZES: conscious again at 1 HP, wounded ${wounded}. They wake battered, on the ground, moments later.`;
     } else {
       session.state.conditions = setValuedCondition(
@@ -2490,7 +2569,22 @@ export async function runRulesStage(
       line = `Recovery check: ${DEGREE_EN[degree]} (d20 ${die} vs DC ${10 + dyingNow}) — still unconscious, DYING ${newDying} of 4. The player cannot act; narrate only what their fading senses catch.`;
     }
     emit({ type: "state", state: session.state });
-    return `1. ${line}`;
+
+    // Aliados vivos mantêm a rodada girando mesmo com o jogador caído.
+    const dyingExtra: string[] = [];
+    if (dyingCombat?.active && dyingCombat.combatants.some((c) => c.kind === "ally" && !c.defeated)) {
+      dyingExtra.push(...resolveAllyTurns(session, emit));
+      if (dyingCombat.active) dyingExtra.push(...resolveEnemyTurns(session, emit));
+      if (dyingCombat.active) dyingExtra.push(...applyPersistentTicks(session, emit));
+      if (dyingCombat.active) {
+        tickEndOfRound(dyingCombat);
+        emit({ type: "state", state: session.state });
+      }
+    }
+    return [
+      `1. ${line}`,
+      ...dyingExtra.map((l, i) => `${i + 2}. ${l.replace(/^- /, "")}`),
+    ].join("\n");
   }
 
   // Each player message is their turn: refresh actions/MAP so they get a fresh
@@ -2687,14 +2781,18 @@ export async function runRulesStage(
 
   // The player's whole turn is this one message. If they actually spent an
   // action (a Strike decrements actionsRemaining below 3) or explicitly ended,
-  // the enemies take their turn NOW — resolved deterministically in code.
+  // allies act and then the enemies take their turn NOW — all in code.
   const combat = session.state.combat;
   const you = combat ? playerOf(combat) : undefined;
   const enemiesAlive =
     combat?.combatants.some((c) => c.kind === "enemy" && !c.defeated) ?? false;
   const tookTurn = endedTurn || (you ? you.actionsRemaining < 3 : false);
   if (combat?.active && enemiesAlive && tookTurn) {
-    summaryLines.push(...resolveEnemyTurns(session, emit));
+    // Aliados agem entre o jogador e o revide (podem fechar a luta sozinhos).
+    summaryLines.push(...resolveAllyTurns(session, emit));
+    if (combat.active) {
+      summaryLines.push(...resolveEnemyTurns(session, emit));
+    }
     // Dano persistente ticka no fim da rodada (dano → flat check DC 15).
     if (combat.active) {
       summaryLines.push(...applyPersistentTicks(session, emit));
