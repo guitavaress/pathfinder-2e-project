@@ -9,15 +9,23 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
 1. **Engine garante, prompt reforça.** Com modelo local 12B, toda regra que importa
    ganha enforcement em código (`packages/server/src/gm/combat.ts` + guards em
    `agent.ts`). Prompt é mitigação, nunca garantia. Tools validam entrada — jamais
-   aceitar default silencioso (o bug clássico: `dc ?? 0` fabricava crits). Vale
+   aceitar default silencioso (o bug clássico: `dc ?? 0` fabricava crits). O
+   contrato de argumentos das tools tem **fonte única** em
+   `gm/tool-schemas.ts` (zod manda; o JSON Schema mandado ao modelo é derivado
+   dele) — ver ADR-006 para por que o enforcement é client-side e não GBNF. Vale
    também para o backend: samplers vão fixados em código (`SAMPLERS` no
    `agent.ts`), não herdados dos defaults de quem serve o modelo.
 2. **Classificar antes de corrigir.** Toda falha do GM é diagnosticada como
    [MODELO] × [CÓDIGO] × [FALTA DE DEFINIÇÃO] antes do fix. Fix de prompt que
    reincide é promovido a código (escada de escalação).
 3. **Regras como DADOS.** O dataset Foundry (`data/pf2e/generated/`, gerado por
-   `npm run data:pf2e`) traz campos estruturados (actionType, actionCost, traits).
-   A engine lê o dado (ex.: `multiActionCost`), não confia no modelo interpretar prosa.
+   `npm run data:pf2e`) é o import TOTAL do core @ 7.8.0 (ADR-007): 27.940 docs
+   em 22 categorias (inclui hazards, effects, heritages…), com `system.rules`
+   (rule elements) VERBATIM, taxonomia nativa de feats (`featCategory`), grafo de
+   uuids e `manifest.json` como prova de zero perda. A engine lê o dado (ex.:
+   `multiActionCost`, `costProfileOf`), não confia no modelo interpretar prosa —
+   e cada consumo novo de rule element nasce como tarefa própria com teste
+   (piloto: `rules/condition-modifiers.ts`).
 4. **Estado nunca mente.** O narrador recebe os resultados mecânicos numerados como
    última mensagem e é proibido de inventar/inverter; o que não está nas linhas
    não aconteceu. Cura/dano/itens sem fonte na ficha são rejeitados pela engine.
@@ -107,3 +115,18 @@ sentadas reais, não imports. Turno vazio com `session.resumed` usa `resumeKicko
 engine monta o recap (`buildRecapData`: cauda da Timeline + quests ativas + última cena) e
 o modelo só narra — o que não está no recap não aconteceu. Import com campanha existente
 **arquiva** o brain em `brain-archive-<data>/` (nunca apaga).
+
+## Evolução do projeto — leia antes de mexer em arquitetura
+
+**Régua (inegociável):** mecânica em código, voz no LLM. Todo estado que exige
+precisão (números, condições, posição, dano persistente, custo de ação, dying)
+mora em código determinístico e testado. O modelo só chama tools e narra.
+
+**Antes de qualquer mudança de arquitetura, ou ao pegar trabalho do roadmap, leia
+`docs/DECISOES-E-CONTEXTO.md` (os porquês / ADRs) e `docs/ROADMAP.md` (as fases).**
+
+Regras de trabalho:
+- Uma fase / uma tarefa por vez. Nada de frentes paralelas.
+- Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
+  O 75/75 e os 195 testes unitários são piso, não meta.
+- Se uma tarefa contradisser uma decisão registrada nos ADRs, PARE e sinalize.

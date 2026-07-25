@@ -7,9 +7,12 @@ import type { AttackContext, Character, Combatant, Weapon } from "@pf2e/shared";
 import type { CheckResult, GameState } from "@pf2e/shared";
 import { isValidDc, rollCheck } from "../dice/check.js";
 import {
+  actionLabel,
   activityFrequency,
   activityRequirement,
+  costProfileOf,
   creatureRecord,
+  homonymsOf,
   itemRecord,
   itemTraits,
   lookupLocalRule,
@@ -17,10 +20,12 @@ import {
   namedActivity,
   officialConditions,
   spellRecord,
+  type CostProfile,
   type RuleRecord,
   type SpellMechanics,
 } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
+import { buildTools } from "./tool-schemas.js";
 import {
   applyDamage,
   applyRecovery,
@@ -118,6 +123,23 @@ const turnStruck = new WeakMap<Session, Set<string>>();
  * Sudden Charge 2→1, Improvised Repair 3→0).
  */
 const turnActivityCharged = new WeakMap<Session, Set<string>>();
+
+/**
+ * Acessa um conjunto por-turno criando-o na hora se faltar.
+ *
+ * `runRulesStage` reseta esses conjuntos a cada turno, mas quem chamasse
+ * `executeTool` fora daquele caminho ficava sem eles — e como o código usava
+ * `?.add`/`?.has`, o guard de dupla contagem simplesmente NÃO EXISTIA, em
+ * silêncio. Guard que pode sumir sem avisar não é guard.
+ */
+function turnSet(map: WeakMap<Session, Set<string>>, session: Session): Set<string> {
+  let set = map.get(session);
+  if (!set) {
+    set = new Set();
+    map.set(session, set);
+  }
+  return set;
+}
 /**
  * Frequency "once per round/turn" (dataset): usos por TURNO do jogador —
  * 1 mensagem = 1 turno completo neste engine. Resetado a cada runRulesStage.
@@ -207,7 +229,11 @@ export function requirementBlocked(session: Session, text: string): ToolOutcome 
 export function isOfficialCondition(cond: string): boolean {
   const c = cond.toLowerCase().trim();
   if (!c) return false;
-  if (/^persistent\b.*damage(\s+\d+)?$/.test(c)) return true;
+  // A cauda aceita número OU fórmula de dado: a própria engine grava
+  // "persistent fire damage 1d4" (agent.ts, tick de fim de rodada) e o guard
+  // antigo — `(\s+\d+)?$` — rejeitava isso, então o modelo não conseguia
+  // aplicar dano persistente de armadilha no formato que a engine usa.
+  if (/^persistent\b.*damage(\s+\d+(d\d+)?([+-]\d+)?)?$/.test(c)) return true;
   const name = c.replace(/\s+\d+$/, "");
   return officialConditions().has(name);
 }
@@ -221,6 +247,60 @@ function conditionSuggestions(bad: string): string {
   return (near.length ? near : ["frightened 1", "off-guard", "prone", "grabbed"])
     .slice(0, 4)
     .join(", ");
+}
+
+/**
+ * Feat DA FICHA citado no texto cujo custo NÃO é ação (reação ou free action).
+ *
+ * Dirigido pela ficha de propósito: o personagem só usa o que tem, e é a ficha
+ * que desempata homônimos entre `feats.json` e `actions.json` (ver
+ * `costProfileOf`). Nomes curtos ficam de fora pelo mesmo motivo que em
+ * `namedActivity`: falso positivo em prosa livre.
+ */
+function sheetNonActionIn(session: Session, text: string): CostProfile | null {
+  const t = text.toLowerCase();
+  for (const featName of session.character.feats) {
+    if (featName.length < 6) continue;
+    if (!t.includes(featName.toLowerCase())) continue;
+    const profile = costProfileOf(featName, "feats");
+    if (profile && (profile.kind === "reaction" || profile.kind === "free")) {
+      return profile;
+    }
+  }
+  return null;
+}
+
+/**
+ * Cobra o custo REAL de um feat de reação/free action do jogador.
+ *
+ * PF2e: reação não sai das 3 ações — ela gasta A reação, uma por rodada,
+ * recarregada no início do turno (`beginPlayerRound`). Antes disto a engine
+ * não lia `actionType`: reação caía no `clampActionCost` e debitava 1 das 3
+ * ações, e a reação do jogador nunca era consumida (só a de inimigo, em
+ * `triggerEnemyReactions`) — dava para usar Nimble Dodge a rodada inteira.
+ *
+ * Retorna o erro quando a reação já foi gasta, ou null quando cobrou.
+ */
+function chargeNonAction(
+  session: Session,
+  you: Combatant,
+  profile: CostProfile,
+  emit: (e: StreamEvent) => void,
+): ToolOutcome | null {
+  const pretty = titleCase(profile.name);
+  if (profile.kind === "free") {
+    return null; // free action: não gasta ação nem reação.
+  }
+  if (!you.reactionAvailable) {
+    return {
+      content: `ILLEGAL: "${pretty}" is a REACTION and the player already used their reaction this round. It does NOT happen — the reaction refreshes at the start of the next turn.`,
+      isError: true,
+      summaryLine: `- ${pretty}: NOT used — reaction already spent this round.`,
+    };
+  }
+  you.reactionAvailable = false;
+  emit({ type: "state", state: session.state });
+  return null;
 }
 
 /** Grava o uso de uma atividade com Frequency (par do `frequencyLimit`). */
@@ -309,271 +389,15 @@ export type StreamEvent =
 // Local servers ignore the API key, but the OpenAI SDK requires a non-empty one.
 const client = new OpenAI({ baseURL: LLM_BASE_URL, apiKey: "local" });
 
-/** Tool definitions in the OpenAI function-calling format. */
-const TOOLS: ChatCompletionTool[] = [
-  {
-    type: "function",
-    function: {
-      name: "roll_check",
-      description:
-        "Rolls a d20 and returns the PF2e degree of success. Use for skills, saves, Perception, and WEAPON ATTACKS (Strikes). For an attack, pass `target`: the engine uses the target's real AC, applies the Multiple Attack Penalty, and — ON A HIT — automatically rolls and applies damage (doubled on a crit, plus Sneak Attack if the target is off-guard). You do NOT need a separate damage step. Call once per Strike (a multi-Strike activity like Twin Feint = one call per Strike). NEVER state a die result without calling this tool.",
-      parameters: {
-        type: "object",
-        properties: {
-          skill: {
-            type: "string",
-            description:
-              "What to roll: a skill (e.g. deception, stealth, athletics), a save (fortitude, reflex, will), 'perception', a Lore name, or — for an ATTACK — the weapon/Strike name (e.g. 'dagger'). For an enemy's Strike, any name works; the engine uses the enemy's attack bonus.",
-          },
-          dc: {
-            type: "number",
-            description:
-              "The DC for a NON-attack check. For an attack, OMIT this — the engine uses the target's real AC from the combat state.",
-          },
-          target: {
-            type: "string",
-            description:
-              "ATTACKS ONLY: the id or name of the combatant being attacked. When set (and combat is active) this is treated as a Strike by the active combatant against that target, using the target's real AC and applying MAP.",
-          },
-          agile: {
-            type: "boolean",
-            description:
-              "ATTACKS ONLY: true if the weapon has the agile trait (MAP -4/-8 instead of -5/-10). For weapons on the character sheet the engine reads the trait from the rules data and IGNORES this — only pass it for weapons the sheet doesn't list (improvised, unarmed).",
-          },
-          actions: {
-            type: "number",
-            description:
-              "Action cost (1-3) charged for THIS roll. Default 1. Pass the activity's FULL cost when ONE roll resolves it (Sudden Charge = 2, Vicious Swing = 2). Multi-Strike activities (Twin Feint, Double Slice) stay 1 per Strike. Pass 1 for a save that IS an action (e.g. Shake it Off); plain reactive saves cost 0 automatically.",
-          },
-          reason: {
-            type: "string",
-            description: "Short description of what is being attempted.",
-          },
-        },
-        required: ["skill", "reason"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "spend_actions",
-      description:
-        "COMBAT ONLY: spends the player's actions for something that needs NO roll — activities and feats without a check (Plant Banner, Improvised Repair, raising a shield, drawing an item, a Stride without opposition). Every feat/activity with an action cost MUST be paid: if there is no roll_check to charge it, call this. The engine validates against the actions remaining.",
-      parameters: {
-        type: "object",
-        properties: {
-          actions: {
-            type: "number",
-            description: "How many actions to spend (1-3).",
-          },
-          reason: {
-            type: "string",
-            description: "What the actions are spent on, e.g. 'Plant Banner (1 action)'.",
-          },
-        },
-        required: ["actions", "reason"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "use_item",
-      description:
-        "Uses/consumes an item from the character's Equipment (potion, elixir, bomb, torch...). The ENGINE verifies the sheet, spends the real quantity, and resolves the real effect: a bomb is thrown as a Strike with the item's REAL statblock (pass `target`); a healing potion heals its listed dice automatically. Costs 2 actions in combat (draw + use). ALWAYS use this tool for items — never spend_actions or update_state.",
-      parameters: {
-        type: "object",
-        properties: {
-          item: {
-            type: "string",
-            description:
-              "The item's name as listed in Equipment, e.g. 'Healing Potion (Minor)' or \"Alchemist's Fire\".",
-          },
-          target: {
-            type: "string",
-            description:
-              "BOMBS/offensive items only: the id or name of the combatant being targeted.",
-          },
-          reason: {
-            type: "string",
-            description: "What the character does with the item.",
-          },
-        },
-        required: ["item", "reason"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "rest",
-      description:
-        "Rests to recover, with the REAL PF2e rules (the engine computes the healing — NEVER invent HP with update_state). kind 'overnight' = a full night's sleep: heals CON modifier × level HP, restores ALL spell slots and focus points, removes fatigued and reduces drained/doomed by 1. kind 'treat_wounds' = 10 minutes of first aid: Medicine check (requires trained Medicine AND a healer's toolkit in the Equipment) healing 2d8 HP on a success, 4d8 on a critical. ALWAYS call this when the player rests, sleeps, camps, treats wounds, or asks to recover HP outside combat.",
-      parameters: {
-        type: "object",
-        properties: {
-          kind: {
-            type: "string",
-            enum: ["overnight", "treat_wounds"],
-            description:
-              "'overnight' for sleeping/camping through the night; 'treat_wounds' for a 10-minute Medicine treatment.",
-          },
-          reason: {
-            type: "string",
-            description: "What the character does to rest.",
-          },
-        },
-        required: ["kind"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "cast_spell",
-      description:
-        "Casts a spell from the character's sheet. The ENGINE validates the spell is known, spends the real spell slot (or focus point; cantrips are free and auto-heightened), charges the cast actions, and resolves the REAL effect from the rules data: spell attack vs the target's AC, or the target's ACTUAL save vs the character's spell DC, with structured damage/healing (heightened by rank). ALWAYS use this tool for spells — never roll_check/spend_actions/update_state.",
-      parameters: {
-        type: "object",
-        properties: {
-          spell: {
-            type: "string",
-            description: "The spell's name as on the sheet, e.g. 'Fireball', 'Ignition'.",
-          },
-          target: {
-            type: "string",
-            description:
-              "Offensive single-target spells: the combatant's id or name. Area spells (Fireball) may omit it to hit every enemy.",
-          },
-          rank: {
-            type: "number",
-            description:
-              "Slot rank to cast at, for heightening (spontaneous casters). Defaults to the spell's own rank. Ignored for cantrips (auto-heightened).",
-          },
-        },
-        required: ["spell"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "start_combat",
-      description:
-        "Begins a combat encounter. Call this ONCE when a fight starts. The engine adds the player, rolls initiative for everyone, and assigns real AC/HP by creature level. After this, resolve turns with roll_check (attacks), roll_damage, and end_turn.",
-      parameters: {
-        type: "object",
-        properties: {
-          enemies: {
-            type: "array",
-            description: "The enemies joining the fight.",
-            items: {
-              type: "object",
-              properties: {
-                name: {
-                  type: "string",
-                  description:
-                    "Creature name EXACTLY as it appears in the scene/player's message (e.g. the scene says 'goblin war chanter' → pass 'Goblin War Chanter'; NEVER substitute a similar creature you know, like 'Goblin Warrior'). Real PF2e names get the OFFICIAL statblock (AC/HP/saves/real attacks) and the official level overrides your estimate; invented names get generic level-based stats.",
-                },
-                level: {
-                  type: "number",
-                  description:
-                    "Creature level — matters only for creatures NOT in the bestiary (unnamed thugs, custom NPCs); official creatures use their real level. Guide: mundane townsperson/clerk/merchant = -1 to 0; trained guard/thug = 1-2; veteran/soldier = 3-4; elite/leader = 5-7; boss/monster = 8+. If omitted, the engine assumes a weak commoner (level 0).",
-                },
-                count: { type: "number", description: "How many of this creature (default 1)." },
-              },
-              required: ["name"],
-            },
-          },
-          difficulty: {
-            type: "string",
-            enum: ["trivial", "low", "moderate", "severe", "extreme"],
-            description:
-              "Intended encounter difficulty (default 'moderate'). Use 'severe'/'extreme' ONLY for climactic boss moments. The engine enforces the PF2e XP budget for the REAL party size and trims anything over it — 'extreme' is the hard ceiling.",
-          },
-        },
-        required: ["enemies"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "end_turn",
-      description:
-        "Ends the current combat when one side is fully defeated (victory/defeat). The player gets a fresh 3 actions each of their turns automatically, so you only need this to close out a finished fight; otherwise it's a harmless acknowledgement.",
-      parameters: { type: "object", properties: {} },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "end_combat",
-      description:
-        "Ends the combat encounter WITHOUT a wipe-out: enemies flee, surrender, are spared, or the player disengages and the scene moves on. (Kills close combat automatically — you don't need this for those.) NEVER leave a combat hanging once the story has moved past the fight.",
-      parameters: {
-        type: "object",
-        properties: {
-          reason: {
-            type: "string",
-            description:
-              "Why the fight is over, e.g. 'enemy surrendered', 'player fled the scene'.",
-          },
-        },
-        required: ["reason"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "lookup_rule",
-      description:
-        "Looks up the official text of a PF2e rule by name: action, feat, spell, condition, item/equipment, or monster. Use before applying one of the character's abilities (e.g. 'Bon Mot', 'Sneak Attack') or a condition (e.g. 'Frightened'). Searches the local index, falling back to Archives of Nethys if not found.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "What to look up (the rule's name)." },
-        },
-        required: ["query"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_character",
-      description:
-        "Returns the player character's full sheet (attributes, skills, saves).",
-      parameters: { type: "object", properties: {} },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_state",
-      description:
-        "Records persistent state changes: damage/healing (hpDelta) and conditions gained/removed. Defaults to the player; pass `target` (a combatant id/name) during combat to affect an enemy/ally instead. Prefer roll_damage for Strike damage.",
-      parameters: {
-        type: "object",
-        properties: {
-          hpDelta: {
-            type: "number",
-            description: "HP change (negative = damage, positive = healing).",
-          },
-          addConditions: { type: "array", items: { type: "string" } },
-          removeConditions: { type: "array", items: { type: "string" } },
-          target: {
-            type: "string",
-            description:
-              "Combat only: id/name of the combatant to affect (e.g. apply 'off-guard' to an enemy). Omit to affect the player.",
-          },
-        },
-      },
-    },
-  },
-];
+/**
+ * Declarações de tool mandadas ao modelo, DERIVADAS do registro de schemas.
+ *
+ * `tool-schemas.ts` é a fonte única: descrição e contrato de argumentos moram
+ * lá, e o JSON Schema daqui é gerado do zod — era a duplicação entre literal e
+ * validação que deixava `roll_damage` (tool inexistente) prometida ao modelo em
+ * duas descrições, e `damageType` lido sem nunca ter sido declarado.
+ */
+const TOOLS: ChatCompletionTool[] = buildTools();
 
 /** Resolves a check's modifier from the character sheet. */
 function resolveModifier(session: Session, skillRaw: string): number | null {
@@ -645,13 +469,13 @@ const DAMAGE_TYPE_NAMES: Record<string, string> = {
 };
 
 /** Parses the faces of a die string like "d6" → 6 (defaults to 6). */
-function parseDie(die: string): number {
+export function parseDie(die: string): number {
   const m = /d(\d+)/i.exec(die);
   return m ? Number(m[1]) : 6;
 }
 
 /** Rolls a formula like "2d6+3" (single dice group + optional flat bonus). */
-function rollFormula(formula: string): number {
+export function rollFormula(formula: string): number {
   let total = 0;
   const dice = /(\d+)\s*d\s*(\d+)/i.exec(formula);
   if (dice) total += rollDice(Number(dice[1]), Number(dice[2]));
@@ -896,7 +720,7 @@ export async function executeTool(
         const base = clampActionCost(input.actions);
         const activity =
           attacker.kind === "player" ? multiActionCost(`${reason} ${skill}`) : null;
-        const chargedSet = turnActivityCharged.get(session);
+        const chargedSet = turnSet(turnActivityCharged, session);
         const cost = activity
           ? chargedSet?.has(activity.name)
             ? 0
@@ -982,7 +806,7 @@ export async function executeTool(
           }
           const before = target.currentHp;
           applyDamage(target, dmg.amount);
-          turnStruck.get(session)?.add(target.id);
+          turnSet(turnStruck, session).add(target.id);
           if (target.kind === "player") session.state.currentHp = target.currentHp;
           let defeatedNote = target.defeated ? ` — ${target.name} DEFEATED` : "";
           if (target.kind === "player" && target.defeated) {
@@ -1052,9 +876,17 @@ export async function executeTool(
       // cost. Saves default to FREE (reactions to effects), but a feat-action
       // resolved by a save (Shake it Off) passes `actions: 1` and pays it.
       const isSave = /^(fortitude|fort|reflex|ref|will)$/i.test(skill.trim());
-      const skillBase = clampActionCost(input.actions, isSave ? 0 : 1);
-      const skillActivity = combat?.active ? multiActionCost(`${reason} ${skill}`) : null;
-      const skillCharged = turnActivityCharged.get(session);
+      // Reação/free da ficha citada no reason: o custo dela não é ação, então
+      // a base cai para 0 e a reação é debitada abaixo.
+      const checkNonAction = combat?.active
+        ? sheetNonActionIn(session, `${reason} ${skill}`)
+        : null;
+      const skillBase = checkNonAction
+        ? 0
+        : clampActionCost(input.actions, isSave ? 0 : 1);
+      const skillActivity =
+        combat?.active && !checkNonAction ? multiActionCost(`${reason} ${skill}`) : null;
+      const skillCharged = turnSet(turnActivityCharged, session);
       const skillCost = skillActivity
         ? skillCharged?.has(skillActivity.name)
           ? 0
@@ -1068,6 +900,13 @@ export async function executeTool(
         if (reqBlock) return reqBlock;
         const freqBlock = frequencyLimit(session, `${reason} ${skill}`);
         if (freqBlock) return freqBlock;
+      }
+      if (checkNonAction && combat?.active) {
+        const you = playerOf(combat);
+        if (you && !you.defeated) {
+          const blocked = chargeNonAction(session, you, checkNonAction, emit);
+          if (blocked) return blocked;
+        }
       }
       if (combat?.active && skillCost > 0) {
         const you = playerOf(combat);
@@ -1547,8 +1386,15 @@ export async function executeTool(
             summaryLine: "- Reinforcements held back by the encounter budget: none joined.",
           };
         }
+        // `isError` porque NADA aconteceu: sem isso a chamada entrava na lista
+        // que marca `mechanicalResolved`, e um no-op passava por turno
+        // resolvido — desligando a escada de escalação justamente no padrão que
+        // ela existe para pegar (bateria 2026-07-25: Hunted Shot chamou
+        // lookup_rule + start_combat e fechou o turno com 0 ações gastas).
         return {
-          content: "Combat is already active — did not restart. Use roll_check to act.",
+          content:
+            "Combat is already ACTIVE — nothing was started and no action was spent. This call resolved NOTHING. Act with roll_check (Strike), spend_actions (activity without a roll) or end_combat.",
+          isError: true,
         };
       }
 
@@ -1621,12 +1467,26 @@ export async function executeTool(
       // O dataset manda no custo quando o reason cita a atividade (o modelo
       // chamou spend_actions com 1 para Improvised Repair, que custa 3).
       const spendActivity = multiActionCost(reason);
-      const spendCharged = turnActivityCharged.get(session);
+      const spendCharged = turnSet(turnActivityCharged, session);
       // Requirements + Frequency: peek antes de cobrar, commit após.
       const spendReqBlock = requirementBlocked(session, reason);
       if (spendReqBlock) return spendReqBlock;
       const spendFreqBlock = frequencyLimit(session, reason);
       if (spendFreqBlock) return spendFreqBlock;
+      // Reação/free action da ficha: custo REAL não sai das 3 ações.
+      const spendNonAction = sheetNonActionIn(session, reason);
+      if (spendNonAction) {
+        const blocked = chargeNonAction(session, you, spendNonAction, emit);
+        if (blocked) return blocked;
+        commitFrequency(session, reason);
+        const label = titleCase(spendNonAction.name);
+        const what =
+          spendNonAction.kind === "reaction" ? "the player's reaction" : "a free action";
+        return {
+          content: `${label} used — it costs ${what}, NOT one of the 3 actions. ${you.actionsRemaining} action(s) still remaining.`,
+          summaryLine: `- ${label} (${spendNonAction.kind}).`,
+        };
+      }
       const cost =
         spendActivity && !spendCharged?.has(spendActivity.name)
           ? Math.max(spendActivity.cost, clampActionCost(input.actions))
@@ -1753,7 +1613,7 @@ export async function executeTool(
           dmg = { amount, type: record!.damage!.type };
           const before = target.currentHp;
           applyDamage(target, amount);
-          turnStruck.get(session)?.add(target.id);
+          turnSet(turnStruck, session).add(target.id);
           let extra = "";
           if (record!.persistent) {
             const pcond = `persistent ${record!.persistent.type} damage ${record!.persistent.number}`;
@@ -1832,9 +1692,37 @@ export async function executeTool(
       const query = String(input.query ?? "");
       const local = lookupLocalRule(query);
       if (local) {
-        const traits = local.traits?.length ? ` [${local.traits.join(", ")}]` : "";
+        // A FICHA escolhe a entrada principal, igual ao `costProfileOf`. O
+        // índice é primeiro-ganha por ordem alfabética de arquivo, então
+        // "Shake it Off" era servido como a REAÇÃO de actions.json — e o modelo
+        // ancorava na primeira linha ("reaction") e concluía que não gastava
+        // ação, mesmo com o feat de 1 ação logo abaixo na nota de homônimo.
+        let primary = local;
+        const onSheet = session.character.feats.some(
+          (f) => f.toLowerCase().trim() === primary.name.toLowerCase().trim(),
+        );
+        if (onSheet && primary.category !== "feats") {
+          const asFeat = homonymsOf(primary).find((r) => r.category === "feats");
+          if (asFeat) primary = asFeat;
+        }
+        const traits = primary.traits?.length ? ` [${primary.traits.join(", ")}]` : "";
+        // Custo explícito: era o campo mais decisivo do registro e não aparecia
+        // no texto que o modelo lê — ele tinha que adivinhar pela prosa.
+        const cost = actionLabel(primary);
+        const costTag = cost ? ` [${cost}]` : "";
+        // Homônimos: mostrar o outro lado em vez de escolher escondido.
+        const others = homonymsOf(primary)
+          .map((r) => {
+            const c = actionLabel(r);
+            const tr = r.traits?.length ? ` [${r.traits.join(", ")}]` : "";
+            return `- ${r.name} (${r.category})${c ? ` [${c}]` : ""}${tr}`;
+          })
+          .join("\n");
+        const alsoBlock = others
+          ? `\n\nNOTE — another entry shares this name. The one above is the one THIS character uses:\n${others}`
+          : "";
         return {
-          content: `${local.name} (${local.category})${traits}\n${local.text}`,
+          content: `${primary.name} (${primary.category})${costTag}${traits}\n${primary.text}${alsoBlock}`,
         };
       }
       const web = await lookupWebRule(query);
@@ -1942,7 +1830,7 @@ export async function executeTool(
         if (typeof input.hpDelta === "number") {
           // Dupla contagem: a engine JÁ aplicou o dano da(s) Strike(s) deste
           // turno — reaplicar via hpDelta dobrava o dano (caso Double Shot).
-          if (input.hpDelta < 0 && turnStruck.get(session)?.has(target.id)) {
+          if (input.hpDelta < 0 && turnSet(turnStruck, session).has(target.id)) {
             return {
               content: `REJECTED: ${target.name} already took this turn's Strike damage — the engine applies it automatically. Do NOT re-apply it with hpDelta. Only use hpDelta for a SEPARATE effect (trap, hazard, persistent damage).`,
               isError: true,
@@ -2401,8 +2289,11 @@ function combatStateBlock(session: Session): string {
  * narration). Emits `check`/`state` events but NOT `delta`. Runs on its own
  * message history (doesn't pollute the narrative dialogue) and returns the
  * mechanical summary.
+ *
+ * Exportada para teste: o ramo de `dying` resolve o turno inteiro em código e
+ * retorna ANTES de qualquer chamada ao modelo, então é testável sem GPU.
  */
-async function runRulesStage(
+export async function runRulesStage(
   session: Session,
   emit: (e: StreamEvent) => void,
 ): Promise<string> {
@@ -2574,6 +2465,27 @@ async function runRulesStage(
     return toolCalls.length;
   };
 
+  /**
+   * Escalada: insiste até algo ser RESOLVIDO ou o orçamento acabar.
+   *
+   * Antes cada escada fazia `if ((await runIteration(...)) === 0) break`, e uma
+   * resposta em prosa (zero tool calls) a encerrava na PRIMEIRA das 3
+   * tentativas — justamente o que o modelo faz no padrão "consulta a regra e
+   * para". As 3 tentativas existiam no papel e nunca eram usadas. Isso
+   * respondia por 3 das 4 falhas da bateria de 2026-07-25 (Double Shot,
+   * Shake it Off, Esoteric Wayfinder).
+   */
+  const escalate = async (
+    label: string,
+    budget: number,
+    done: () => boolean,
+  ): Promise<void> => {
+    for (let i = 0; i < budget; i++) {
+      await runIteration(`${label}${i}`);
+      if (done()) return;
+    }
+  };
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     if ((await runIteration(String(i))) === 0) break;
   }
@@ -2591,9 +2503,17 @@ async function runRulesStage(
         content:
           "[ENGINE CHECK] Combat is still ACTIVE but you resolved NO actions for the player's message. Decide now: (a) the message describes attacks or checks → resolve them with roll_check; (b) it is an activity/feat WITHOUT a roll → you still MUST pay its cost with spend_actions (and apply its effect with update_state); (c) the message means the fight is over (fleeing, disengaging, sparing, surrender, foes gone) → call end_combat; (d) the player is genuinely only speaking mid-combat → reply exactly 'dialogue only'. Never leave a fight hanging when the story has moved past it.",
       });
-      for (let i = 0; i < 3; i++) {
-        if ((await runIteration(`recheck${i}`)) === 0) break;
-      }
+      // Em combate, "resolvido" é ter GASTO ação, encerrado o turno ou fechado
+      // o combate — não um `mechanicalResolved` genérico, que uma chamada
+      // inócua (start_combat num combate já ativo) conseguia satisfazer.
+      await escalate(
+        "recheck",
+        3,
+        () =>
+          endedTurn ||
+          !session.state.combat?.active ||
+          (playerOf(session.state.combat)?.actionsRemaining ?? 3) < 3,
+      );
     }
   }
 
@@ -2606,14 +2526,19 @@ async function runRulesStage(
       .find((m) => m.role === "user");
     const invoked =
       typeof lastUser?.content === "string" ? namedActivity(lastUser.content) : null;
-    if (invoked) {
+    // `anyTool` sem nada resolvido = o modelo chamou SÓ tools de consulta
+    // (lookup_rule/get_character) e encerrou o turno. `namedActivity` sozinho
+    // não pegava isso: ele só indexa `actionType === "action"`, então uma free
+    // action como Esoteric Wayfinder passava batido (bateria 2026-07-25).
+    const consultedOnly = anyTool;
+    if (invoked || consultedOnly) {
       messages.push({
         role: "user",
-        content: `[ENGINE CHECK] The player invoked "${invoked}", which has RULES (an action, usually with a check), but you resolved NOTHING mechanically. Resolve it now: roll_check with its listed skill vs a real DC (lookup_rule first if unsure) and apply any effect with update_state. Only if it truly cannot apply in this scene, answer in one line why.`,
+        content: invoked
+          ? `[ENGINE CHECK] The player invoked "${invoked}", which has RULES (an action, usually with a check), but you resolved NOTHING mechanically. Resolve it now: roll_check with its listed skill vs a real DC (lookup_rule first if unsure) and apply any effect with update_state. Only if it truly cannot apply in this scene, answer in one line why.`
+          : "[ENGINE CHECK] You looked rules up but resolved NOTHING mechanically — consulting is not resolving, and a turn cannot end on a lookup. Resolve it now: roll_check against a real DC for what the player attempted, spend_actions if it costs actions without a roll, or update_state for its effect. Only if it truly cannot apply in this scene, answer in one line why.",
       });
-      for (let i = 0; i < 2; i++) {
-        if ((await runIteration(`activity-recheck${i}`)) === 0) break;
-      }
+      await escalate("activity-recheck", 2, () => mechanicalResolved);
     }
   }
 
@@ -2671,7 +2596,7 @@ function checkReason(label: string): string {
  * deliberately omits rules jargon (no "DC", "total", or die numbers) so that
  * if the narrative model leaks this block verbatim, nothing breaks immersion.
  */
-function buildMechanicalSummary(
+export function buildMechanicalSummary(
   session: Session,
   summaryLines: string[],
   consulted: string[],
@@ -2699,6 +2624,14 @@ function buildMechanicalSummary(
   if (combat?.active && summaryLines.length === 0) {
     lines.unshift(
       "NOTHING was resolved this turn: no attack happened, nobody was hit, no damage was dealt. Narrate only hesitation or repositioning — do NOT invent any blow, wound, or damage.",
+    );
+  }
+  // Fora de combate o vazio era silencioso: o modelo consultava a regra, não
+  // resolvia nada, e o narrador ficava livre para dizer que a atividade deu
+  // certo. Doutrina 4 — o que não está nas linhas não aconteceu.
+  if (!combat?.active && summaryLines.length === 0 && anyTool) {
+    lines.unshift(
+      "NOTHING was resolved mechanically this turn: the rules were consulted but no check was rolled, no cost was paid and no effect was applied. Narrate only the attempt and the atmosphere — do NOT state that it worked, that anything changed, or that any rule took effect.",
     );
   }
   if (consulted.length) {

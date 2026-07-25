@@ -104,11 +104,16 @@ function testable(f: ClassifiedFeat): boolean {
   if ((f.level ?? 1) > 6) return false;
   if (f.traits.includes("archetype") || f.traits.includes("dedication")) return false;
   if (f.traits.includes("mythic") || f.traits.includes("destiny")) return false;
-  // Boons/curses de divindade, boons de cenário PFS e entradas de "escolha de
-  // classe" não são feats jogáveis.
-  if (/\s[-–]\s(Minor|Moderate|Major)\s(Curse|Boon)/i.test(f.name)) return false;
-  if (/^[A-Z]?\d+-\d+\s*[-–]/.test(f.name)) return false;
-  if (/^Deity\b|\(Champion\)|\(Cleric\)/.test(f.name)) return false;
+  // Boons de PFS, boons/curses de divindade e entradas administrativas não são
+  // feats jogáveis. A taxonomia é NATIVA do Foundry (system.category, importada
+  // na Fase 1.5) — antes isso era adivinhado por regex sobre o TÍTULO
+  // ("/^[A-Z]?\d+-\d+/" para PFS, "- Minor Curse" para curses…), a duplicação
+  // artesanal que o import total aposentou.
+  const NOT_PLAYABLE = new Set(["pfsboon", "deityboon", "curse", "bonus"]);
+  if (f.featCategory && NOT_PLAYABLE.has(f.featCategory)) return false;
+  // NOTA: classfeature/ancestryfeature seguem NO pool por ora — a bateria atual
+  // contém classfeatures e excluí-las é decisão de REDESENHO da bateria (fila
+  // do roadmap), não desta troca de filtro.
   if (f.traits.some((t) => FOREIGN_ANCESTRIES.has(t))) return false;
   const classTraits = f.traits.filter((t) => TESTABLE_TRAITS.has(t));
   const hasForeignClass = f.traits.some((t) =>

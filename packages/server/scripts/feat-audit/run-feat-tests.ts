@@ -20,6 +20,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -31,6 +32,14 @@ const EXAMPLE_CHAR = join(SERVER_DIR, "../../exemplo_personagem.json");
 const BATTERY = join(here, "battery.json");
 const PROGRESS = join(here, "progress.json");
 const TRANSCRIPTS = join(here, "transcripts");
+/**
+ * Brain DESCARTÁVEL da bateria. Sem isto o servidor-filho herda o `BRAIN_PATH`
+ * default e a bateria roda contra o `brain/` REAL do jogador: cada cenário
+ * importa um personagem, e importar arquiva a campanha em andamento. Em
+ * 2026-07-24 uma rodada deslocou a campanha viva para `brain-archive-*` no
+ * primeiro cenário. Isolar aqui é o que mantém a bateria sem efeito colateral.
+ */
+const BRAIN_SANDBOX = join(here, ".brain-sandbox");
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -224,9 +233,16 @@ async function startServer(): Promise<void> {
   // sobrevivem ao SIGTERM do pai e seguram o pipe de stdout — o harness então
   // nunca sai (ficou 2h preso no dry-run). Matamos o GRUPO no stop.
   const tsxBin = join(SERVER_DIR, "../../node_modules/.bin/tsx");
+  // BRAIN_PATH no sandbox: a bateria nunca toca o brain real (ver BRAIN_SANDBOX).
+  rmSync(BRAIN_SANDBOX, { recursive: true, force: true });
+  mkdirSync(BRAIN_SANDBOX, { recursive: true });
   serverProc = spawn(tsxBin, ["src/http/server.ts"], {
     cwd: SERVER_DIR,
-    env: { ...process.env, PORT: String(PORT) },
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      BRAIN_PATH: join(BRAIN_SANDBOX, "brain"),
+    },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
@@ -253,6 +269,9 @@ function stopServer(): void {
     }
   }
   serverProc = null;
+  // O sandbox acumula um `brain-archive-*` por cenário; não serve para nada
+  // depois da rodada e o próximo start recria do zero.
+  rmSync(BRAIN_SANDBOX, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------

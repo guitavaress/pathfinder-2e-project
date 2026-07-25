@@ -38,6 +38,39 @@ export interface RuleRecord {
   statblock?: CreatureStatblock;
   /** Spells: structured mechanics (cast time, save/attack, damage, heighten). */
   spell?: SpellMechanics;
+  /** Foundry `_id` — resolves selfEffect/GrantItem/@UUID (last segment). */
+  uuid?: string;
+  /** Original Foundry document type ("ammo" inside equipment, etc.). */
+  docType?: string;
+  /** Source pack directory under packs/. */
+  pack?: string;
+  /** `system.rules` VERBATIM — declarative rule elements (FlatModifier…).
+   *  Import is total; consumption is incremental (ADR-007). */
+  rules?: unknown[];
+  /** Feats: NATIVE taxonomy (system.category): class|ancestry|classfeature|skill|… */
+  featCategory?: string;
+  /** Feats: declared prerequisites. */
+  prerequisites?: string[];
+  /** Feats: uuid of the effect carrying the usage mechanics. */
+  selfEffect?: string;
+  /** Feats: subfeatures verbatim (granted proficiencies, keyOptions…). */
+  subfeatures?: unknown;
+  /** Conditions: takes a numeric value? (frightened 2). */
+  conditionValued?: boolean;
+  /** Conditions: group + conditions this one overrides. */
+  conditionGroup?: string;
+  overrides?: string[];
+  /** Effects: structured duration + badge (counter) verbatim. */
+  effectDuration?: unknown;
+  badge?: unknown;
+  /** Hazards: stealth DC, complexity, disable/routine/reset prose. */
+  hazard?: {
+    stealth: number | null;
+    isComplex: boolean;
+    disable?: string;
+    routine?: string;
+    reset?: string;
+  };
 }
 
 /** An NPC Strike (Foundry "melee" item — ranged attacks included). */
@@ -156,17 +189,78 @@ function loadSeed(): RuleRecord[] {
   }
 }
 
+/**
+ * Política de ÍNDICE POR NOME, em código — não por acidente da ordem
+ * alfabética dos arquivos no disco.
+ *
+ * `NAME_INDEX_ORDER` define quem entra no índice por nome exato e em que
+ * precedência (primeiro-ganha em colisão). `FUZZY_CATEGORIES` define quem os
+ * passes fuzzy do `lookupLocalRule` enxergam: as categorias novas do import
+ * total (2.815 effects "Effect: X", heritages, pregens…) ficam FORA do fuzzy
+ * de propósito — o `lookup_rule` do GM não pode mudar de comportamento porque
+ * o dataset ficou completo. `macros` (código JS de UI do Foundry) não é regra:
+ * não entra em índice nenhum, só existe no dataset por completude.
+ */
+const NAME_INDEX_ORDER: readonly string[] = [
+  // legado, na mesma precedência que a ordem alfabética antiga produzia:
+  "actions",
+  "bestiary",
+  "conditions",
+  "equipment",
+  "feats",
+  "spells",
+  // novas categorias name-addressable (só nome EXATO, sem fuzzy — exceto hazards):
+  "hazards",
+  "effects",
+  "ancestries",
+  "heritages",
+  "backgrounds",
+  "classes",
+  "deities",
+  "campaign",
+  "pregens",
+  "vehicles",
+  "armies",
+  "familiars",
+  "kits",
+];
+const FUZZY_CATEGORIES = new Set([
+  "actions",
+  "bestiary",
+  "conditions",
+  "equipment",
+  "feats",
+  "spells",
+  "hazards",
+]);
+
 function loadGenerated(): RuleRecord[] {
+  // Carga dirigida pelo manifest (importador v2): só as categorias declaradas
+  // entram — um .json auxiliar largado na pasta (feats-classified.json) não
+  // polui o índice POR CONSTRUÇÃO. Sem manifest (dataset antigo), cai no
+  // comportamento legado de ler todo *.json com o filtro de completude.
+  const manifestPath = join(generatedDir, "manifest.json");
+  let files: string[];
+  if (existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+        categories?: Record<string, number>;
+      };
+      files = Object.keys(manifest.categories ?? {}).map((c) => `${c}.json`);
+    } catch {
+      files = [];
+    }
+  } else {
+    files = readdirSync(generatedDir).filter(
+      (f) => f.endsWith(".json") && f !== "uuid-index.json",
+    );
+  }
   const out: RuleRecord[] = [];
-  for (const file of readdirSync(generatedDir)) {
-    if (!file.endsWith(".json")) continue;
+  for (const file of files) {
     try {
       const arr = JSON.parse(
         readFileSync(join(generatedDir, file), "utf8"),
       ) as RuleRecord[];
-      // Só registros COMPLETOS entram no índice: um .json auxiliar largado na
-      // pasta (ex.: feats-classified.json, sem `text`) poluía o lookup com
-      // milhares de regras vazias — o modelo consultava e recebia nada.
       out.push(
         ...arr.filter((r) => r && typeof r.name === "string" && r.category && r.text),
       );
@@ -188,7 +282,12 @@ function load(): RuleRecord[] {
     sourceLabel = "seed (run `npm run data:pf2e` for the full dataset)";
   }
   byName = new Map();
-  for (const r of index) {
+  const rank = new Map(NAME_INDEX_ORDER.map((c, i) => [c, i]));
+  // Precedência POR CATEGORIA (não por ordem de arquivo): estável e auditável.
+  const indexable = index
+    .filter((r) => rank.has(r.category))
+    .sort((a, b) => rank.get(a.category)! - rank.get(b.category)!);
+  for (const r of indexable) {
     const key = normalize(r.name);
     // Keep the first (avoids overwriting with same-named variants).
     if (!byName.has(key)) byName.set(key, r);
@@ -210,9 +309,12 @@ export function lookupLocalRule(query: string): RuleRecord | null {
   if (exact) return exact;
 
   // 2. Substring (prefers the shortest name = most specific match).
+  // Fuzzy só nas categorias da política — as categorias novas do import total
+  // não podem mudar o que o GM encontra por aproximação.
   let best: RuleRecord | null = null;
   let bestLen = Infinity;
   for (const r of all) {
+    if (!FUZZY_CATEGORIES.has(r.category)) continue;
     const n = normalize(r.name);
     if (n.includes(q) || q.includes(n)) {
       if (n.length < bestLen) {
@@ -228,6 +330,7 @@ export function lookupLocalRule(query: string): RuleRecord | null {
   if (qTokens.size === 0) return null;
   let bestScore = 0;
   for (const r of all) {
+    if (!FUZZY_CATEGORIES.has(r.category)) continue;
     const nTokens = normalize(r.name).split(/\s+/);
     let score = 0;
     for (const t of nTokens) if (qTokens.has(t)) score++;
@@ -422,6 +525,105 @@ export function activityRequirement(
   return null;
 }
 
+/** Custo de uso de um feat/ação, na taxonomia real do PF2e. */
+export interface CostProfile {
+  /** Nome canônico do registro. */
+  name: string;
+  /** `action` gasta ações; `reaction` gasta A reação; `free` e `passive` não gastam nada. */
+  kind: "action" | "reaction" | "free" | "passive";
+  /** Ações gastas — só é > 0 quando `kind === "action"`. */
+  cost: number;
+}
+
+let byNameAll: Map<string, RuleRecord[]> | null = null;
+
+/** Todos os registros que compartilham um nome (em qualquer categoria). */
+function recordsNamed(name: string): RuleRecord[] {
+  if (!byNameAll) {
+    byNameAll = new Map();
+    for (const r of load()) {
+      if (r.category === "macros") continue; // código de UI, não regra
+      const key = normalize(r.name);
+      const list = byNameAll.get(key);
+      if (list) list.push(r);
+      else byNameAll.set(key, [r]);
+    }
+  }
+  return byNameAll.get(normalize(name)) ?? [];
+}
+
+/**
+ * Homônimos de um registro — os OUTROS registros com o mesmo nome.
+ *
+ * O índice principal é primeiro-ganha por ordem alfabética de arquivo, então
+ * servir só o vencedor esconde dado do modelo (doutrina: o dado não se
+ * esconde). Quem consulta mostra os dois e deixa o modelo escolher.
+ */
+export function homonymsOf(rec: RuleRecord): RuleRecord[] {
+  return recordsNamed(rec.name).filter(
+    (r) => r !== rec && r.category !== rec.category,
+  );
+}
+
+/** Rótulo curto do custo de uso, para o texto que o modelo lê. */
+export function actionLabel(rec: RuleRecord): string {
+  if (rec.actionType === "reaction") return "reaction";
+  if (rec.actionType === "free") return "free action";
+  if (rec.actionType === "action") {
+    const n = Math.max(1, rec.actionCost ?? 1);
+    return `${n} action${n > 1 ? "s" : ""}`;
+  }
+  if (rec.actionType === "passive") return "passive";
+  return "";
+}
+
+/**
+ * Perfil de custo de um feat/ação pelo NOME EXATO.
+ *
+ * Por que `prefer`: o índice por nome do `load()` é primeiro-ganha na ordem
+ * alfabética dos arquivos, então `actions.json` ofusca `feats.json` em todo
+ * homônimo. "Shake it Off" existe nos dois — ação de REAÇÃO [fortune, primal]
+ * e feat de bárbaro de 1 AÇÃO — e o lookup genérico servia a reação, fazendo a
+ * engine cobrar zero pelo feat (bateria 2026-07-24). Quem desempata é a ficha:
+ * se o personagem TEM o feat, a categoria `feats` manda.
+ *
+ * Por que custo CONCRETO ganha de `passive`: a varredura de conformidade achou
+ * 44 nomes com custo divergente, e em 34 deles o registro de `feats` é
+ * `passive` porque o feat apenas CONCEDE a habilidade — a mecânica real (e o
+ * custo) vive no registro de `actions` com o mesmo nome (Hunt Prey, Change
+ * Shape, Arcane Cascade, Opportune Riposte…). Preferir cegamente a ficha ali
+ * devolveria "passivo, custo zero" para atividades de 1-2 ações e faria 7
+ * reações jamais debitarem a reação. `passive` só vence quando é a única forma
+ * que existe.
+ */
+export function costProfileOf(
+  name: string,
+  prefer: "feats" | "actions" = "feats",
+): CostProfile | null {
+  const candidates = recordsNamed(name).filter(
+    (r) => r.category === "feats" || r.category === "actions",
+  );
+  if (!candidates.length) return null;
+  const concrete = (r: RuleRecord) =>
+    r.actionType === "action" || r.actionType === "reaction" || r.actionType === "free";
+  const preferred = candidates.find((r) => r.category === prefer);
+  const rec =
+    preferred && concrete(preferred)
+      ? preferred
+      : (candidates.find(concrete) ?? preferred ?? candidates[0]!);
+  const kind: CostProfile["kind"] =
+    rec.actionType === "action" ||
+    rec.actionType === "reaction" ||
+    rec.actionType === "free"
+      ? rec.actionType
+      : "passive";
+  return {
+    name: rec.name,
+    kind,
+    cost: kind === "action" ? Math.max(1, rec.actionCost ?? 1) : 0,
+  };
+}
+
 let creaturesByName: Map<string, RuleRecord> | null = null;
 
 /**
@@ -561,4 +763,52 @@ export function officialConditions(): Set<string> {
     }
   }
   return conditionNames;
+}
+
+// ---------------------------------------------------------------------------
+// Lookups do import total (Fase 1.5) — hazards, effects e o grafo de UUIDs.
+// ---------------------------------------------------------------------------
+
+let hazardsByName: Map<string, RuleRecord> | null = null;
+
+/** Hazard (armadilha/perigo) por nome — mesmo espírito do creatureRecord. */
+export function hazardRecord(name: string): RuleRecord | null {
+  if (!hazardsByName) {
+    hazardsByName = new Map();
+    for (const r of load()) {
+      if (r.category !== "hazards") continue;
+      const key = normalize(r.name);
+      if (!hazardsByName.has(key)) hazardsByName.set(key, r);
+    }
+  }
+  return hazardsByName.get(normalize(name)) ?? null;
+}
+
+let uuidMap: Map<string, RuleRecord> | null = null;
+
+/**
+ * Resolve um documento pelo `_id` Foundry (aceita o UUID completo
+ * "Compendium.pf2e.feat-effects.Item.XYZ" — usa o último segmento). É como
+ * `selfEffect` e `GrantItem` chegam ao registro alvo.
+ */
+export function byUuid(ref: string): RuleRecord | null {
+  if (!uuidMap) {
+    uuidMap = new Map();
+    for (const r of load()) {
+      if (r.uuid && !uuidMap.has(r.uuid)) uuidMap.set(r.uuid, r);
+    }
+  }
+  const id = ref.split(".").pop() ?? ref;
+  return uuidMap.get(id) ?? null;
+}
+
+/** Effect por uuid OU nome exato (effects ficam fora do fuzzy de propósito). */
+export function effectRecord(ref: string): RuleRecord | null {
+  const viaUuid = byUuid(ref);
+  if (viaUuid?.category === "effects") return viaUuid;
+  const key = normalize(ref);
+  for (const r of load()) {
+    if (r.category === "effects" && normalize(r.name) === key) return r;
+  }
+  return null;
 }

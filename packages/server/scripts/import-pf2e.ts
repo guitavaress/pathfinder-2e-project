@@ -43,6 +43,38 @@ interface RuleRecord {
   rarity: string | null;
   text: string;
   source: string;
+  /** `_id` do documento Foundry — resolve @UUID/selfEffect/GrantItem (último segmento). */
+  uuid?: string;
+  /** `type` Foundry ORIGINAL (a categoria agrupa; o docType preserva — ex.: "ammo" dentro de equipment). */
+  docType?: string;
+  /** Pack de origem (diretório sob packs/). */
+  pack?: string;
+  /** `system.rules` VERBATIM — os rule elements. Import é total; consumo é incremental (ADR-007). */
+  rules?: unknown[];
+  /** Feats: taxonomia NATIVA (system.category): class|ancestry|classfeature|skill|general|pfsboon|deityboon|curse|calling|bonus|ancestryfeature. */
+  featCategory?: string;
+  /** Feats: pré-requisitos declarados (system.prerequisites.value[].value). */
+  prerequisites?: string[];
+  /** Feats: uuid do effect que carrega a mecânica de uso (system.selfEffect). */
+  selfEffect?: string;
+  /** Feats: subfeatures verbatim (proficiências concedidas, keyOptions…). */
+  subfeatures?: unknown;
+  /** Conditions: aceita valor numérico? (system.value.isValued — frightened 2). */
+  conditionValued?: boolean;
+  /** Conditions: grupo (ex.: "detection") e condições que esta sobrepõe. */
+  conditionGroup?: string;
+  overrides?: string[];
+  /** Effects: duração estruturada e badge (contador) verbatim. */
+  effectDuration?: unknown;
+  badge?: unknown;
+  /** Hazards: detalhes próprios além do statblock (stealth DC, desarme, rotina). */
+  hazard?: {
+    stealth: number | null;
+    isComplex: boolean;
+    disable?: string;
+    routine?: string;
+    reset?: string;
+  };
   /** Foundry system.actionType.value: "action" | "reaction" | "free" | "passive" (null p/ docs sem ação). */
   actionType: string | null;
   /** Foundry system.actions.value: 1 | 2 | 3 (null p/ reaction/free/passive). */
@@ -138,38 +170,54 @@ interface CreatureStatblock {
   spellcasting?: CreatureSpellcasting[];
 }
 
-/** Mapeia o `type` do documento Foundry para a nossa categoria. */
-function categoryOf(type: string): string | null {
-  switch (type) {
-    case "action":
-      return "actions";
-    case "feat":
-      return "feats";
-    case "spell":
-      return "spells";
-    case "condition":
-      return "conditions";
-    case "weapon":
-    case "armor":
-    case "shield":
-    case "equipment":
-    case "consumable":
-    case "treasure":
-    case "backpack":
-      return "equipment";
-    case "npc":
-      return "bestiary";
-    case "ancestry":
-    case "heritage":
-    case "background":
-    case "class":
-    case "deity":
-    case "campaignFeature":
-    case "effect":
-      return "misc";
-    default:
-      return null;
+/**
+ * Mapeia o `type` do documento Foundry para a nossa categoria — TOTAL.
+ *
+ * Censo 2026-07-26 (ref 7.8.0, 27.940 docs): a versão antiga devolvia `null`
+ * para 8 tipos (~1.650 docs descartados em silêncio — os 1.106 hazards
+ * inteiros nunca existiram no dataset) e enterrava ancestries/heritages/
+ * classes/deities/EFFECTS num `misc.json` que nenhuma função lia. Import é
+ * total: tipo desconhecido agora FALHA o import em vez de sumir — um bump de
+ * ref que introduza tipo novo aparece na hora, não como buraco silencioso.
+ */
+const CATEGORY_OF: Record<string, string> = {
+  action: "actions",
+  feat: "feats",
+  spell: "spells",
+  condition: "conditions",
+  weapon: "equipment",
+  armor: "equipment",
+  shield: "equipment",
+  equipment: "equipment",
+  consumable: "equipment",
+  treasure: "equipment",
+  backpack: "equipment",
+  ammo: "equipment",
+  npc: "bestiary",
+  hazard: "hazards",
+  effect: "effects",
+  ancestry: "ancestries",
+  heritage: "heritages",
+  background: "backgrounds",
+  class: "classes",
+  deity: "deities",
+  campaignFeature: "campaign",
+  character: "pregens",
+  vehicle: "vehicles",
+  army: "armies",
+  familiar: "familiars",
+  kit: "kits",
+  script: "macros",
+};
+
+function categoryOf(type: string): string {
+  const cat = CATEGORY_OF[type];
+  if (!cat) {
+    throw new Error(
+      `Tipo Foundry desconhecido: "${type}" — mapeie-o em CATEGORY_OF (import é TOTAL, descarte silencioso é proibido).`,
+    );
   }
+  return cat;
 }
 
 /** Remove HTML e marcadores do Foundry (@UUID[...]{label}, @Localize, etc.). */
@@ -442,11 +490,16 @@ function extractSpell(
   };
 }
 
-function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | null {
+function toRecord(
+  doc: Record<string, unknown>,
+  source: string,
+  pack?: string,
+): RuleRecord | null {
   const type = typeof doc.type === "string" ? doc.type : "";
-  const category = categoryOf(type);
   const name = typeof doc.name === "string" ? doc.name : "";
-  if (!category || !name) return null;
+  // Doc sem type/nome não é regra (ex.: metadocumentos) — contado no manifest.
+  if (!type || !name) return null;
+  const category = categoryOf(type);
 
   const system = (doc.system ?? {}) as Record<string, unknown>;
   const description = (system.description ?? {}) as Record<string, unknown>;
@@ -479,17 +532,41 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
     }
   }
 
-  // Statblock estruturado de CRIATURAS: AC/HP/saves/ataques reais para a engine.
+  // Statblock estruturado de CRIATURAS e HAZARDS: AC/HP/saves/ataques reais.
+  // Hazards usam o MESMO shape de attributes (ac.value/hp.max) e também têm
+  // Strikes embutidos (items type "melee" — a lança da armadilha).
   let statblock: CreatureStatblock | undefined;
-  if (type === "npc") {
+  if (type === "npc" || type === "hazard") {
     statblock = extractStatblock(system, doc.items);
-    if (!text) {
-      const traitList = Array.isArray(traitsObj.value)
-        ? (traitsObj.value as unknown[]).map(String).join(", ")
-        : "";
-      const rarity = typeof traitsObj.rarity === "string" ? traitsObj.rarity : "common";
-      text = `Level ${level ?? "?"} ${rarity} creature.${traitList ? ` Traits: ${traitList}.` : ""}`;
-    }
+  }
+
+  // Detalhes próprios de HAZARD: stealth DC (para Seek), desarme e rotina.
+  let hazard: RuleRecord["hazard"];
+  if (type === "hazard") {
+    const attrs = (system.attributes ?? {}) as Record<string, unknown>;
+    const stealthObj = (attrs.stealth ?? {}) as Record<string, unknown>;
+    const dis = cleanText((detailsObj.disable ?? "") as string);
+    const rou = cleanText((detailsObj.routine ?? "") as string);
+    const res = cleanText((detailsObj.reset ?? "") as string);
+    hazard = {
+      stealth: typeof stealthObj.value === "number" ? stealthObj.value : null,
+      isComplex: detailsObj.isComplex === true,
+      ...(dis ? { disable: dis } : {}),
+      ...(rou ? { routine: rou } : {}),
+      ...(res ? { reset: res } : {}),
+    };
+  }
+
+  // Texto sintetizado quando não há prosa — para NENHUM documento ser filtrado
+  // no load (dataset.ts exige `text`; antes isso silenciosamente derrubava 46
+  // actions e trocaria "zero perda" por "quase zero perda").
+  if (!text) {
+    const traitList = Array.isArray(traitsObj.value)
+      ? (traitsObj.value as unknown[]).map(String).join(", ")
+      : "";
+    const rarity = typeof traitsObj.rarity === "string" ? traitsObj.rarity : "common";
+    const noun = type === "npc" ? "creature" : type;
+    text = `Level ${level ?? "?"} ${rarity} ${noun}.${traitList ? ` Traits: ${traitList}.` : ""}`;
   }
 
   // Custo de ação (feats/actions): separa "tem custo no encounter" de passivo.
@@ -552,6 +629,59 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
     }
   }
 
+  // Rule elements VERBATIM — a mecânica declarativa do Foundry (FlatModifier,
+  // DamageDice, GrantItem…). 7.653 docs têm; até 2026-07-26 eram descartados.
+  const rules = Array.isArray(system.rules) && system.rules.length > 0
+    ? (system.rules as unknown[])
+    : undefined;
+
+  // FEATS: taxonomia nativa + pré-requisitos + link para o effect de uso.
+  let featCategory: string | undefined;
+  let prerequisites: string[] | undefined;
+  let selfEffect: string | undefined;
+  let subfeatures: unknown;
+  if (type === "feat") {
+    featCategory = typeof system.category === "string" ? system.category : undefined;
+    const preObj = (system.prerequisites ?? {}) as Record<string, unknown>;
+    const preList = (Array.isArray(preObj.value) ? preObj.value : [])
+      .map((p) => (p as Record<string, unknown>)?.value)
+      .filter((v): v is string => typeof v === "string" && v.length > 0);
+    if (preList.length > 0) prerequisites = preList;
+    const seObj = (system.selfEffect ?? null) as Record<string, unknown> | null;
+    if (seObj && typeof seObj.uuid === "string") {
+      // Guarda só o _id (último segmento) — é como o uuid-index resolve.
+      selfEffect = seObj.uuid.split(".").pop();
+    }
+    if (
+      system.subfeatures &&
+      typeof system.subfeatures === "object" &&
+      Object.keys(system.subfeatures as object).length > 0
+    ) {
+      subfeatures = system.subfeatures;
+    }
+  }
+
+  // CONDITIONS: valor, grupo e sobreposições (frightened É valuada; dying
+  // sobrepõe unconscious…). Antes só nome+texto.
+  let conditionValued: boolean | undefined;
+  let conditionGroup: string | undefined;
+  let overrides: string[] | undefined;
+  if (type === "condition") {
+    const valObj = (system.value ?? {}) as Record<string, unknown>;
+    conditionValued = valObj.isValued === true;
+    if (typeof system.group === "string" && system.group) conditionGroup = system.group;
+    const ov = (Array.isArray(system.overrides) ? system.overrides : []).map(String);
+    if (ov.length > 0) overrides = ov;
+  }
+
+  // EFFECTS: duração e badge (o contador do efeito) verbatim.
+  let effectDuration: unknown;
+  let badge: unknown;
+  if (type === "effect") {
+    if (system.duration) effectDuration = system.duration;
+    if (system.badge) badge = system.badge;
+  }
+
   return {
     name,
     category,
@@ -562,6 +692,20 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
     rarity: typeof traitsObj.rarity === "string" ? traitsObj.rarity : null,
     text,
     source,
+    ...(typeof doc._id === "string" ? { uuid: doc._id } : {}),
+    docType: type,
+    ...(pack ? { pack } : {}),
+    rules,
+    featCategory,
+    prerequisites,
+    selfEffect,
+    subfeatures,
+    conditionValued,
+    conditionGroup,
+    overrides,
+    effectDuration,
+    badge,
+    hazard,
     actionType,
     actionCost,
     // Opcionais ficam `undefined` quando ausentes → JSON.stringify os omite
@@ -578,16 +722,19 @@ function toRecord(doc: Record<string, unknown>, source: string): RuleRecord | nu
   };
 }
 
-/** Lê todos os *.json sob um diretório, recursivamente. */
-function readJsonFilesRecursive(dir: string): Record<string, unknown>[] {
-  const out: Record<string, unknown>[] = [];
+/** Lê todos os *.json sob packs/, com o PACK de origem (1º diretório). */
+function readJsonFilesRecursive(
+  dir: string,
+  pack = "",
+): { doc: Record<string, unknown>; pack: string }[] {
+  const out: { doc: Record<string, unknown>; pack: string }[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      out.push(...readJsonFilesRecursive(full));
+      out.push(...readJsonFilesRecursive(full, pack || entry.name));
     } else if (entry.name.endsWith(".json") && !entry.name.startsWith("_")) {
       try {
-        out.push(JSON.parse(readFileSync(full, "utf8")));
+        out.push({ doc: JSON.parse(readFileSync(full, "utf8")), pack });
       } catch {
         // ignora arquivos não-JSON ou inválidos
       }
@@ -624,13 +771,17 @@ function collectFromGit(): RuleRecord[] {
       throw new Error(`'packs/' não encontrado no clone (ref ${GIT_REF}).`);
     }
     const docs = readJsonFilesRecursive(packsDir);
+    sourceDocCount = docs.length;
     return docs
-      .map((d) => toRecord(d, "foundry-git"))
+      .map((d) => toRecord(d.doc, "foundry-git", d.pack))
       .filter((r): r is RuleRecord => r !== null);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 }
+
+/** Nº de documentos lidos da fonte (denominador do zero-perda no manifest). */
+let sourceDocCount = 0;
 
 /** Fonte local: lê os packs LevelDB da instalação do Foundry. */
 async function collectFromLocal(): Promise<RuleRecord[]> {
@@ -667,7 +818,8 @@ async function collectFromLocal(): Promise<RuleRecord[]> {
     });
     try {
       for await (const value of db.values()) {
-        const rec = toRecord(value, `foundry-local:${entry.name}`);
+        sourceDocCount += 1;
+        const rec = toRecord(value, `foundry-local:${entry.name}`, entry.name);
         if (rec) records.push(rec);
       }
     } catch (err) {
@@ -692,6 +844,22 @@ async function main() {
     throw new Error("Nenhum registro extraído — verifique a fonte.");
   }
 
+  // selfEffect pode vir por NOME em vez de _id (o Foundry aceita referência de
+  // compêndio nomeada: "...Item.Effect: Spirit Power (Flight)"). Normaliza
+  // tudo para o _id do effect — o uuid-index resolve num formato só.
+  const effectIdByName = new Map<string, string>();
+  for (const r of records) {
+    if (r.category === "effects" && r.uuid) effectIdByName.set(r.name, r.uuid);
+  }
+  const idShaped = /^[A-Za-z0-9]{16}$/;
+  for (const r of records) {
+    if (r.selfEffect && !idShaped.test(r.selfEffect)) {
+      const resolved = effectIdByName.get(r.selfEffect);
+      if (resolved) r.selfEffect = resolved;
+    }
+  }
+
+
   // Agrupa por categoria e grava um JSON por categoria.
   const byCategory = new Map<string, RuleRecord[]>();
   for (const r of records) {
@@ -701,12 +869,48 @@ async function main() {
   }
 
   mkdirSync(OUT_DIR, { recursive: true });
+  // Limpa os *.json antigos: categorias renomeadas (misc.json morre com o
+  // import total) não podem sobrar como arquivo fantasma no índice.
+  for (const f of readdirSync(OUT_DIR)) {
+    if (f.endsWith(".json")) rmSync(join(OUT_DIR, f));
+  }
   let total = 0;
   for (const [category, arr] of byCategory) {
     writeFileSync(join(OUT_DIR, `${category}.json`), JSON.stringify(arr));
     console.log(`  ${category}: ${arr.length}`);
     total += arr.length;
   }
+
+  // uuid-index: _id → {name, category} — resolve selfEffect/GrantItem/@UUID
+  // sem varrer o dataset inteiro.
+  const uuidIndex: Record<string, { name: string; category: string }> = {};
+  let duplicateUuids = 0;
+  for (const r of records) {
+    if (!r.uuid) continue;
+    if (uuidIndex[r.uuid]) duplicateUuids += 1;
+    uuidIndex[r.uuid] = { name: r.name, category: r.category };
+  }
+  writeFileSync(join(OUT_DIR, "uuid-index.json"), JSON.stringify(uuidIndex));
+
+  // Manifest: a PROVA de zero perda vira artefato que o teste de conformidade
+  // lê (sem precisar clonar nada). counts por docType + por categoria/arquivo.
+  const byType: Record<string, number> = {};
+  const withRules = records.filter((r) => r.rules?.length).length;
+  for (const r of records) byType[r.docType ?? "?"] = (byType[r.docType ?? "?"] ?? 0) + 1;
+  const manifest = {
+    ref: fromLocal ? `local:${SYSTEM_PATH}` : GIT_REF,
+    importedAt: new Date().toISOString(),
+    sourceDocs: sourceDocCount,
+    written: total,
+    withRules,
+    duplicateUuids,
+    byType,
+    categories: Object.fromEntries(
+      [...byCategory.entries()].map(([c, arr]) => [c, arr.length]),
+    ),
+  };
+  writeFileSync(join(OUT_DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
+
   // Visibilidade de regressão: extração estruturada quebrada aparece aqui.
   const bestiary = byCategory.get("bestiary") ?? [];
   const withStats = bestiary.filter((r) => r.statblock).length;
@@ -714,7 +918,15 @@ async function main() {
   const spells = byCategory.get("spells") ?? [];
   const withSpell = spells.filter((r) => r.spell).length;
   console.log(`  spells estruturadas: ${withSpell}/${spells.length}`);
-  console.log(`OK: ${total} entradas gravadas em ${OUT_DIR}`);
+  console.log(
+    `OK: ${total} de ${sourceDocCount} docs gravados (${withRules} com rule elements; uuids duplicados: ${duplicateUuids})`,
+  );
+  if (sourceDocCount - total > 200) {
+    // Docs sem type/nome legítimos são raros; um vão grande é descarte novo.
+    throw new Error(
+      `Zero-perda violado: ${sourceDocCount - total} documentos da fonte não viraram registro.`,
+    );
+  }
 }
 
 main().catch((err) => {

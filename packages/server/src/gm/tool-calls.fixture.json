@@ -1,0 +1,1103 @@
+{
+  "note": "Tool calls REAIS observadas na bateria feat-audit (relatórios 2026-07-05 e 2026-07-06), deduplicadas por forma de argumento. Corpus de aceitação da Fase 1: o que a engine aceitou aqui tem que seguir aceito pelo contrato de schema. Regenerar a partir de scripts/feat-audit/transcripts/*.json (campo toolLines) depois de uma bateria nova.",
+  "generatedAt": "2026-07-24",
+  "source": "scripts/feat-audit/transcripts (gitignorado) — 76 transcripts, 222 tool calls, 128 formas distintas",
+  "calls": [
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Using Acupuncturist to treat a patient's ailment.",
+        "skill": "medicine"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Acute Vision - scanning the crowded tavern for hidden details or threats.",
+        "skill": "perception"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Utilizing Additional Lore to gather information about the local area and rumors from the bustling tavern environment.",
+        "skill": "Underworld"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Adversary Lore"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 15,
+        "reason": "Recall Knowledge about local threats/creatures in a busy roadside tavern area using Adversary Lore.",
+        "skill": "Recall Knowledge"
+      },
+      "wasError": true
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 15,
+        "reason": "Recall Knowledge about local threats/creatures in a busy roadside tavern area using Adversary Lore (Underworld).",
+        "skill": "Underworld"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Using Animal Empathy to connect with/soothe animals in the tavern or nearby.",
+        "skill": "Animal Empathy"
+      },
+      "wasError": true
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Animal Empathy"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Attempting to communicate/connect with an animal using Animal Empathy (via Diplomacy).",
+        "skill": "diplomacy"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Anticipate Ambush"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "start_combat",
+      "args": {
+        "enemies": [
+          {
+            "level": 1,
+            "name": "Bandit"
+          }
+        ]
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro's first strike against the bandit.",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "actions": 1,
+        "reason": "Battle Medicine to stabilize the bandit.",
+        "skill": "medicine"
+      },
+      "wasError": true
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Battle Medicine to stabilize the bandit.",
+        "skill": "medicine"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Battledancer"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Bon Mot (Deception) to demoralize the bandit.",
+        "skill": "deception"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Bonded Animal (training/bonding with the animal companion)",
+        "skill": "nature"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro uses Bravery to stand firm against the bandit's intimidation.",
+        "skill": "will"
+      },
+      "wasError": true
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Ferro uses Bravery to stand firm against the bandit's intimidation.",
+        "skill": "will"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Using Charming Liar to influence the barkeep.",
+        "skill": "deception"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 15,
+        "reason": "City Scavenger: searching for useful items or information in the bustling tavern environment.",
+        "skill": "thievery"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Jão strikes the bandit with a dagger.",
+        "skill": "dagger",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro strikes the bandit with a longsword.",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Combat Assessment"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Combat Assessment (Longsword Strike)",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro's turn - Strike with Longsword against Bandit",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Enter Crane Stance (1 action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with longsword against Bandit",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "start_combat",
+      "args": {
+        "enemies": [
+          {
+            "count": 1,
+            "level": 1,
+            "name": "Bandit"
+          }
+        ]
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 2,
+        "reason": "Defensive Advance (Move + Strike)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with Longsword against Bandit",
+        "skill": "Longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike the bandit with a longsword.",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro's turn - Strike with Longsword against the Bandit.",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Dirty Trick"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Dirty Trick against bandit's Reflex DC",
+        "skill": "reflex"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Dirty Trick action cost"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Enter Disarming Stance (1 action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with longsword against Bandit",
+        "skill": "longsword",
+        "target": "Bandit [id:d2254a9a]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Distracting Feint (1st Strike)",
+        "skill": "dagger",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "update_state",
+      "args": {
+        "hpDelta": -4,
+        "target": "Bandit"
+      },
+      "wasError": true
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Distracting Performance"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Distracting Performance (creating a diversion)",
+        "skill": "performance"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "First shot of Double Shot (Longsword)",
+        "skill": "longsword",
+        "target": "be438aa5"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "update_state",
+      "args": {
+        "hpDelta": -10,
+        "target": "be438aa5"
+      },
+      "wasError": true
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Second shot of Double Shot (Longsword) - Target is Off-Guard",
+        "skill": "longsword",
+        "target": "be438aa5"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "First strike of Double Slice",
+        "skill": "longsword",
+        "target": "Bandit [id:c23601c4]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Second strike of Double Slice (off-guard target)",
+        "skill": "longsword",
+        "target": "Bandit [id:c23601c4]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro attacks the bandit with a longsword.",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Dual-Handed Assault - First Strike",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Dueling Parry (Reaction)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Esoteric Wayfinder to find local information/paths.",
+        "skill": "survival"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro's turn - Strike with Longsword against Bandit",
+        "skill": "Longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Using Experienced Tracker to scan the area for signs of life or hazards.",
+        "skill": "survival"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Extravagant Parry"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Extravagant Parry (Reaction/Action) - Note: Extravagant Parry provides a bonus to AC; since it's used as an action or reaction to defend against the bandit's strike, the defense is active."
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Eye for Numbers to analyze the crowd and environment of the tavern.",
+        "skill": "Eye for Numbers"
+      },
+      "wasError": true
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Perception to observe details in the busy tavern.",
+        "skill": "perception"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro's turn - Strike with Longsword against Bandit.",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "actions": 1,
+        "reason": "Flurry of Blows - 2nd Strike (Longsword)",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Flying Blade"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro uses Flying Blade (thrown weapon strike) against the bandit.",
+        "skill": "longsword",
+        "target": "Bandit [id:28417d27]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Furious Finish"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "start_combat",
+      "args": {
+        "enemies": [
+          {
+            "level": 2,
+            "name": "Bandit"
+          }
+        ]
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "actions": 1,
+        "reason": "Furious Finish Strike against Bandit",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Bandit attacks Jão with a shortsword.",
+        "skill": "shortsword",
+        "target": "Jão"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with dagger against Bandit",
+        "skill": "dagger",
+        "target": "Bandit [id:b31c23f9]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Goblin Scuttle"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Goblin Song"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Goblin Song performance to distract patrons/foes",
+        "skill": "performance"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Hunted Shot"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Hunted Shot - First Strike",
+        "skill": "longsword",
+        "target": "Bandit [id:1c254b8d]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Improvised Repair"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Improvised Repair (1 action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Inventor feat - crafting something new or improving an item during downtime.",
+        "skill": "crafting"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Jotun's Battle Stance (1 action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with Longsword against Bandit",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Kneecap"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Kneecap strike against Bandit's leg.",
+        "skill": "dagger",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "update_state",
+      "args": {
+        "addConditions": [
+          "slowed -15ft"
+        ],
+        "hpDelta": -4,
+        "target": "Bandit"
+      },
+      "wasError": true
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro reacts to the bandit's attack with a parry or dodge.",
+        "skill": "reflex"
+      },
+      "wasError": true
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Bandit attacks Ferro with a shortsword.",
+        "skill": "shortsword",
+        "target": "Ferro"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Leading Dance"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 21,
+        "reason": "Leading Dance (Will DC)",
+        "skill": "will"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Leading Dance (Move action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Lie to Me feat to deceive the barkeep about your identity/purpose.",
+        "skill": "deception"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Moment of Clarity"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Jão's turn - Strike with dagger against the bandit.",
+        "skill": "dagger",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Phantom Visage"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Phantom Visage (Feat/Action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 2,
+        "reason": "Plane-Stepping Dash (2 actions)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with longsword against Bandit",
+        "skill": "longsword",
+        "target": "Bandit [id:9c87b2a1]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Plant Banner (1 action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Enter Point Blank Stance (1 action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with Longsword against Bandit",
+        "skill": "longsword",
+        "target": "cb67ca45"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Read the Roots to sense the history and nature of the tavern's location.",
+        "skill": "nature"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro strikes the bandit with his longsword.",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Retreating Finisher strike against Bandit",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Enter Ricochet Stance (Fighter)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with longsword against Bandit",
+        "skill": "longsword",
+        "target": "Bandit [id:449339dd]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Bandit's strike against Ferro.",
+        "skill": "shortsword",
+        "target": "Ferro"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Cast Sanctify Water (1 action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Ferro's turn starts. The bandit is approaching or preparing an attack.",
+        "skill": "longsword",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Shackles of Law"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with longsword against bandit",
+        "skill": "longsword",
+        "target": "e1935be3"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Shake it Off (Reaction/Action)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Smite"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "update_state",
+      "args": {
+        "target": "Bandit [id:548d58cc]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Smite feat activation"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Sow Rumor to spread information about the local area.",
+        "skill": "society"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Using Streetwise to gather information and identify key figures in the bustling tavern.",
+        "skill": "Underworld"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Stunning Blow strike against Bandit",
+        "skill": "longsword",
+        "target": "Bandit [id:b9dfd236]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "lookup_rule",
+      "args": {
+        "query": "Sturdy Bindings"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 1,
+        "reason": "Sturdy Bindings (Grapple)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Grapple the bandit",
+        "skill": "athletics",
+        "target": "bb973840"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "update_state",
+      "args": {
+        "addConditions": [
+          "grabbed"
+        ],
+        "target": "bb973840"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "spend_actions",
+      "args": {
+        "actions": 2,
+        "reason": "Sudden Charge (2 actions)"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Strike with longsword against bandit",
+        "skill": "longsword",
+        "target": "Bandit [id:625d6a3e]"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "end_combat",
+      "args": {
+        "reason": "The bandit was critically hit and defeated."
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "dc": 20,
+        "reason": "Training an animal (Train Animal feat)",
+        "skill": "nature"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Jão's first strike against the bandit.",
+        "skill": "dagger",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "First strike of Twin Distraction (no off-guard)",
+        "skill": "dagger",
+        "target": "de829d1a"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "update_state",
+      "args": {
+        "target": "de829d1a"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "update_state",
+      "args": {
+        "addConditions": [
+          "off-guard"
+        ],
+        "target": "de829d1a"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Second strike of Twin Distraction (off-guard)",
+        "skill": "dagger",
+        "target": "de829d1a"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "First Strike of Twin Feint (no off-guard)",
+        "skill": "dagger",
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "update_state",
+      "args": {
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "update_state",
+      "args": {
+        "addConditions": [
+          "off-guard"
+        ],
+        "target": "Bandit"
+      },
+      "wasError": false
+    },
+    {
+      "tool": "roll_check",
+      "args": {
+        "reason": "Second Strike of Twin Feint (off-guard)",
+        "skill": "dagger",
+        "target": "Bandit"
+      },
+      "wasError": false
+    }
+  ]
+}

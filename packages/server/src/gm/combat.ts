@@ -272,6 +272,11 @@ export function enemyCombatant(
   level: number,
   sb?: CreatureStatblock & { sourceName: string; traits: string[] },
 ): Combatant {
+  // Statblock sem HP utilizável não é statblock: entrar com hp 0 faria a
+  // criatura nascer DERROTADA. Cai no benchmark de nível — o mesmo caminho
+  // honesto de quem não tem statblock (achado da varredura: Phantasmal
+  // Protagonist, nível 4, hp 0 no dataset).
+  if (sb && !(sb.hp > 0)) sb = undefined;
   if (sb) {
     return newCombatant({
       name,

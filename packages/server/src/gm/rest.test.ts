@@ -69,6 +69,22 @@ describe("rest (regras reais de descanso)", () => {
     expect(s.state.conditions).toContain("drained 1");
   });
 
+  it("overnight: decrementa doomed (implementado e sem teste até aqui)", async () => {
+    const s = mkSession(20);
+    s.state.conditions = ["doomed 2"];
+    await executeTool(s, "rest", { kind: "overnight" }, noop);
+    expect(s.state.conditions).toContain("doomed 1");
+  });
+
+  it("overnight: doomed 1 some de vez, e wounded NÃO é tocado", async () => {
+    // wounded só sai com cura completa/Treat Wounds — dormir não zera.
+    const s = mkSession(20);
+    s.state.conditions = ["doomed 1", "wounded 2"];
+    await executeTool(s, "rest", { kind: "overnight" }, noop);
+    expect(s.state.conditions.join(" ")).not.toMatch(/doomed [1-9]/);
+    expect(s.state.conditions).toContain("wounded 2");
+  });
+
   it("treat_wounds: exige Medicine treinado", async () => {
     const s = mkSession(20);
     const out = await executeTool(s, "rest", { kind: "treat_wounds" }, noop);

@@ -22,6 +22,7 @@ import {
   brainWriting,
   resetBrainStore,
 } from "../gm/brain.js";
+import { archiveDestination } from "../gm/campaign-archive.js";
 import { buildRecapData, resumeKickoff } from "../gm/recap.js";
 import { loadSave, restoreIntoSession } from "../gm/save.js";
 import { createSession, getSession } from "../gm/sessions.js";
@@ -89,8 +90,7 @@ function campaignExists(): boolean {
 function archiveCampaign(): string | null {
   const dir = brainDir();
   if (!campaignExists()) return null;
-  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").replace(/^(\d{8})/, "$1-");
-  const dest = `${dir}-archive-${stamp}`;
+  const dest = archiveDestination(dir);
   renameSync(dir, dest);
   resetBrainStore();
   console.log(`[campaign] campanha anterior arquivada em ${dest}`);
