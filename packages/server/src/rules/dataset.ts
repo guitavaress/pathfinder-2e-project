@@ -422,6 +422,104 @@ export function activityRequirement(
   return null;
 }
 
+/** Custo de uso de um feat/ação, na taxonomia real do PF2e. */
+export interface CostProfile {
+  /** Nome canônico do registro. */
+  name: string;
+  /** `action` gasta ações; `reaction` gasta A reação; `free` e `passive` não gastam nada. */
+  kind: "action" | "reaction" | "free" | "passive";
+  /** Ações gastas — só é > 0 quando `kind === "action"`. */
+  cost: number;
+}
+
+let byNameAll: Map<string, RuleRecord[]> | null = null;
+
+/** Todos os registros que compartilham um nome (em qualquer categoria). */
+function recordsNamed(name: string): RuleRecord[] {
+  if (!byNameAll) {
+    byNameAll = new Map();
+    for (const r of load()) {
+      const key = normalize(r.name);
+      const list = byNameAll.get(key);
+      if (list) list.push(r);
+      else byNameAll.set(key, [r]);
+    }
+  }
+  return byNameAll.get(normalize(name)) ?? [];
+}
+
+/**
+ * Homônimos de um registro — os OUTROS registros com o mesmo nome.
+ *
+ * O índice principal é primeiro-ganha por ordem alfabética de arquivo, então
+ * servir só o vencedor esconde dado do modelo (doutrina: o dado não se
+ * esconde). Quem consulta mostra os dois e deixa o modelo escolher.
+ */
+export function homonymsOf(rec: RuleRecord): RuleRecord[] {
+  return recordsNamed(rec.name).filter(
+    (r) => r !== rec && r.category !== rec.category,
+  );
+}
+
+/** Rótulo curto do custo de uso, para o texto que o modelo lê. */
+export function actionLabel(rec: RuleRecord): string {
+  if (rec.actionType === "reaction") return "reaction";
+  if (rec.actionType === "free") return "free action";
+  if (rec.actionType === "action") {
+    const n = Math.max(1, rec.actionCost ?? 1);
+    return `${n} action${n > 1 ? "s" : ""}`;
+  }
+  if (rec.actionType === "passive") return "passive";
+  return "";
+}
+
+/**
+ * Perfil de custo de um feat/ação pelo NOME EXATO.
+ *
+ * Por que `prefer`: o índice por nome do `load()` é primeiro-ganha na ordem
+ * alfabética dos arquivos, então `actions.json` ofusca `feats.json` em todo
+ * homônimo. "Shake it Off" existe nos dois — ação de REAÇÃO [fortune, primal]
+ * e feat de bárbaro de 1 AÇÃO — e o lookup genérico servia a reação, fazendo a
+ * engine cobrar zero pelo feat (bateria 2026-07-24). Quem desempata é a ficha:
+ * se o personagem TEM o feat, a categoria `feats` manda.
+ *
+ * Por que custo CONCRETO ganha de `passive`: a varredura de conformidade achou
+ * 44 nomes com custo divergente, e em 34 deles o registro de `feats` é
+ * `passive` porque o feat apenas CONCEDE a habilidade — a mecânica real (e o
+ * custo) vive no registro de `actions` com o mesmo nome (Hunt Prey, Change
+ * Shape, Arcane Cascade, Opportune Riposte…). Preferir cegamente a ficha ali
+ * devolveria "passivo, custo zero" para atividades de 1-2 ações e faria 7
+ * reações jamais debitarem a reação. `passive` só vence quando é a única forma
+ * que existe.
+ */
+export function costProfileOf(
+  name: string,
+  prefer: "feats" | "actions" = "feats",
+): CostProfile | null {
+  const candidates = recordsNamed(name).filter(
+    (r) => r.category === "feats" || r.category === "actions",
+  );
+  if (!candidates.length) return null;
+  const concrete = (r: RuleRecord) =>
+    r.actionType === "action" || r.actionType === "reaction" || r.actionType === "free";
+  const preferred = candidates.find((r) => r.category === prefer);
+  const rec =
+    preferred && concrete(preferred)
+      ? preferred
+      : (candidates.find(concrete) ?? preferred ?? candidates[0]!);
+  const kind: CostProfile["kind"] =
+    rec.actionType === "action" ||
+    rec.actionType === "reaction" ||
+    rec.actionType === "free"
+      ? rec.actionType
+      : "passive";
+  return {
+    name: rec.name,
+    kind,
+    cost: kind === "action" ? Math.max(1, rec.actionCost ?? 1) : 0,
+  };
+}
+
 let creaturesByName: Map<string, RuleRecord> | null = null;
 
 /**

@@ -40,6 +40,10 @@ export const SKILL_ABILITIES = {
 export type SkillName = keyof typeof SKILL_ABILITIES;
 export const SKILL_NAMES = Object.keys(SKILL_ABILITIES) as SkillName[];
 
+/** The three saving throws. Keys of `CharacterSchema.saves`/`CombatantSchema.saves`. */
+export const SAVE_NAMES = ["fortitude", "reflex", "will"] as const;
+export type SaveName = (typeof SAVE_NAMES)[number];
+
 /** Proficiency rank: 0 untrained, 1 trained, 2 expert, 3 master, 4 legendary. */
 export const ProficiencyRankSchema = z.union([
   z.literal(0),
