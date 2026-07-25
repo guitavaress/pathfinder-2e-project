@@ -28,6 +28,8 @@ interface FeatRecord {
   source: string;
   actionType?: string | null;
   actionCost?: number | null;
+  /** Taxonomia NATIVA do Foundry (import total): class|ancestry|skill|pfsboon|… */
+  featCategory?: string;
 }
 
 export type Classification = "combate" | "fora-de-combate" | "ambiguo";
@@ -39,6 +41,8 @@ export interface ClassifiedFeat {
   traits: string[];
   actionType: string | null;
   actionCost: number | null;
+  /** Taxonomia NATIVA (repassada do dataset) — os filtros usam ela, não regex. */
+  featCategory: string | null;
   classification: Classification;
   archetype: string;
 }
@@ -203,6 +207,7 @@ export function classify(f: FeatRecord): ClassifiedFeat {
     traits: f.traits,
     actionType: f.actionType ?? null,
     actionCost: f.actionCost ?? null,
+    featCategory: f.featCategory ?? null,
     classification,
     archetype,
   };
