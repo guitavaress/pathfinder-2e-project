@@ -107,3 +107,18 @@ sentadas reais, não imports. Turno vazio com `session.resumed` usa `resumeKicko
 engine monta o recap (`buildRecapData`: cauda da Timeline + quests ativas + última cena) e
 o modelo só narra — o que não está no recap não aconteceu. Import com campanha existente
 **arquiva** o brain em `brain-archive-<data>/` (nunca apaga).
+
+## Evolução do projeto — leia antes de mexer em arquitetura
+
+**Régua (inegociável):** mecânica em código, voz no LLM. Todo estado que exige
+precisão (números, condições, posição, dano persistente, custo de ação, dying)
+mora em código determinístico e testado. O modelo só chama tools e narra.
+
+**Antes de qualquer mudança de arquitetura, ou ao pegar trabalho do roadmap, leia
+`docs/DECISOES-E-CONTEXTO.md` (os porquês / ADRs) e `docs/ROADMAP.md` (as fases).**
+
+Regras de trabalho:
+- Uma fase / uma tarefa por vez. Nada de frentes paralelas.
+- Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
+  O 75/75 e os 195 testes unitários são piso, não meta.
+- Se uma tarefa contradisser uma decisão registrada nos ADRs, PARE e sinalize.
