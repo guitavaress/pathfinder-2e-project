@@ -21,8 +21,10 @@ inferência zero). Pipeline de **dois estágios** num mesmo modelo: (1) contexto
 resumo mecânico e narra a cena. Já existe uma **engine determinística de combate**
 (iniciativa, 3-action economy, MAP, dano/crit/sneak, condições, dying/recovery,
 orçamento de XP, statblocks reais), a memória persistente ("Brain", grafo markdown)
-e continuidade de campanha (`save.json` + recap determinístico). Cobertura: 195
-testes unitários + bateria feat-audit 75/75.
+e continuidade de campanha (`save.json` + recap determinístico), além de
+**companheiros de grupo** (roster + turno de aliado em código + gate de voz,
+Fase 2/ADR-004). Cobertura: **353 testes unitários** (322 server + 31 brain) +
+bateria feat-audit (gate vigente registrado no ROADMAP).
 
 ---
 
@@ -113,7 +115,8 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   comparável).
 
 ### ADR-004 — Companheiros: split mecânico/narrativo, "uma voz por vez"
-- **Status:** Proposto.
+- **Status:** Aceito (implementado e gateado na Fase 2, 2026-07-25 — 75/75 na
+  feat-audit, 353 unitários).
 - **Contexto:** NPCs aliados no grupo ainda não existem. O risco não é "quantos
   NPCs há", é **quantas vozes distintas o 12B mantém no mesmo contexto ao mesmo
   tempo** — ele borra personalidades quando encarna 3-4 de uma vez.
@@ -126,6 +129,27 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   gate de "quando um companheiro fala" e um bench que meça o vazamento de voz com
   1/2/3/4 personas ativas — é assim que se descobre o teto real do Gemma.
 - **Revisitar quando:** o bench indicar onde a coerência de vozes quebra.
+- **Fase 2 — CONCLUÍDA em 2026-07-25 (gate: 75/75 na feat-audit).** Entregue: `Companion`
+  no shared (stats resolvidos e CONGELADOS no recrutamento — statblock oficial
+  ou benchmark de nível), roster em `GameState.companions` (persistido no save,
+  campo opcional para não quebrar saves v1), tool `manage_companion`
+  (join/leave com enforcement de engine: bestiary vence o palpite de nível,
+  dedupe fuzzy, teto de party 4, saída bloqueada em combate), `resolveAllyTurns`
+  espelhando o motor inimigo, revide inimigo distribuído por round-robin e o
+  gate `gm/voice-gate.ts`.
+- **O achado do bench (2026-07-25, 64 gerações, `scripts/voice-bench/`):** a
+  premissa do ADR estava **certa no risco, errada no sintoma**. Com o gate: 0
+  violações de silêncio e 0 vazamentos de marcador verbal em 1/2/3/4 personas;
+  o escolhido falou em 23 de 24 turnos, 22 na voz certa — **nenhuma degradação
+  até 4 personas**. O braço de CONTROLE (todas as personas no prompt, sem
+  diretiva de vez — o approach ingênuo) revelou o modo de falha real: as vozes
+  não se BORRAM, elas **somem** (o escolhido falou em 5 de 24 turnos, com o
+  marcador em 6). Ou seja, o custo de despejar todas as personas não é confusão
+  de personalidade — é diálogo genérico e raro, com a persona nunca chegando a
+  existir. O gate não só contém as vozes: é o que as torna vivas.
+- **Teto medido:** ≥4 personas com o gate (o limite do ADR-004 não foi
+  alcançado). Se um dia a party crescer além de 4, re-rodar o bench antes de
+  subir `MAX_PARTY_SIZE` — o teto é empírico, não teórico.
 
 ### ADR-005 — Escala de campanha via RAG sobre o Brain
 - **Status:** Proposto.

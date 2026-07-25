@@ -167,6 +167,14 @@ function quotedSpans(text: string): string[] {
 /**
  * Atribuição de fala: o nome numa sentença com aspas OU adjacente a uma (o
  * padrão `Tobin's face lights up. "Aye! ..."` atribui pela vizinhança).
+ *
+ * LIMITE CONHECIDO do juiz (medido em 2026-07-25): a adjacência gera falso
+ * positivo quando o narrador põe uma AÇÃO de fundo do companheiro mudo logo
+ * depois da fala do escolhido ("Sela remains tense, her eyes fixed…" após uma
+ * citação do Tobin). Isso é exatamente o comportamento que a diretiva PEDE —
+ * presença sem fala. Ao ler o relatório, confira as violações no transcript
+ * antes de tratá-las como regressão: a rodada de 2026-07-25 teve 1 violação
+ * reportada em 24 turnos e ela era deste tipo.
  */
 function attributedSpeech(narration: string, name: string): boolean {
   const sentences = narration.split(/(?<=[.!?…]["”']?)\s+/);
