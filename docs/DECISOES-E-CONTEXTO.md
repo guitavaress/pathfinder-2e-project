@@ -167,6 +167,35 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   gramática passa a cobrir argumentos e vale reavaliar. **Ao atualizar o
   `llama.cpp`, reconferir essa linha.**
 
+### ADR-007 — Import é TOTAL; consumo é INCREMENTAL
+- **Status:** Aceito (2026-07-26). Implementado na Fase 1.5.
+- **Contexto:** Censo sobre o clone completo do `foundryvtt/pf2e` @ 7.8.0 mostrou
+  que a doutrina 3 estava violada NA FONTE: dos 27.940 documentos dos packs, o
+  importador antigo descartava 8 tipos inteiros (~1.650 docs — os 1.106 hazards
+  nunca existiram no dataset), jogava fora `system.rules` de 7.653 docs (27% —
+  os rule elements declarativos: FlatModifier, DamageDice, GrantItem…),
+  enterrava 4.290 docs num `misc.json` que nenhuma função lia (2.815 são os
+  `effect` com a mecânica de uso das habilidades) e ignorava a taxonomia nativa
+  `system.category` dos feats — que o `classify-feats.ts` recriava na mão com
+  regex sobre títulos. As 44 colisões de nome e o custo de feat errado da
+  bateria foram sintomas disso.
+- **Decisão:** O import é TOTAL: nenhum documento do core é descartado (tipo
+  desconhecido FALHA o import), e por documento nenhum campo MECÂNICO é
+  descartado — `rules` verbatim + campos estruturados por tipo + grafo de uuids
+  (`selfEffect` normalizado, `uuid-index.json`) + `manifest.json` como prova de
+  zero perda que a conformidade lê. A ENGINE, porém, só consome um dado novo
+  quando houver tarefa própria com teste. Piloto: `condition-modifiers.ts` lê
+  os FlatModifier das condições e a conformidade compara com as constantes da
+  engine (off-guard −2 CA, frightened −N) — alarme de divergência, não troca de
+  fonte.
+- **Consequências:** Dataset ~42 MB (era ~34), 22 categorias; `lookup_rule`
+  ganha hazards no fuzzy e o resto só por nome exato/uuid (política de índice
+  em código — o GM não muda de comportamento porque o dataset cresceu).
+  Únicas exclusões: documentos NÃO-Item (journals/rolltables, 182 docs, sem
+  `type`) e campos editoriais (`img`, `publication`, `folder`).
+- **Revisitar quando:** bump de ref (7.12.2+) — a conformidade audita o diff; e
+  a cada consumidor novo de rule element (fila no ROADMAP).
+
 ### Bifurcações consideradas e adiadas (não fazer sem reabrir a decisão)
 - **Modo dois-modelos** (`RULES_MODEL`/`NARRATIVE_MODEL`): exige segundo
   `llama-server`; limitado pela VRAM. Adiado.

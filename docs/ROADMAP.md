@@ -65,6 +65,39 @@ entender a negação).
 
 ---
 
+## Fase 1.5 — Dataset PF2e COMPLETO (import total do core)
+
+### ✅ CONCLUÍDA em 2026-07-26 (ver ADR-007)
+
+O censo do repo `foundryvtt/pf2e` @ 7.8.0 mostrou a doutrina 3 violada na fonte:
+de 27.940 documentos, o importador descartava ~1.650 (8 tipos inteiros, incluindo
+os 1.106 hazards), jogava fora os rule elements de 7.653 (27%), enterrava 4.290
+num `misc.json` morto e recriava na mão a taxonomia nativa dos feats.
+
+Entregue: importador v2 com mapeamento TOTAL (tipo desconhecido falha o import),
+`rules` verbatim em todo registro, campos estruturados por tipo (featCategory,
+prerequisites, selfEffect normalizado, condições valuadas, hazards com statblock),
+`manifest.json` (prova de zero perda: 27.940/27.940) + `uuid-index.json`; carga
+por manifesto com política de índice em código (fuzzy só nas categorias legadas +
+hazards; effects e afins por nome exato/uuid — o GM não muda de comportamento);
+filtros do harness na taxonomia nativa (regexes de PFS/boon/curse aposentados);
+e o consumidor piloto `condition-modifiers.ts` — a conformidade compara as
+constantes da engine com o dado oficial das condições.
+
+**Fila de consumidores de rule element** (um por vez, cada um com teste):
+1. `FlatModifier` de condições → engine (substituir as constantes pelo dado);
+2. `MultipleAttackPenalty` (Agile Grace etc.) no cálculo de MAP;
+3. `DamageDice`/`FlatModifier` de feats de dano (selector strike-damage);
+4. `Strike` de ancestry (ataques naturais concedidos);
+5. hazards no GM (gerar cena de armadilha com statblock + stealth DC + desarme);
+6. `selfEffect`/effects: aplicar o effect do feat como condição com duração.
+
+Também na fila: bump do ref 7.8.0 → 7.12.2 auditado pela conformidade; corrigir
+`Purging Toxins` (`@item.rank`); redesenho da bateria sobre a taxonomia nativa
+(incluir/excluir classfeatures é decisão desse redesenho).
+
+---
+
 ## Fase 2 — Companheiros de grupo (NPCs aliados)
 
 - **Objetivo:** permitir um grupo pequeno (3–4) de aliados, medindo o teto real do

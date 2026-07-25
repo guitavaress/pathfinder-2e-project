@@ -19,8 +19,13 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
    [MODELO] × [CÓDIGO] × [FALTA DE DEFINIÇÃO] antes do fix. Fix de prompt que
    reincide é promovido a código (escada de escalação).
 3. **Regras como DADOS.** O dataset Foundry (`data/pf2e/generated/`, gerado por
-   `npm run data:pf2e`) traz campos estruturados (actionType, actionCost, traits).
-   A engine lê o dado (ex.: `multiActionCost`), não confia no modelo interpretar prosa.
+   `npm run data:pf2e`) é o import TOTAL do core @ 7.8.0 (ADR-007): 27.940 docs
+   em 22 categorias (inclui hazards, effects, heritages…), com `system.rules`
+   (rule elements) VERBATIM, taxonomia nativa de feats (`featCategory`), grafo de
+   uuids e `manifest.json` como prova de zero perda. A engine lê o dado (ex.:
+   `multiActionCost`, `costProfileOf`), não confia no modelo interpretar prosa —
+   e cada consumo novo de rule element nasce como tarefa própria com teste
+   (piloto: `rules/condition-modifiers.ts`).
 4. **Estado nunca mente.** O narrador recebe os resultados mecânicos numerados como
    última mensagem e é proibido de inventar/inverter; o que não está nas linhas
    não aconteceu. Cura/dano/itens sem fonte na ficha são rejeitados pela engine.
