@@ -9,7 +9,10 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
 1. **Engine garante, prompt reforça.** Com modelo local 12B, toda regra que importa
    ganha enforcement em código (`packages/server/src/gm/combat.ts` + guards em
    `agent.ts`). Prompt é mitigação, nunca garantia. Tools validam entrada — jamais
-   aceitar default silencioso (o bug clássico: `dc ?? 0` fabricava crits). Vale
+   aceitar default silencioso (o bug clássico: `dc ?? 0` fabricava crits). O
+   contrato de argumentos das tools tem **fonte única** em
+   `gm/tool-schemas.ts` (zod manda; o JSON Schema mandado ao modelo é derivado
+   dele) — ver ADR-006 para por que o enforcement é client-side e não GBNF. Vale
    também para o backend: samplers vão fixados em código (`SAMPLERS` no
    `agent.ts`), não herdados dos defaults de quem serve o modelo.
 2. **Classificar antes de corrigir.** Toda falha do GM é diagnosticada como

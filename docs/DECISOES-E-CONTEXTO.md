@@ -100,9 +100,15 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   4. **RAG sobre o Brain** (ver ADR-005) — quando as campanhas ficarem longas.
 - **Consequências:** Confiabilidade primeiro reduz ruído em tudo que vier depois.
   Cada fase mecânica nova **estende a bateria feat-audit**; nada entra que derrube
-  o 75/75 nem os 195 testes.
+  o baseline vigente nem os testes unitários.
 - **Revisitar quando:** um achado da Fase 2 (limite do modelo) reordenar as
   prioridades.
+- **Fase 1 — CONCLUÍDA em 2026-07-25.** Entregou o contrato de argumentos em zod
+  (`gm/tool-schemas.ts`), a economia de ação real (reação/free action) e uma
+  camada determinística de conformidade do dataset. O item "GBNF" saiu por
+  impossibilidade técnica, não por desistência — ver **ADR-006**. Piso de teste
+  atualizado: **291 unitários** e **71/75 na feat-audit** (o 75/75 antigo é de
+  2026-07-05, medido no LM Studio antes da migração, e não é comparável).
 
 ### ADR-004 — Companheiros: split mecânico/narrativo, "uma voz por vez"
 - **Status:** Proposto.
@@ -130,6 +136,36 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   de qualidade de recuperação.
 - **Revisitar quando:** implementar antes de a janela de contexto virar gargalo é
   otimização prematura; fazer quando a dor aparecer.
+
+### ADR-006 — Enforcement de argumento de tool é client-side, não GBNF
+- **Status:** Aceito (2026-07-25).
+- **Contexto:** A Fase 1 nasceu com a premissa de "restringir a saída do estágio
+  de Regras por gramática (GBNF)". Ao ler o código real do `llama.cpp`
+  (commit `505b1ed`), a premissa se mostrou parcialmente desatualizada:
+  1. Com `--jinja` + o template do Gemma 4, o servidor **já monta uma gramática
+     lazy** disparada por `<|tool_call>` (`common/chat.cpp:1412-1430`), que
+     garante o formato: o nome da tool é um dos declarados e o dict de
+     argumentos é sintaticamente válido. O critério de aceite original
+     ("formato inválido impossível de emitir") **já estava satisfeito**.
+  2. O schema dos ARGUMENTOS é ignorado nesse caminho: `chat.cpp:1386` usa um
+     dict genérico e a linha que passaria `parameters` está comentada com um
+     TODO upstream. Todos os outros formatos de chat fazem
+     `p.tool_args(p.schema(...))` — Gemma 4 é a única exceção.
+  3. Não há como injetar gramática pelo request: `response_format`/`json_schema`
+     faz o caminho gemma4 **abandonar o tool calling** (`chat.cpp:1334-1339`), e
+     um `grammar` no corpo é sobrescrito pela gramática do template.
+- **Decisão:** Enforcement de argumento em **camada cliente** — zod é o dono do
+  contrato (`packages/server/src/gm/tool-schemas.ts`), o JSON Schema mandado ao
+  modelo é derivado dele, e `validateToolArgs` roda antes do dispatch. Não
+  forkar o `llama.cpp`.
+- **Consequências:** Argumento fora do contrato é rejeitado de forma auditável
+  antes de chegar à engine, e a rejeição volta ao modelo pelo mesmo canal dos
+  erros semânticos. Em troca, a emissão em si não é impossível — a garantia é a
+  rejeição, não a impossibilidade. O `enum` do schema ainda chega ao modelo como
+  texto, porque o template do Gemma 4 renderiza `enum` de propriedades string.
+- **Revisitar quando:** o TODO de `chat.cpp:1386` for resolvido upstream — aí a
+  gramática passa a cobrir argumentos e vale reavaliar. **Ao atualizar o
+  `llama.cpp`, reconferir essa linha.**
 
 ### Bifurcações consideradas e adiadas (não fazer sem reabrir a decisão)
 - **Modo dois-modelos** (`RULES_MODEL`/`NARRATIVE_MODEL`): exige segundo

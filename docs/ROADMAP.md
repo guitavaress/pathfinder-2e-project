@@ -34,15 +34,34 @@ Ordem definida no **ADR-003**. Fases posteriores assumem as anteriores prontas.
      estágio de Regras a JSON de tool válido por construção.
   3. Manter (não remover) a validação semântica em código que rejeita o que a
      ficha não suporta — gramática cuida do *formato*, engine cuida do *sentido*.
-- **Critérios de aceite:** tool call com formato inválido torna-se impossível de
-  ser emitida; entradas semanticamente inválidas continuam rejeitadas pela engine
-  com erro auditável.
-- **Testes:** casos novos que tentam produzir tool JSON malformado e verificam que
-  não passa; feat-audit segue 75/75; 195 testes seguem verdes.
-- **Riscos:** gramática rígida demais pode bloquear tool call legítima — cubra com
+- **Critérios de aceite (revisados em 2026-07-25 — ver ADR-006):** argumento fora
+  do contrato é **rejeitado de forma auditável antes de chegar à engine**, com
+  fonte única em zod; entradas semanticamente inválidas continuam rejeitadas pela
+  engine. O critério original ("formato inválido impossível de emitir") saiu por
+  já ser verdade de graça: o `llama.cpp` restringe o formato por gramática desde a
+  migração, e o schema de argumentos é ignorado upstream no caminho Gemma 4.
+- **Testes:** casos que tentam violar o contrato e verificam que não passam, mais
+  um corpus de aceitação com as chamadas reais já observadas (rede contra apertar
+  demais).
+- **Riscos:** contrato rígido demais pode bloquear tool call legítima — cubra com
   teste os formatos válidos conhecidos antes de apertar.
-- **Feito quando:** os critérios acima passam e o ADR-002 registra a gramática como
-  camada vigente.
+
+### ✅ CONCLUÍDA em 2026-07-25
+
+Entregue: contrato de argumentos em zod (`gm/tool-schemas.ts`) com JSON Schema
+derivado; economia de ação real (reação do jogador debitada/recarregada, free
+action, custo lido da taxonomia do dataset); camada determinística de
+conformidade do dataset; e dois bugs de bloqueio corrigidos (arquivamento de
+campanha colidindo, e a bateria rodando contra o brain real do jogador).
+
+**Piso atualizado: 291 testes unitários e 71/75 na feat-audit.** O 75/75 citado
+antes é de 2026-07-05, medido no LM Studio antes da migração para llama.cpp, com
+a bateria quebrada entre 14/07 e 25/07 — não é comparável.
+
+Das 4 não-PASS do baseline, **3 são a mesma causa** (o modelo chama `lookup_rule`
+e encerra o turno sem resolver nada) e **1 é falso positivo do juiz** (o regex de
+golpe falso casa `"the steel bites into nothing but the mountain air"` sem
+entender a negação).
 
 ---
 
@@ -124,6 +143,35 @@ Ordem definida no **ADR-003**. Fases posteriores assumem as anteriores prontas.
   Aceito.
 
 ---
+
+## Fila de confiabilidade (achados de 2026-07-25, priorizados)
+
+Levantados durante a Fase 1 e **deliberadamente adiados** para não abrir frentes
+paralelas. Atacar nesta ordem, um por vez:
+
+1. **Buraco do `[ENGINE CHECK]`** — causa de 3 das 4 falhas do baseline. A escada
+   de escalação existe para "combate ativo e nada resolvido", mas o loop é
+   `if (runIteration(...) === 0) break`: uma resposta em prosa a encerra na
+   primeira das 3 tentativas. Precisa também de gatilho para "as únicas tools do
+   turno foram `lookup_rule`", e de declarar no resumo mecânico quando nada foi
+   resolvido (doutrina 4). Junto: `lookup_rule` deve deixar a **ficha** escolher a
+   entrada principal em homônimo, como `costProfileOf` já faz.
+2. **Juiz da bateria** — hoje é cego e acusa errado. Cego: 40 dos 75 cenários
+   (7 reaction, 2 free, 31 passive) não têm asserção de que o feat foi usado —
+   `Nimble Dodge` e `Reactive Shield` passaram sem o feat ter sido usado uma vez.
+   Acusa errado: o `FALSE_BLOW_KW` não entende negação.
+3. **Baterias seccionadas por área de regra** — `rest`, magias, itens,
+   bestiary/reações/dano persistente hoje têm **zero** cobertura de bateria. Nota:
+   reações de inimigo nunca disparam nos cenários atuais porque o "bandit"
+   genérico não tem statblock.
+4. **`--repeat` para medir variância** — o estágio de regras roda a `temperature
+   0.3`; o mesmo cenário alterna PASS/FAIL entre rodadas, o que dificultou
+   atribuir falhas. Taxa de PASS vale mais que veredito binário.
+5. **`run-bestiary-battery.ts` não tem sandbox de brain** — rodá-la hoje arquiva a
+   campanha real do jogador a cada um dos 10 cenários. **Não rodar** antes de
+   portar o fix.
+6. **`Purging Toxins`** traz `formula: "@item.rank"` e causa 0 de dano em
+   silêncio — conserto no `scripts/import-pf2e.ts`.
 
 ## Backlog / bifurcações (fora de escopo — não iniciar sem reabrir o ADR)
 
