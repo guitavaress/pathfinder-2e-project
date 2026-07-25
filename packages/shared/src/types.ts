@@ -219,6 +219,38 @@ export const SceneEventSchema = z.discriminatedUnion("type", [
 ]);
 export type SceneEvent = z.infer<typeof SceneEventSchema>;
 
+/**
+ * An NPC ally traveling with the player (ADR-004). The MECHANICAL half lives
+ * here: stats resolved at recruit time (bestiary statblock or level benchmark)
+ * so they never drift if the dataset changes underneath. The NARRATIVE half is
+ * `persona` — a short voice sketch injected one-at-a-time by the voice gate.
+ */
+export const CompanionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  level: z.number().int(),
+  ac: z.number().int(),
+  maxHp: z.number().int(),
+  /** Persists BETWEEN combats — a wounded companion stays wounded. */
+  currentHp: z.number().int(),
+  perception: z.number().int(),
+  conditions: z.array(z.string()),
+  traits: z.array(z.string()),
+  /** Short voice/personality sketch used by the narrative voice gate. */
+  persona: z.string(),
+  /** Canonical bestiary record name when built from a real statblock —
+   *  lets the engine re-resolve attacks/spellcasting, same as enemies. */
+  sourceName: z.string().optional(),
+  saves: z
+    .object({
+      fortitude: z.number().int(),
+      reflex: z.number().int(),
+      will: z.number().int(),
+    })
+    .optional(),
+});
+export type Companion = z.infer<typeof CompanionSchema>;
+
 /** A participant in a combat encounter (the player, an ally, or an enemy). */
 export const CombatantSchema = z.object({
   id: z.string(),
@@ -278,5 +310,8 @@ export const GameStateSchema = z.object({
   spellSlotsUsed: z.record(z.string(), z.number().int()).optional(),
   /** Focus points spent (max = character.focusPoints). Refocus restores 1. */
   focusPointsUsed: z.number().int().optional(),
+  /** NPC allies traveling with the player. Optional for save compat (v1 saves
+   *  predate companions); absent means none. */
+  companions: z.array(CompanionSchema).optional(),
 });
 export type GameState = z.infer<typeof GameStateSchema>;

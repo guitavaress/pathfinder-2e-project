@@ -25,6 +25,7 @@ export function createSession(character: Character): Session {
       conditions: [],
       flags: {},
       combat: null,
+      companions: [],
     },
     messages: [],
   };
