@@ -1685,15 +1685,26 @@ export async function executeTool(
       const query = String(input.query ?? "");
       const local = lookupLocalRule(query);
       if (local) {
-        const traits = local.traits?.length ? ` [${local.traits.join(", ")}]` : "";
+        // A FICHA escolhe a entrada principal, igual ao `costProfileOf`. O
+        // índice é primeiro-ganha por ordem alfabética de arquivo, então
+        // "Shake it Off" era servido como a REAÇÃO de actions.json — e o modelo
+        // ancorava na primeira linha ("reaction") e concluía que não gastava
+        // ação, mesmo com o feat de 1 ação logo abaixo na nota de homônimo.
+        let primary = local;
+        const onSheet = session.character.feats.some(
+          (f) => f.toLowerCase().trim() === primary.name.toLowerCase().trim(),
+        );
+        if (onSheet && primary.category !== "feats") {
+          const asFeat = homonymsOf(primary).find((r) => r.category === "feats");
+          if (asFeat) primary = asFeat;
+        }
+        const traits = primary.traits?.length ? ` [${primary.traits.join(", ")}]` : "";
         // Custo explícito: era o campo mais decisivo do registro e não aparecia
         // no texto que o modelo lê — ele tinha que adivinhar pela prosa.
-        const cost = actionLabel(local);
+        const cost = actionLabel(primary);
         const costTag = cost ? ` [${cost}]` : "";
-        // Homônimos: o índice é primeiro-ganha por ordem de arquivo, então
-        // "Shake it Off" servia a REAÇÃO de actions.json e escondia o feat de
-        // bárbaro de 1 ação. Mostrar os dois em vez de escolher escondido.
-        const others = homonymsOf(local)
+        // Homônimos: mostrar o outro lado em vez de escolher escondido.
+        const others = homonymsOf(primary)
           .map((r) => {
             const c = actionLabel(r);
             const tr = r.traits?.length ? ` [${r.traits.join(", ")}]` : "";
@@ -1701,10 +1712,10 @@ export async function executeTool(
           })
           .join("\n");
         const alsoBlock = others
-          ? `\n\nNOTE — another entry shares this name. If the character has it on their sheet, the FEAT is the one they use:\n${others}`
+          ? `\n\nNOTE — another entry shares this name. The one above is the one THIS character uses:\n${others}`
           : "";
         return {
-          content: `${local.name} (${local.category})${costTag}${traits}\n${local.text}${alsoBlock}`,
+          content: `${primary.name} (${primary.category})${costTag}${traits}\n${primary.text}${alsoBlock}`,
         };
       }
       const web = await lookupWebRule(query);
@@ -2447,6 +2458,23 @@ export async function runRulesStage(
     return toolCalls.length;
   };
 
+  /**
+   * Escalada: insiste até algo ser RESOLVIDO ou o orçamento acabar.
+   *
+   * Antes cada escada fazia `if ((await runIteration(...)) === 0) break`, e uma
+   * resposta em prosa (zero tool calls) a encerrava na PRIMEIRA das 3
+   * tentativas — justamente o que o modelo faz no padrão "consulta a regra e
+   * para". As 3 tentativas existiam no papel e nunca eram usadas. Isso
+   * respondia por 3 das 4 falhas da bateria de 2026-07-25 (Double Shot,
+   * Shake it Off, Esoteric Wayfinder).
+   */
+  const escalate = async (label: string, budget: number): Promise<void> => {
+    for (let i = 0; i < budget; i++) {
+      await runIteration(`${label}${i}`);
+      if (mechanicalResolved || endedTurn) return;
+    }
+  };
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     if ((await runIteration(String(i))) === 0) break;
   }
@@ -2464,9 +2492,7 @@ export async function runRulesStage(
         content:
           "[ENGINE CHECK] Combat is still ACTIVE but you resolved NO actions for the player's message. Decide now: (a) the message describes attacks or checks → resolve them with roll_check; (b) it is an activity/feat WITHOUT a roll → you still MUST pay its cost with spend_actions (and apply its effect with update_state); (c) the message means the fight is over (fleeing, disengaging, sparing, surrender, foes gone) → call end_combat; (d) the player is genuinely only speaking mid-combat → reply exactly 'dialogue only'. Never leave a fight hanging when the story has moved past it.",
       });
-      for (let i = 0; i < 3; i++) {
-        if ((await runIteration(`recheck${i}`)) === 0) break;
-      }
+      await escalate("recheck", 3);
     }
   }
 
@@ -2479,14 +2505,19 @@ export async function runRulesStage(
       .find((m) => m.role === "user");
     const invoked =
       typeof lastUser?.content === "string" ? namedActivity(lastUser.content) : null;
-    if (invoked) {
+    // `anyTool` sem nada resolvido = o modelo chamou SÓ tools de consulta
+    // (lookup_rule/get_character) e encerrou o turno. `namedActivity` sozinho
+    // não pegava isso: ele só indexa `actionType === "action"`, então uma free
+    // action como Esoteric Wayfinder passava batido (bateria 2026-07-25).
+    const consultedOnly = anyTool;
+    if (invoked || consultedOnly) {
       messages.push({
         role: "user",
-        content: `[ENGINE CHECK] The player invoked "${invoked}", which has RULES (an action, usually with a check), but you resolved NOTHING mechanically. Resolve it now: roll_check with its listed skill vs a real DC (lookup_rule first if unsure) and apply any effect with update_state. Only if it truly cannot apply in this scene, answer in one line why.`,
+        content: invoked
+          ? `[ENGINE CHECK] The player invoked "${invoked}", which has RULES (an action, usually with a check), but you resolved NOTHING mechanically. Resolve it now: roll_check with its listed skill vs a real DC (lookup_rule first if unsure) and apply any effect with update_state. Only if it truly cannot apply in this scene, answer in one line why.`
+          : "[ENGINE CHECK] You looked rules up but resolved NOTHING mechanically — consulting is not resolving, and a turn cannot end on a lookup. Resolve it now: roll_check against a real DC for what the player attempted, spend_actions if it costs actions without a roll, or update_state for its effect. Only if it truly cannot apply in this scene, answer in one line why.",
       });
-      for (let i = 0; i < 2; i++) {
-        if ((await runIteration(`activity-recheck${i}`)) === 0) break;
-      }
+      await escalate("activity-recheck", 2);
     }
   }
 
@@ -2544,7 +2575,7 @@ function checkReason(label: string): string {
  * deliberately omits rules jargon (no "DC", "total", or die numbers) so that
  * if the narrative model leaks this block verbatim, nothing breaks immersion.
  */
-function buildMechanicalSummary(
+export function buildMechanicalSummary(
   session: Session,
   summaryLines: string[],
   consulted: string[],
@@ -2572,6 +2603,14 @@ function buildMechanicalSummary(
   if (combat?.active && summaryLines.length === 0) {
     lines.unshift(
       "NOTHING was resolved this turn: no attack happened, nobody was hit, no damage was dealt. Narrate only hesitation or repositioning — do NOT invent any blow, wound, or damage.",
+    );
+  }
+  // Fora de combate o vazio era silencioso: o modelo consultava a regra, não
+  // resolvia nada, e o narrador ficava livre para dizer que a atividade deu
+  // certo. Doutrina 4 — o que não está nas linhas não aconteceu.
+  if (!combat?.active && summaryLines.length === 0 && anyTool) {
+    lines.unshift(
+      "NOTHING was resolved mechanically this turn: the rules were consulted but no check was rolled, no cost was paid and no effect was applied. Narrate only the attempt and the atmosphere — do NOT state that it worked, that anything changed, or that any rule took effect.",
     );
   }
   if (consulted.length) {

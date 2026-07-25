@@ -79,11 +79,22 @@ describe.skipIf(!hasGenerated)("lookup_rule mostra o custo e não esconde homôn
     expect(out.content).toMatch(/\[2 actions\]/);
   });
 
-  it("avisa quando outro registro divide o nome (caso Shake it Off)", async () => {
+  it("quem tem o feat na ficha recebe o FEAT como entrada principal", async () => {
+    // O índice é primeiro-ganha por ordem de arquivo e servia a REAÇÃO de
+    // actions.json na primeira linha; o modelo ancorava nela e concluía que
+    // não gastava ação (3 FAILs seguidos na bateria). A ficha é quem decide.
     const s = mkSession(["Shake it Off"]);
     const out = await executeTool(s, "lookup_rule", { query: "Shake it Off" }, noop);
-    // O índice serve a reação de actions.json; o feat de 1 ação PRECISA aparecer.
+    expect(out.content.split("\n")[0]).toMatch(/\(feats\) \[1 action\]/);
+    // E o homônimo segue visível, não escondido.
     expect(out.content).toMatch(/another entry shares this name/i);
+    expect(out.content).toMatch(/\(actions\) \[reaction\]/);
+  });
+
+  it("sem o feat na ficha, a entrada principal segue a do índice", async () => {
+    const s = mkSession([]);
+    const out = await executeTool(s, "lookup_rule", { query: "Shake it Off" }, noop);
+    expect(out.content.split("\n")[0]).toMatch(/\(actions\) \[reaction\]/);
     expect(out.content).toMatch(/\(feats\) \[1 action\]/);
   });
 

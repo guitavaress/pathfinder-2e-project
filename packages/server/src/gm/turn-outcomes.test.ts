@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Character } from "@pf2e/shared";
-import { executeTool, runRulesStage } from "./agent.js";
+import { buildMechanicalSummary, executeTool, runRulesStage } from "./agent.js";
 import { parsePathbuilder } from "../pathbuilder/parse.js";
 import type { Session } from "./sessions.js";
 
@@ -114,6 +114,39 @@ describe("recovery check: o turno de quem está caído", () => {
     s.state.conditions = ["dying 1"];
     // Sem combate e com HP > 0, o dying não dispara — garantimos pelo estado.
     expect(s.state.currentHp > 0).toBe(true);
+  });
+});
+
+describe("resumo mecânico: o vazio é declarado, nunca silencioso", () => {
+  it("fora de combate, consultar sem resolver é dito ao narrador", async () => {
+    // Era o buraco do Esoteric Wayfinder: o modelo consultava a regra, nada era
+    // resolvido, e o narrador ficava livre para dizer que a atividade deu certo.
+    const s = mkSession();
+    const summary = buildMechanicalSummary(s, [], ["Esoteric Wayfinder"], true, false);
+    expect(summary).toMatch(/NOTHING was resolved mechanically/);
+    expect(summary).toMatch(/do NOT state that it worked/i);
+  });
+
+  it("turno sem tool nenhuma continua sendo 'nenhuma rolagem necessária'", () => {
+    const s = mkSession();
+    expect(buildMechanicalSummary(s, [], [], false, false)).toBe(
+      "No roll was needed this turn.",
+    );
+  });
+
+  it("com mecânica resolvida, nenhum aviso de vazio aparece", () => {
+    const s = mkSession();
+    const summary = buildMechanicalSummary(s, ["- Stealth check: success."], [], true, false);
+    expect(summary).not.toMatch(/NOTHING was resolved/);
+    expect(summary).toMatch(/Stealth check/);
+  });
+
+  it("em combate o aviso de vazio é o de combate", async () => {
+    const s = mkSession();
+    await executeTool(s, "start_combat", { enemies: [{ name: "Bandit", level: 1 }] }, noop);
+    const summary = buildMechanicalSummary(s, [], ["Shake it Off"], true, false);
+    expect(summary).toMatch(/NOTHING was resolved this turn/);
+    expect(summary).toMatch(/do NOT invent any blow/i);
   });
 });
 
