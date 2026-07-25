@@ -3,7 +3,7 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
-import type { AttackContext, Character, Combatant, Weapon } from "@pf2e/shared";
+import type { AttackContext, Character, Combatant, Companion, Weapon } from "@pf2e/shared";
 import type { CheckResult, GameState } from "@pf2e/shared";
 import { isValidDc, rollCheck } from "../dice/check.js";
 import {
@@ -27,6 +27,7 @@ import {
 import { lookupWebRule } from "../rules/web.js";
 import { buildTools } from "./tool-schemas.js";
 import {
+  allyCombatant,
   applyDamage,
   applyRecovery,
   attackStatusPenalty,
@@ -47,6 +48,9 @@ import {
   isOffGuard,
   livingEnemy,
   mapPenalty,
+  MAX_PARTY_SIZE,
+  newCompanion,
+  normalizeName,
   passiveFeatBonus,
   planEncounter,
   playerCombatant,
@@ -577,6 +581,39 @@ function resolveCreature(name: string): { record: RuleRecord | null; level: numb
     return { record, level: record.level };
   }
   return { record: null, level: DEFAULT_ENEMY_LEVEL };
+}
+
+/** Roster de companheiros da sessão (inicializa o campo em saves antigos). */
+function companionsOf(session: Session): Companion[] {
+  return (session.state.companions ??= []);
+}
+
+/** Companheiro do roster cujo nome bate (fuzzy, mesmos dois sentidos do combate). */
+function findCompanion(session: Session, ref: string): Companion | undefined {
+  const key = normalizeName(ref);
+  if (!key) return undefined;
+  return companionsOf(session).find((c) => {
+    const n = normalizeName(c.name);
+    return n.length > 0 && (n === key || n.includes(key) || key.includes(n));
+  });
+}
+
+/**
+ * Copia HP/condições dos combatentes ally de volta ao roster (mesmo id).
+ * Rodada a cada turno: ferida em combate persiste fora dele — o roster e o
+ * combate nunca contam histórias diferentes sobre o mesmo companheiro.
+ */
+export function syncCompanions(session: Session): void {
+  const combat = session.state.combat;
+  if (!combat) return;
+  for (const comp of companionsOf(session)) {
+    const inCombat = combat.combatants.find(
+      (c) => c.kind === "ally" && c.id === comp.id,
+    );
+    if (!inCombat) continue;
+    comp.currentHp = inCombat.currentHp;
+    comp.conditions = [...inCombat.conditions];
+  }
 }
 
 /**
@@ -1399,9 +1436,12 @@ export async function executeTool(
       }
 
       const player = playerCombatant(session.character, session.state.currentHp);
-      const partySize = partySizeOf([player]);
+      // Companheiros do roster entram automaticamente como aliados — e contam
+      // no tamanho da party, então o orçamento de XP escala junto.
+      const allies = companionsOf(session).map(allyCombatant);
+      const partySize = partySizeOf([player, ...allies]);
       const plan = planEncounter(specs, 0, { partyLevel, partySize, difficulty });
-      const combat = buildCombat([player, ...instantiate(plan.accepted)]);
+      const combat = buildCombat([player, ...allies, ...instantiate(plan.accepted)]);
       // This message is the player's turn: give them a full set of actions.
       if (player.actionsRemaining < 3) player.actionsRemaining = 3;
       // Combate novo zera os limites de Frequency de período longo (1/hour...)
@@ -1442,6 +1482,91 @@ export async function executeTool(
       return {
         content: `Combat is over (${reason}). Back to free narration.`,
         summaryLine: `- Combat ends: ${reason}.`,
+      };
+    }
+    case "manage_companion": {
+      const action = String(input.action ?? "");
+      // Mesma limpeza de nome do start_combat: escombros de escaping do JSON
+      // quebrado do modelo não podem entrar no roster (quebram o dedupe).
+      const compName =
+        String(input.name ?? "")
+          .replace(/[\\"]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      if (!compName) return { content: "REJECTED: companion needs a name.", isError: true };
+      const roster = companionsOf(session);
+      const combat = session.state.combat;
+
+      if (action === "leave") {
+        const comp = findCompanion(session, compName);
+        if (!comp) {
+          return {
+            content: `No companion named "${compName}" in the party. Current companions: ${roster.map((c) => c.name).join(", ") || "(none)"}. Nothing changed.`,
+            isError: true,
+          };
+        }
+        if (combat?.active && combat.combatants.some((c) => c.id === comp.id && !c.defeated)) {
+          return {
+            content: `REJECTED: ${comp.name} is fighting — a companion cannot leave the party MID-combat. End the fight first (end_combat if it's over narratively).`,
+            isError: true,
+          };
+        }
+        session.state.companions = roster.filter((c) => c.id !== comp.id);
+        emit({ type: "state", state: session.state });
+        return {
+          content: `${comp.name} left the party. Companions now: ${session.state.companions.map((c) => c.name).join(", ") || "(none)"}.`,
+          summaryLine: `- ${comp.name} leaves the party.`,
+        };
+      }
+
+      // join
+      const existing = findCompanion(session, compName);
+      if (existing) {
+        return {
+          content: `${existing.name} is ALREADY in the party — nothing changed. Do not re-add companions.`,
+          isError: true,
+        };
+      }
+      if (roster.length >= MAX_PARTY_SIZE - 1) {
+        return {
+          content: `REJECTED: the party is full (${MAX_PARTY_SIZE} including the player). Someone must leave before ${compName} can join.`,
+          isError: true,
+        };
+      }
+      // Regras como dados, igual ao inimigo: NPC do bestiary usa statblock e
+      // nível oficiais; nome inventado cai no benchmark do nível declarado.
+      const resolved = resolveCreature(compName);
+      const rawLevel = Number(input.level);
+      const modelLevel =
+        input.level != null && Number.isFinite(rawLevel) ? rawLevel : null;
+      const level = resolved.record ? resolved.level : (modelLevel ?? DEFAULT_ENEMY_LEVEL);
+      const sb =
+        resolved.record?.statblock && resolved.record.level === level
+          ? {
+              ...resolved.record.statblock,
+              sourceName: resolved.record.name,
+              traits: resolved.record.traits ?? [],
+            }
+          : undefined;
+      const persona = String(input.persona ?? "").trim();
+      const comp = newCompanion(compName, level, persona, sb);
+      roster.push(comp);
+      // Recrutado no meio de uma luta (raro, mas legítimo — o NPC vira a mesa):
+      // entra JÁ como combatente, na ordem de iniciativa.
+      let combatNote = "";
+      if (combat?.active) {
+        const ally = allyCombatant(comp);
+        combat.combatants.push(ally);
+        combat.combatants.sort((a, b) => b.initiative - a.initiative);
+        combatNote = ` They join the ongoing fight (initiative ${ally.initiative}).`;
+      }
+      emit({ type: "state", state: session.state });
+      const statNote = comp.sourceName
+        ? `official statblock "${comp.sourceName}", level ${comp.level}`
+        : `level ${comp.level}`;
+      return {
+        content: `${comp.name} joined the party (${statNote}: AC ${comp.ac}, ${comp.currentHp}/${comp.maxHp} HP).${combatNote} Party: ${session.character.name} + ${roster.map((c) => c.name).join(", ")}. The engine will run their combat turns automatically.`,
+        summaryLine: `- ${comp.name} joins the party.${combatNote}`,
       };
     }
     case "spend_actions": {
@@ -2255,6 +2380,23 @@ export function resolveEnemyTurns(
 }
 
 /**
+ * Roster de companheiros para o rules stage: o modelo precisa saber quem JÁ
+ * viaja com o jogador (para não re-recrutar, e para mirar/curar pelo nome).
+ * "" sem companheiros.
+ */
+function partyBlock(session: Session): string {
+  const roster = companionsOf(session);
+  if (!roster.length) return "";
+  const lines = roster
+    .map((c) => {
+      const cond = c.conditions.length ? `, ${c.conditions.join(", ")}` : "";
+      return `- ${c.name} (level ${c.level}): ${c.currentHp}/${c.maxHp} HP${cond}`;
+    })
+    .join("\n");
+  return `# PARTY — NPC companions traveling with the player (already recruited; do NOT call manage_companion 'join' for them; the engine runs their combat turns automatically):\n${lines}`;
+}
+
+/**
  * Live combat state injected into the rules stage so the model always knows the
  * fight is ongoing, whose HP is what, and how many actions the player has left.
  * Returns "" when not in combat.
@@ -2370,6 +2512,7 @@ export async function runRulesStage(
       content: [
         RULES_SYSTEM_PROMPT,
         characterSheetBlock(session.character),
+        partyBlock(session),
         combatBlock,
       ]
         .filter(Boolean)
@@ -2437,7 +2580,7 @@ export async function runRulesStage(
       }
       if (
         !outcome.isError &&
-        ["roll_check", "use_item", "cast_spell", "rest", "spend_actions", "update_state", "start_combat", "end_combat"].includes(
+        ["roll_check", "use_item", "cast_spell", "rest", "spend_actions", "update_state", "start_combat", "end_combat", "manage_companion"].includes(
           tc.function.name,
         )
       ) {
@@ -2869,6 +3012,8 @@ export async function runTurn(
 
     emit({ type: "phase", phase: "rules" });
     const mechanical = await runRulesStage(session, emit);
+    // Feridas de combate persistem no roster — combate e roster nunca divergem.
+    syncCompanions(session);
     console.log(`[GM] mechanical summary: ${mechanical.slice(0, 160) || "(empty)"}`);
 
     // Journaling determinístico (engine, sem modelo): ground truth mecânico.
