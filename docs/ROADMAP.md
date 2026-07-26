@@ -276,13 +276,13 @@ companheiro caído.
 Levantados durante a Fase 1 e **deliberadamente adiados** para não abrir frentes
 paralelas. Atacar nesta ordem, um por vez:
 
-1. **Buraco do `[ENGINE CHECK]`** — causa de 3 das 4 falhas do baseline. A escada
-   de escalação existe para "combate ativo e nada resolvido", mas o loop é
-   `if (runIteration(...) === 0) break`: uma resposta em prosa a encerra na
-   primeira das 3 tentativas. Precisa também de gatilho para "as únicas tools do
-   turno foram `lookup_rule`", e de declarar no resumo mecânico quando nada foi
-   resolvido (doutrina 4). Junto: `lookup_rule` deve deixar a **ficha** escolher a
-   entrada principal em homônimo, como `costProfileOf` já faz.
+1. ✅ **Buraco do `[ENGINE CHECK]` — CONCLUÍDO na Fase 1** (a entrada ficou sem
+   marcação até 2026-07-26). O `if (runIteration(...) === 0) break` virou o
+   helper `escalate()` com condições de parada próprias por escada; existe o
+   gatilho para "as únicas tools do turno foram `lookup_rule`"; o resumo
+   mecânico declara o vazio (doutrina 4 — e é justamente isso que o juiz passou
+   a ler em `engineDeclaredVoid`); e `lookup_rule` deixa a FICHA desempatar
+   homônimos.
 2. ✅ **Juiz da bateria — CONCLUÍDO em 2026-07-26.** Era cego em 40 dos 75
    cenários e acusava errado em 2. Entregue: juiz extraído para
    `scripts/feat-audit/judge.ts` com **31 testes** (não tinha nenhum) e asserção
