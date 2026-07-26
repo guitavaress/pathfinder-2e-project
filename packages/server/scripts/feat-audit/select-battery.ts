@@ -13,21 +13,15 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+// O tipo vem de quem PRODUZ o arquivo. A cópia local que existia aqui ficou
+// defasada quando a Fase 1.5 acrescentou `featCategory` ao classificador: o
+// filtro já usava o campo e o tipo negava que ele existisse.
+import type { ClassifiedFeat } from "./classify-feats.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const GENERATED = join(here, "../../data/pf2e/generated");
 const OUT = join(here, "battery.json");
 
-interface ClassifiedFeat {
-  name: string;
-  level: number | null;
-  rarity: string | null;
-  traits: string[];
-  actionType: string | null;
-  actionCost: number | null;
-  classification: string;
-  archetype: string;
-}
 
 const PER_ARCHETYPE = 5;
 

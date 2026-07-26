@@ -30,6 +30,7 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { costProfileOf } from "../../src/rules/dataset.js";
 import {
   aggregate,
   judge,
@@ -88,6 +89,23 @@ const BASE = `http://localhost:${PORT}`;
 // Cenários a partir da battery.json
 // ---------------------------------------------------------------------------
 
+/**
+ * O `actionType` VALE o do dataset, não o congelado na battery.json.
+ *
+ * A bateria foi gerada antes de `costProfileOf` aprender a desempatar
+ * homônimos, e dois feats ficaram com a classificação errada: `Shield Block` e
+ * `Reactive Strike` existem em `feats.json` como passive E como reaction (além
+ * da entrada em `actions.json`), e o snapshot pegou a passive. Com isso o juiz
+ * os tratava como ponto cego em vez de aferir a reação. Reler o dado oficial
+ * aqui corrige sem regenerar a battery.json — regenerar mudaria QUAIS feats são
+ * testados e quebraria a comparação entre gates.
+ */
+function withDatasetActionType(f: BatteryFeat): BatteryFeat {
+  const profile = costProfileOf(f.name, "feats");
+  if (!profile || profile.kind === f.actionType) return f;
+  return { ...f, actionType: profile.kind };
+}
+
 function loadScenarios(): Scenario[] {
   const b = JSON.parse(readFileSync(BATTERY, "utf8")) as {
     combat: Record<string, BatteryFeat[]>;
@@ -95,10 +113,14 @@ function loadScenarios(): Scenario[] {
   };
   const out: Scenario[] = [];
   for (const [arch, feats] of Object.entries(b.combat)) {
-    for (const f of feats) out.push({ ...f, side: "combat", archetype: arch });
+    for (const f of feats) {
+      out.push({ ...withDatasetActionType(f), side: "combat", archetype: arch });
+    }
   }
   for (const [arch, feats] of Object.entries(b.noncombat)) {
-    for (const f of feats) out.push({ ...f, side: "noncombat", archetype: arch });
+    for (const f of feats) {
+      out.push({ ...withDatasetActionType(f), side: "noncombat", archetype: arch });
+    }
   }
   return out.filter(
     (s) =>
