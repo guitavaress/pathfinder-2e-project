@@ -93,6 +93,9 @@ export interface CreatureAbility {
   actionType: string; // "action" | "reaction" | "free" | "passive"
   actions: number | null;
   text: string;
+  /** Traços da habilidade — fonte dos roll options `item:trait:*`. */
+  traits?: string[];
+  frequency?: { max: number; per: string };
 }
 
 /** An NPC spellcasting entry (DC/attack + granted spell list). */

@@ -242,6 +242,72 @@ describe.skipIf(!hasGenerated)("conformidade do dataset (requer generated/)", ()
     }
     expect(bad.slice(0, 20)).toEqual([]);
   });
+
+  /**
+   * Regressão do conserto do @Localize (T0 da Fase 2.5). O importador APAGAVA
+   * `@Localize[...]` sem substituto, e 22% das habilidades de criatura ficavam
+   * sem descrição — o texto de Grab, Ferocity, Void Healing e Constrict sumia.
+   * Se alguém voltar a descartar o marcador (ou o `static/lang/en.json` sair do
+   * sparse-checkout), estes testes caem.
+   */
+  it("habilidades de glossário do bestiary vêm COM texto", () => {
+    const bestiary = raw("bestiary.json").filter((r) => r.statblock);
+    const semTexto: string[] = [];
+    // Amostra das mais comuns, todas vindas do glossário via @Localize.
+    const glossario = new Set([
+      "grab",
+      "ferocity",
+      "void healing",
+      "constrict",
+      "shield block",
+      "reactive strike",
+      "swallow whole",
+    ]);
+    for (const r of bestiary) {
+      const sb = r.statblock as unknown as {
+        abilitiesList?: { name: string; text?: string }[];
+      };
+      for (const a of sb.abilitiesList ?? []) {
+        if (!glossario.has(a.name.toLowerCase().trim())) continue;
+        if (!String(a.text ?? "").trim()) semTexto.push(`${r.name}: ${a.name}`);
+      }
+    }
+    expect(semTexto.slice(0, 20)).toEqual([]);
+  });
+
+  it("o vazio residual é só label numérico (a informação está no nome)", () => {
+    const bestiary = raw("bestiary.json").filter((r) => r.statblock);
+    const inexplicados: string[] = [];
+    for (const r of bestiary) {
+      const sb = r.statblock as unknown as {
+        abilitiesList?: { name: string; text?: string }[];
+      };
+      for (const a of sb.abilitiesList ?? []) {
+        if (String(a.text ?? "").trim()) continue;
+        // "+1 Status to All Saves vs. Magic" não tem texto em lugar nenhum —
+        // é rótulo de rule element, e o nome JÁ carrega a mecânica.
+        if (/^[+-]\s*\d/.test(a.name.trim())) continue;
+        inexplicados.push(`${r.name}: ${a.name}`);
+      }
+    }
+    // Teto folgado sobre os 28 medidos em 2026-07-26: pega regressão grossa
+    // sem quebrar a cada bump de ref do dataset.
+    expect(inexplicados.length).toBeLessThan(120);
+  });
+
+  it("o pack de glossário em actions.json não guarda texto sintético", () => {
+    const glossario = raw("actions.json").filter(
+      (r) => (r as unknown as { pack?: string }).pack === "bestiary-ability-glossary-srd",
+    );
+    expect(glossario.length).toBeGreaterThan(40);
+    // "Level ? common action." era o fallback que entrava quando o @Localize
+    // apagava a descrição inteira. Sobra só o rótulo numérico, que não tem
+    // texto em lugar nenhum — a mecânica dele É o nome.
+    const sinteticos = glossario.filter(
+      (r) => /^Level \? \w+ action\.$/.test(r.text) && !/^[+-]\s*\d/.test(r.name.trim()),
+    );
+    expect(sinteticos.map((r) => r.name).slice(0, 20)).toEqual([]);
+  });
 });
 
 describe("helpers de dado são totais (não dependem do dataset)", () => {
