@@ -56,6 +56,8 @@ export interface TurnResult {
   toolLines: string[];
   errorLines: string[];
   seconds: number;
+  /** Resumo mecânico que a engine entregou ao narrador (log do servidor). */
+  mechanicalSummary?: string;
 }
 
 /**
@@ -141,6 +143,21 @@ export function reactionInChecks(turn: TurnResult): boolean {
 }
 
 /**
+ * A engine DECLAROU ao narrador que nada foi resolvido neste turno
+ * (`buildMechanicalSummary`, doutrina 4: o que não está nas linhas não
+ * aconteceu).
+ *
+ * Distinguir isto de "o modelo fugiu da mecânica" é o segundo falso positivo
+ * documentado no ROADMAP: `Esoteric Wayfinder` é uma free action de exploração
+ * e o cenário a exercitava numa TAVERNA. A escalação disparou, o modelo
+ * respondeu que não se aplicava, e a engine avisou o narrador — o sistema
+ * inteiro funcionando. Acusar isso é punir o jogo pelo cenário mal desenhado.
+ */
+export function engineDeclaredVoid(turn: TurnResult): boolean {
+  return /NOTHING was resolved/i.test(turn.mechanicalSummary ?? "");
+}
+
+/**
  * Passivos que a ENGINE realmente implementa hoje (`PASSIVE_FEAT_EFFECTS` em
  * combat.ts). Só estes têm efeito observável; o resto é passivo de prosa e
  * cai honestamente em `not-asserted`. Crescer esta lista junto com a engine.
@@ -160,6 +177,17 @@ export const ENGINE_PASSIVES: Record<string, RegExp> = {
 export function assertUsage(s: Scenario, turns: TurnResult[]): UsageAssertion {
   const useTurn = turns[turns.length - 1]!;
   const named = featNamedInTools(useTurn.toolLines, s.name);
+
+  // A engine avisou que nada se aplicava: o cenário não criou as condições do
+  // feat. Não dá para afirmar que ele funciona NEM que falhou — ponto cego
+  // declarado, não acusação. (Reação segue sendo aferida: lá o gatilho é
+  // observável no próprio turno.)
+  if (s.actionType !== "reaction" && engineDeclaredVoid(useTurn)) {
+    return {
+      kind: "not-asserted",
+      why: "a engine declarou que nada se aplicava nesta cena — cenário não exercitou o feat",
+    };
+  }
 
   if (s.actionType === "reaction") {
     const player = playerFromState(useTurn.finalState);
@@ -376,7 +404,9 @@ export function judge(s: Scenario, turns: TurnResult[]): Verdict {
     s.side === "noncombat" &&
     (isActivity || s.actionType !== "passive") &&
     useTurn.checks.length === 0 &&
-    !toolsUsed.includes("update_state")
+    !toolsUsed.includes("update_state") &&
+    // Engine que DECLARA o vazio está cumprindo a doutrina 4, não fugindo dela.
+    !engineDeclaredVoid(useTurn)
   ) {
     demote("SUSPECT", "feat ativo fora de combate resolvido sem mecânica alguma");
   }

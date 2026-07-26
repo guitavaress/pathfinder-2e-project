@@ -310,10 +310,18 @@ async function runTurn(sessionId: string, text: string): Promise<TurnResult> {
     }
   }
   const slice = serverLog.slice(logStart);
-  const toolLines = slice
-    .split("\n")
-    .filter((l) => l.includes("tool ") && l.includes("[GM][rules]"));
+  const lines = slice.split("\n");
+  const toolLines = lines.filter(
+    (l) => l.includes("tool ") && l.includes("[GM][rules]"),
+  );
   const errorLines = toolLines.filter((l) => l.includes("-> ERROR"));
+  // O resumo mecânico é o que a engine DECLARA ao narrador. O juiz precisa dele
+  // para distinguir "a engine avisou que nada se aplicava" (doutrina 4
+  // funcionando) de "o modelo fugiu da mecânica" — ver `engineDeclaredVoid`.
+  const mechanicalSummary = lines
+    .filter((l) => l.includes("[GM] mechanical summary:"))
+    .map((l) => l.split("[GM] mechanical summary:")[1]?.trim() ?? "")
+    .pop();
   return {
     input: text,
     narrative,
@@ -322,6 +330,7 @@ async function runTurn(sessionId: string, text: string): Promise<TurnResult> {
     toolLines,
     errorLines,
     seconds: Math.round((Date.now() - started) / 1000),
+    mechanicalSummary,
   };
 }
 
