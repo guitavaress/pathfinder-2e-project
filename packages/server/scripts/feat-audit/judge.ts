@@ -30,6 +30,16 @@ export interface BatteryFeat {
 export interface Scenario extends BatteryFeat {
   side: "combat" | "noncombat";
   archetype: string;
+  /**
+   * O gatilho do feat depende de POSIÇÃO/alcance ("a creature within your
+   * reach…", "leaves a square…", "an ally ends a move action adjacent to
+   * you"). Derivado do texto oficial pelo harness.
+   *
+   * Sem grid a engine não tem como saber que esse gatilho ocorreu — é a Fase 3.
+   * Cobrar o feat aqui seria acusar o jogo por uma regra que ele ainda não tem
+   * como conhecer; o honesto é declarar o ponto cego e nomear o bloqueio.
+   */
+  triggerNeedsPositioning?: boolean;
 }
 
 export interface CheckEv {
@@ -254,6 +264,12 @@ export function assertUsage(s: Scenario, turns: TurnResult[]): UsageAssertion {
   }
 
   if (s.actionType === "reaction") {
+    if (s.triggerNeedsPositioning) {
+      return {
+        kind: "not-asserted",
+        why: "gatilho depende de posição/alcance — a engine não tem grid (Fase 3)",
+      };
+    }
     const player = playerFromState(useTurn.finalState);
     // Fora de combate (ou sem estado) não há economia de reação para observar.
     if (!player || typeof player.reactionAvailable !== "boolean") {

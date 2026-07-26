@@ -30,7 +30,7 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { costProfileOf } from "../../src/rules/dataset.js";
+import { costProfileOf, lookupLocalRule } from "../../src/rules/dataset.js";
 import {
   aggregate,
   judge,
@@ -106,6 +106,40 @@ function withDatasetActionType(f: BatteryFeat): BatteryFeat {
   return { ...f, actionType: profile.kind };
 }
 
+/**
+ * O gatilho do feat exige posição/alcance? Lido do TEXTO oficial da regra, não
+ * de uma lista escrita à mão: "within your reach", "leaves a square",
+ * "adjacent to you", "ends a move action". Sem grid a engine não produz esses
+ * gatilhos (Fase 3), e o juiz declara ponto cego em vez de acusar.
+ */
+const POSITIONAL_TRIGGER =
+  /within (?:your|his|her|its) reach|leaves a square|adjacent to you|ends a move action|within \d+ feet/i;
+
+function triggerNeedsPositioning(name: string): boolean {
+  const text = lookupLocalRule(name)?.text ?? "";
+  const trigger =
+    text.match(/\*\*Trigger\*\*\s*([^*]{0,300})/i)?.[1] ??
+    text.match(/Trigger[:\s]+([^.]{0,300})/i)?.[1] ??
+    "";
+  return POSITIONAL_TRIGGER.test(trigger);
+}
+
+/** Cenário completo: dado da bateria + o que o DATASET oficial diz sobre ele. */
+function withScenario(
+  f: BatteryFeat,
+  side: "combat" | "noncombat",
+  archetype: string,
+): Scenario {
+  const feat = withDatasetActionType(f);
+  return {
+    ...feat,
+    side,
+    archetype,
+    triggerNeedsPositioning:
+      feat.actionType === "reaction" ? triggerNeedsPositioning(feat.name) : false,
+  };
+}
+
 function loadScenarios(): Scenario[] {
   const b = JSON.parse(readFileSync(BATTERY, "utf8")) as {
     combat: Record<string, BatteryFeat[]>;
@@ -114,12 +148,12 @@ function loadScenarios(): Scenario[] {
   const out: Scenario[] = [];
   for (const [arch, feats] of Object.entries(b.combat)) {
     for (const f of feats) {
-      out.push({ ...withDatasetActionType(f), side: "combat", archetype: arch });
+      out.push(withScenario(f, "combat", arch));
     }
   }
   for (const [arch, feats] of Object.entries(b.noncombat)) {
     for (const f of feats) {
-      out.push({ ...withDatasetActionType(f), side: "noncombat", archetype: arch });
+      out.push(withScenario(f, "noncombat", arch));
     }
   }
   return out.filter(

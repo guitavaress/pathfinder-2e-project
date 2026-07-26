@@ -263,17 +263,44 @@ paralelas. Atacar nesta ordem, um por vez:
    turno foram `lookup_rule`", e de declarar no resumo mecânico quando nada foi
    resolvido (doutrina 4). Junto: `lookup_rule` deve deixar a **ficha** escolher a
    entrada principal em homônimo, como `costProfileOf` já faz.
-2. **Juiz da bateria** — hoje é cego e acusa errado. Cego: 40 dos 75 cenários
-   (7 reaction, 2 free, 31 passive) não têm asserção de que o feat foi usado —
-   `Nimble Dodge` e `Reactive Shield` passaram sem o feat ter sido usado uma vez.
-   Acusa errado: o `FALSE_BLOW_KW` não entende negação.
+2. ✅ **Juiz da bateria — CONCLUÍDO em 2026-07-26.** Era cego em 40 dos 75
+   cenários e acusava errado em 2. Entregue: juiz extraído para
+   `scripts/feat-audit/judge.ts` com **31 testes** (não tinha nenhum) e asserção
+   proporcional à evidência — reação aferida pelo estado da engine (FAIL),
+   free action por heurística de nome (SUSPECT), passivo sem implementação
+   **declarado** como ponto cego em vez de aprovado. Os dois falsos positivos
+   fechados com a string real virando teste de regressão (`Flying Blade`, e
+   `Esoteric Wayfinder` via `engineDeclaredVoid` — engine que cumpre a doutrina
+   4 não é fuga). Novo `replay-judge.ts` re-julga transcripts gravados: validar
+   mudança de juiz passa a custar **zero GPU**. `--repeat=N` (item 4) entrou
+   junto, com o veredito **FLAKY** para cenário instável.
+
+   **A cegueira escondia uma lacuna de código real**, hoje fechada: a reação do
+   jogador era estruturalmente impossível de disparar — `chargeNonAction` só era
+   alcançável por tool call do modelo, durante o turno do jogador, enquanto o
+   revide inimigo roda em código depois. `playerReactionVsStrike` (simétrico ao
+   `triggerEnemyReactions`) resolve Nimble Dodge, Flashy Dodge e Reactive Shield
+   dentro do `strikeAt`. Política determinística: a reação só é gasta quando MUDA
+   o desfecho — sem alguém a quem perguntar no meio do revide, queimá-la num
+   golpe que já erraria seria pior para o jogador.
+
+   **Reações ainda não honradas** (cada uma é tarefa própria):
+   - `Shield Block` e `Clever Gambit` — gatilho é detectável pela engine, mas o
+     efeito não está implementado (redução por Hardness do escudo; identificação
+     via Recall Knowledge). Seguem FAIL na bateria, que é o veredito correto.
+   - `Stand Still`, `Reactive Strike`, `Disrupt Prey`, `Goblin Scuttle` —
+     gatilho depende de alcance/posição. **Bloqueadas na Fase 3**; o juiz as
+     declara "sem asserção" (lendo o `**Trigger**` do dado oficial, não uma
+     lista escrita à mão) em vez de acusar o jogo por uma regra que ele ainda
+     não tem como conhecer.
 3. **Baterias seccionadas por área de regra** — `rest`, magias, itens,
    bestiary/reações/dano persistente hoje têm **zero** cobertura de bateria. Nota:
    reações de inimigo nunca disparam nos cenários atuais porque o "bandit"
    genérico não tem statblock.
-4. **`--repeat` para medir variância** — o estágio de regras roda a `temperature
-   0.3`; o mesmo cenário alterna PASS/FAIL entre rodadas, o que dificultou
-   atribuir falhas. Taxa de PASS vale mais que veredito binário.
+4. ✅ **`--repeat` para medir variância — CONCLUÍDO em 2026-07-26** (junto do
+   item 2). Cada cenário roda N vezes com sessão nova; misto vira **FLAKY**, que
+   é o gatilho da escada de escalação da doutrina 2 (o modelo às vezes acerta →
+   candidato a virar enforcement em código).
 5. **`run-bestiary-battery.ts` não tem sandbox de brain** — rodá-la hoje arquiva a
    campanha real do jogador a cada um dos 10 cenários. **Não rodar** antes de
    portar o fix.

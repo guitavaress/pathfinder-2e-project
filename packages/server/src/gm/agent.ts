@@ -4,8 +4,8 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import type { AttackContext, Character, Combatant, Companion, Weapon } from "@pf2e/shared";
-import type { CheckResult, GameState } from "@pf2e/shared";
-import { isValidDc, rollCheck } from "../dice/check.js";
+import type { CheckResult, DegreeOfSuccess, GameState } from "@pf2e/shared";
+import { degreeOfSuccess, isValidDc, rollCheck } from "../dice/check.js";
 import {
   actionLabel,
   activityFrequency,
@@ -2141,6 +2141,80 @@ function applyPersistentTicks(
 }
 
 /**
+ * Reações DEFENSIVAS do jogador que a engine dispara contra um Strike inimigo.
+ *
+ * POR QUE ISTO EXISTE (achado de 2026-07-26, ao consertar o juiz da bateria):
+ * `chargeNonAction` só era alcançável por tool call do modelo, ou seja, durante
+ * o turno do JOGADOR. Mas o revide inimigo é resolvido em código DEPOIS do
+ * estágio de regras — não havia instante em que o modelo pudesse reagir ao
+ * golpe. Resultado: a reação do jogador era estruturalmente impossível de
+ * disparar no gatilho certo, e `Nimble Dodge`/`Reactive Shield` ficaram 9
+ * cenários da bateria passando sem nunca terem sido usados. Isto é o simétrico
+ * de `triggerEnemyReactions`, que já existia para o inimigo.
+ *
+ * Só entram reações cujo gatilho a engine SABE produzir: "uma criatura te ataca".
+ * Reações de movimento (Stand Still, Reactive Strike, Disrupt Prey) dependem de
+ * alcance e posição — Fase 3; sem grid a engine não tem como saber que o
+ * gatilho ocorreu, e fingir que sabe seria pior que não implementar.
+ */
+const PLAYER_STRIKE_REACTIONS: Record<
+  string,
+  { acBonus: number; meleeOnly?: boolean; needsShield?: boolean }
+> = {
+  // Trigger: "A creature targets you with an attack and you can see the attacker."
+  "nimble dodge": { acBonus: 2 },
+  // Trigger: "A creature you can see targets you with an attack." (panache não
+  // é modelado; o feat na ficha é o gate.)
+  "flashy dodge": { acBonus: 2 },
+  // Trigger: "An enemy hits you with a melee Strike." Raise a Shield na hora.
+  "reactive shield": { acBonus: 2, meleeOnly: true, needsShield: true },
+};
+
+/** O personagem carrega um escudo no Equipment/armor? (Reactive Shield). */
+function hasShield(c: Character): boolean {
+  const shield = /shield/i;
+  return (
+    (c.equipment ?? []).some((e) => shield.test(e.name)) ||
+    (c.armor ?? []).some((a) => shield.test(a.name))
+  );
+}
+
+/**
+ * A reação defensiva do jogador contra ESTE Strike, se houver uma que MUDE o
+ * resultado. Devolve null quando não há reação aplicável, quando ela já foi
+ * gasta nesta rodada, ou quando o bônus não salvaria o golpe.
+ *
+ * Desvio deliberado e determinístico: a engine só gasta a reação quando ela
+ * MUDA o desfecho (transforma acerto em erro, ou crítico em acerto). RAW o
+ * jogador declara antes de saber o resultado; aqui não há a quem perguntar no
+ * meio do revide, e queimar a reação num golpe que já erraria seria pior para
+ * o jogador do que qualquer aproximação. Vale a mesma lógica de "1 mensagem =
+ * 1 turno": a engine joga o lado do jogador de forma previsível.
+ */
+function playerReactionVsStrike(
+  session: Session,
+  target: Combatant,
+  result: CheckResult,
+  melee: boolean,
+): { name: string; acBonus: number; degree: DegreeOfSuccess } | null {
+  if (target.kind !== "player" || !target.reactionAvailable) return null;
+  // Leitura defensiva: isto roda a CADA golpe inimigo, e ficha sem lista de
+  // feats (save antigo, fixture parcial) significa "sem reações" — nunca
+  // derrubar o turno inteiro por causa disso.
+  for (const featName of session.character?.feats ?? []) {
+    const spec = PLAYER_STRIKE_REACTIONS[featName.toLowerCase().trim()];
+    if (!spec) continue;
+    if (spec.meleeOnly && !melee) continue;
+    if (spec.needsShield && !hasShield(session.character)) continue;
+    const degree = degreeOfSuccess(result.die, result.total, result.dc + spec.acBonus);
+    if (degree === result.degree) continue; // não muda nada: guarda a reação
+    target.reactionAvailable = false;
+    return { name: titleCase(featName), acBonus: spec.acBonus, degree };
+  }
+  return null;
+}
+
+/**
  * Um Strike resolvido pela engine entre dois combatentes — turno inimigo,
  * reações (Reactive Strike) e turno de ALIADO (Fase 2). Usa o MAP corrente do
  * atacante (RAW: o MAP só reseta no começo do turno DELE, então a reação fora
@@ -2165,6 +2239,21 @@ function strikeAt(
   const label = `${reactionTag}${attacker.name} ${strikeName} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
   const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(attacker), ac);
   attacker.mapProgress += 1;
+  // Reação DEFENSIVA do jogador (Nimble Dodge, Reactive Shield…): dispara aqui,
+  // que é o único ponto onde a engine sabe que o gatilho ("uma criatura te
+  // ataca") ocorreu. Ajusta o grau ANTES de qualquer dano ser aplicado.
+  let reactionNote = "";
+  if (attacker.kind === "enemy") {
+    // Sem posicionamento, "melee" é o que o statblock indica: ataque sem
+    // rangeIncrement é corpo a corpo (mesma leitura de `strikeProfileFrom`).
+    const melee = !/bow|crossbow|sling|dart|javelin|thrown|ranged/i.test(profile.label);
+    const reacted = playerReactionVsStrike(session, target, result, melee);
+    if (reacted) {
+      result.dc += reacted.acBonus;
+      result.degree = reacted.degree;
+      reactionNote = ` [Reaction: ${reacted.name}, +${reacted.acBonus} AC → ${DEGREE_EN[reacted.degree]}]`;
+    }
+  }
   const crit = result.degree === "criticalSuccess";
   const hit = crit || result.degree === "success";
   let dmgLine = "";
@@ -2218,7 +2307,7 @@ function strikeAt(
     damageType: profile.damage[0]?.type || null,
   };
   emit({ type: "check", result });
-  const line = `- ${reactionTag}${attacker.name} ${strikeName} vs ${target.name}${mapTag} → ${verb}${dmgLine}.`;
+  const line = `- ${reactionTag}${attacker.name} ${strikeName} vs ${target.name}${mapTag}${reactionNote} → ${verb}${dmgLine}.`;
   emit({ type: "state", state: session.state });
   return line;
 }
