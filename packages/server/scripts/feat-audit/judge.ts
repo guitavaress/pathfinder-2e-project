@@ -74,13 +74,77 @@ export interface Verdict {
   feat: string;
   side: string;
   archetype: string;
-  verdict: "PASS" | "FAIL" | "SUSPECT";
+  verdict: VerdictKind;
   actionsSpent: number | null;
   toolsUsed: string[];
   notes: string[];
   seconds: number;
   /** Cobertura de asserção — o número que o relatório soma. */
   usage: UsageAssertion;
+}
+
+/**
+ * `FLAKY` só existe com `--repeat`: o cenário passou uma vez e falhou outra.
+ *
+ * É informação que o veredito binário DESTRÓI, e ela é acionável de forma
+ * diferente das outras: FAIL é defeito determinístico (conserta-se a engine),
+ * FLAKY é o modelo às vezes acertando — o gatilho exato da escada de escalação
+ * da doutrina 2 ("fix de prompt que reincide é promovido a código"). Sem medir
+ * a taxa, um cenário instável parecia ora PASS ora FAIL entre gates e a
+ * diferença era atribuída à mudança errada.
+ */
+export type VerdictKind = "PASS" | "FAIL" | "SUSPECT" | "FLAKY";
+
+/** Resultado de um cenário: o agregado no topo, as rodadas individuais dentro. */
+export interface ScenarioResult extends Verdict {
+  /** Uma entrada por rodada (uma só quando não há `--repeat`). */
+  runs: Verdict[];
+  passRate: { passed: number; total: number };
+}
+
+/** Pior veredito entre dois (FAIL > SUSPECT > PASS). */
+function worse(a: VerdictKind, b: VerdictKind): VerdictKind {
+  const rank: Record<VerdictKind, number> = { PASS: 0, FLAKY: 1, SUSPECT: 2, FAIL: 3 };
+  return rank[a] >= rank[b] ? a : b;
+}
+
+/**
+ * Agrega N rodadas do MESMO cenário. Regra: tudo PASS é PASS; nenhum PASS
+ * herda o pior veredito das rodadas; misto é FLAKY — e a taxa fica visível
+ * para quem quiser julgar por conta própria.
+ */
+export function aggregate(runs: Verdict[]): ScenarioResult {
+  const first = runs[0]!;
+  const passed = runs.filter((r) => r.verdict === "PASS").length;
+  const total = runs.length;
+
+  let verdict: VerdictKind;
+  if (passed === total) {
+    verdict = "PASS";
+  } else if (passed === 0) {
+    verdict = runs.reduce<VerdictKind>((acc, r) => worse(acc, r.verdict), "PASS");
+  } else {
+    verdict = "FLAKY";
+  }
+
+  // Notas de TODAS as rodadas, sem repetir (o motivo pode variar entre elas).
+  const notes = [...new Set(runs.flatMap((r) => r.notes))];
+  // A asserção reportada é a da pior rodada — a que revela o problema.
+  const worstRun =
+    runs.find((r) => r.usage.kind === "missing") ??
+    runs.find((r) => r.usage.kind === "not-asserted") ??
+    first;
+
+  return {
+    ...first,
+    verdict,
+    notes,
+    usage: worstRun.usage,
+    toolsUsed: [...new Set(runs.flatMap((r) => r.toolsUsed))],
+    seconds: runs.reduce((a, r) => a + r.seconds, 0),
+    runs,
+    passRate: { passed, total },
+  };
 }
 
 // ---------------------------------------------------------------------------

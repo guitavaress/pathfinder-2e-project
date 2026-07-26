@@ -10,12 +10,15 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  aggregate,
   assertUsage,
   featNamedInTools,
   judge,
   narratesLandedBlow,
   type Scenario,
   type TurnResult,
+  type Verdict,
+  type VerdictKind,
 } from "./judge.js";
 
 // ---------------------------------------------------------------------------
@@ -343,5 +346,67 @@ describe("judge", () => {
     ]);
     expect(v.verdict).toBe("FAIL");
     expect(v.notes.join(" ")).toMatch(/dupla contagem/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// aggregate — a taxa de PASS do --repeat
+// ---------------------------------------------------------------------------
+
+describe("aggregate (--repeat)", () => {
+  const run = (verdict: VerdictKind, over: Partial<Verdict> = {}): Verdict => ({
+    feat: "Nimble Dodge",
+    side: "combat",
+    archetype: "reacao-defensiva",
+    verdict,
+    actionsSpent: 1,
+    toolsUsed: ["roll_check"],
+    notes: [],
+    seconds: 10,
+    usage: { kind: "confirmed", how: "reação consumida pela engine" },
+    ...over,
+  });
+
+  it("todas as rodadas PASS = PASS", () => {
+    const a = aggregate([run("PASS"), run("PASS"), run("PASS")]);
+    expect(a.verdict).toBe("PASS");
+    expect(a.passRate).toEqual({ passed: 3, total: 3 });
+  });
+
+  it("misto = FLAKY — a informação que o veredito binário destruía", () => {
+    const a = aggregate([run("PASS"), run("FAIL"), run("PASS")]);
+    expect(a.verdict).toBe("FLAKY");
+    expect(a.passRate).toEqual({ passed: 2, total: 3 });
+  });
+
+  it("nenhum PASS herda o PIOR veredito das rodadas", () => {
+    expect(aggregate([run("SUSPECT"), run("FAIL")]).verdict).toBe("FAIL");
+    expect(aggregate([run("SUSPECT"), run("SUSPECT")]).verdict).toBe("SUSPECT");
+  });
+
+  it("uma rodada só não pode ser FLAKY (preserva o comportamento sem --repeat)", () => {
+    expect(aggregate([run("PASS")]).verdict).toBe("PASS");
+    expect(aggregate([run("FAIL")]).verdict).toBe("FAIL");
+    expect(aggregate([run("FAIL")]).passRate).toEqual({ passed: 0, total: 1 });
+  });
+
+  it("reporta a asserção da PIOR rodada, não a da primeira", () => {
+    // Passar às vezes não prova que o feat funciona: o relatório tem que
+    // mostrar a rodada que revelou o problema.
+    const ok = run("PASS");
+    const bad = run("FAIL", {
+      usage: { kind: "missing", why: "reação seguiu disponível" },
+    });
+    expect(aggregate([ok, bad]).usage.kind).toBe("missing");
+  });
+
+  it("acumula notas e tools de todas as rodadas sem repetir", () => {
+    const a = aggregate([
+      run("PASS", { notes: ["nota A"], toolsUsed: ["roll_check"] }),
+      run("FAIL", { notes: ["nota A", "nota B"], toolsUsed: ["update_state"] }),
+    ]);
+    expect(a.notes).toEqual(["nota A", "nota B"]);
+    expect(a.toolsUsed.sort()).toEqual(["roll_check", "update_state"]);
+    expect(a.seconds).toBe(20);
   });
 });

@@ -10,6 +10,11 @@
  * Uso:
  *   npx tsx scripts/feat-audit/run-feat-tests.ts [--side=combat|noncombat]
  *     [--archetype=nome] [--feat="Nome"] [--limit=N] [--port=3101] [--fresh]
+ *     [--repeat=N]
+ *
+ * `--repeat=N` roda cada cenário N vezes e reporta a TAXA de PASS (o estágio de
+ * regras roda a temperature 0.3 e alterna entre rodadas). Cenário que passa
+ * numa e falha noutra vira FLAKY — informação que o veredito binário destrói.
  *
  * Retomada: progress.json guarda os resultados; re-rodar pula os já feitos
  * (use --fresh para zerar). Relatório: report-<data>.md. Transcripts completos
@@ -26,10 +31,12 @@ import {
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
+  aggregate,
   judge,
   type BatteryFeat,
   type CheckEv,
   type Scenario,
+  type ScenarioResult,
   type TurnResult,
   type Verdict,
 } from "./judge.js";
@@ -67,6 +74,14 @@ const ONLY_FEATS = argValue("feat")
 const LIMIT = Number(argValue("limit") ?? Infinity);
 const PORT = Number(argValue("port") ?? 3101);
 const FRESH = argv.includes("--fresh");
+/**
+ * Quantas vezes rodar CADA cenário. O estágio de regras roda a temperature
+ * 0.3: o mesmo cenário alterna entre rodadas, e um veredito binário fazia essa
+ * variância parecer regressão (ou melhora) entre gates. Com N>1 o resultado
+ * vira taxa e cenários instáveis ganham o veredito próprio FLAKY.
+ * Custo: multiplica o tempo da bateria por N.
+ */
+const REPEAT = Math.max(1, Number(argValue("repeat") ?? 1));
 const BASE = `http://localhost:${PORT}`;
 
 // ---------------------------------------------------------------------------
@@ -338,7 +353,7 @@ async function runTurn(sessionId: string, text: string): Promise<TurnResult> {
 // Progresso + relatório
 // ---------------------------------------------------------------------------
 
-type Progress = Record<string, Verdict>;
+type Progress = Record<string, ScenarioResult>;
 
 function loadProgress(): Progress {
   if (FRESH || !existsSync(PROGRESS)) return {};
@@ -356,11 +371,20 @@ function writeReport(progress: Progress): string {
   const count = (v: string) => all.filter((r) => r.verdict === v).length;
   const usage = (k: string) => all.filter((r) => r.usage?.kind === k).length;
   const asserted = usage("confirmed") + usage("missing");
+  const repeats = Math.max(1, ...all.map((r) => r.passRate?.total ?? 1));
   const lines = [
     `# Feat audit — ${date}`,
     "",
-    `${all.length} cenários | PASS ${count("PASS")} · FAIL ${count("FAIL")} · SUSPECT ${count("SUSPECT")}`,
+    `${all.length} cenários | PASS ${count("PASS")} · FAIL ${count("FAIL")} · SUSPECT ${count("SUSPECT")}` +
+      (count("FLAKY") ? ` · FLAKY ${count("FLAKY")}` : ""),
     "",
+    ...(repeats > 1
+      ? [
+          `Cada cenário rodou **${repeats}×** (\`--repeat\`). FLAKY = passou numa rodada e ` +
+            `falhou noutra — instabilidade do modelo, não defeito determinístico.`,
+          "",
+        ]
+      : []),
     // A cobertura é tão importante quanto o veredito: um PASS sem asserção de
     // uso não prova que o feat funcionou, só que nada explodiu.
     `**Cobertura de asserção de uso: ${asserted}/${all.length}** ` +
@@ -380,18 +404,27 @@ function writeReport(progress: Progress): string {
       "",
     );
   }
-  const byArch = new Map<string, Verdict[]>();
+  const byArch = new Map<string, ScenarioResult[]>();
   for (const r of all) {
     const key = `${r.side} / ${r.archetype}`;
     byArch.set(key, [...(byArch.get(key) ?? []), r]);
   }
   for (const [arch, list] of byArch) {
-    lines.push(`## ${arch}`, "", "| Feat | Veredito | Uso | Ações | Tools | Notas |", "|---|---|---|---|---|---|");
+    const rateCol = repeats > 1 ? " Taxa |" : "";
+    const rateSep = repeats > 1 ? "---|" : "";
+    lines.push(
+      `## ${arch}`,
+      "",
+      `| Feat | Veredito |${rateCol} Uso | Ações | Tools | Notas |`,
+      `|---|---|${rateSep}---|---|---|---|`,
+    );
     for (const r of list) {
       const u =
         r.usage?.kind === "confirmed" ? "✅" : r.usage?.kind === "missing" ? "❌" : "—";
+      const rate =
+        repeats > 1 ? ` ${r.passRate?.passed ?? "—"}/${r.passRate?.total ?? "—"} |` : "";
       lines.push(
-        `| ${r.feat} | ${r.verdict} | ${u} | ${r.actionsSpent ?? "—"} | ${r.toolsUsed.join(", ") || "—"} | ${r.notes.join("; ") || "—"} |`,
+        `| ${r.feat} | ${r.verdict} |${rate} ${u} | ${r.actionsSpent ?? "—"} | ${r.toolsUsed.join(", ") || "—"} | ${r.notes.join("; ") || "—"} |`,
       );
     }
     lines.push("");
@@ -427,27 +460,38 @@ async function main() {
         `[${i + 1}/${pending.length}] ${s.side}/${s.archetype} — ${s.name} ... `,
       );
       try {
-        const imp = await fetch(`${BASE}/character/import`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(makeCharacter(s)),
-        });
-        if (!imp.ok) throw new Error(`import ${imp.status}: ${await imp.text()}`);
-        const { sessionId } = (await imp.json()) as { sessionId: string };
-        const turns: TurnResult[] = [];
-        for (const input of turnsFor(s)) {
-          turns.push(await runTurn(sessionId, input));
+        // Cada rodada é uma SESSÃO NOVA (import próprio): sem isso a segunda
+        // repetição herdaria o combate e o histórico da primeira, e mediria
+        // outra coisa. O último conjunto de turnos vira o transcript.
+        const runs: Verdict[] = [];
+        let lastTurns: TurnResult[] = [];
+        for (let attempt = 0; attempt < REPEAT; attempt++) {
+          const imp = await fetch(`${BASE}/character/import`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(makeCharacter(s)),
+          });
+          if (!imp.ok) throw new Error(`import ${imp.status}: ${await imp.text()}`);
+          const { sessionId } = (await imp.json()) as { sessionId: string };
+          const turns: TurnResult[] = [];
+          for (const input of turnsFor(s)) {
+            turns.push(await runTurn(sessionId, input));
+          }
+          runs.push(judge(s, turns));
+          lastTurns = turns;
         }
-        const verdict = judge(s, turns);
-        progress[s.name] = verdict;
+        const result = aggregate(runs);
+        progress[s.name] = result;
         const slug = s.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
         writeFileSync(
           join(TRANSCRIPTS, `${slug}.json`),
-          JSON.stringify({ scenario: s, turns, verdict }, null, 1),
+          JSON.stringify({ scenario: s, turns: lastTurns, verdict: result }, null, 1),
         );
+        const rate =
+          REPEAT > 1 ? ` [${result.passRate.passed}/${result.passRate.total} PASS]` : "";
         console.log(
-          `${verdict.verdict} (${Math.round((Date.now() - started) / 1000)}s)${
-            verdict.notes.length ? ` — ${verdict.notes[0]}` : ""
+          `${result.verdict}${rate} (${Math.round((Date.now() - started) / 1000)}s)${
+            result.notes.length ? ` — ${result.notes[0]}` : ""
           }`,
         );
       } catch (err) {
@@ -461,6 +505,8 @@ async function main() {
           notes: [`erro do harness: ${(err as Error).message.slice(0, 120)}`],
           seconds: Math.round((Date.now() - started) / 1000),
           usage: { kind: "not-asserted", why: "o cenário nem chegou a rodar" },
+          runs: [],
+          passRate: { passed: 0, total: 0 },
         };
         console.log(`ERRO — ${(err as Error).message.slice(0, 80)}`);
       }

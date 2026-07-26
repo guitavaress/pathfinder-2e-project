@@ -12,7 +12,13 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { judge, type Scenario, type TurnResult, type Verdict } from "./judge.js";
+import {
+  judge,
+  type Scenario,
+  type TurnResult,
+  type Verdict,
+  type VerdictKind,
+} from "./judge.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TRANSCRIPTS = join(here, "transcripts");
@@ -29,7 +35,9 @@ const files = readdirSync(TRANSCRIPTS)
   .sort();
 
 let changed = 0;
-const tally = { PASS: 0, FAIL: 0, SUSPECT: 0 };
+// FLAKY nunca aparece aqui (replay julga UMA rodada gravada por cenário), mas o
+// contador acompanha o tipo para não silenciar um veredito novo no futuro.
+const tally: Record<VerdictKind, number> = { PASS: 0, FAIL: 0, SUSPECT: 0, FLAKY: 0 };
 const usageTally = { confirmed: 0, missing: 0, "not-asserted": 0 };
 const rows: string[] = [];
 
@@ -63,7 +71,8 @@ for (const file of files) {
 console.log(`Re-julgados ${files.length} transcripts com o juiz atual.\n`);
 if (rows.length) console.log(rows.join("\n"), "\n");
 console.log(
-  `Vereditos agora: PASS ${tally.PASS} · FAIL ${tally.FAIL} · SUSPECT ${tally.SUSPECT}`,
+  `Vereditos agora: PASS ${tally.PASS} · FAIL ${tally.FAIL} · SUSPECT ${tally.SUSPECT}` +
+    (tally.FLAKY ? ` · FLAKY ${tally.FLAKY}` : ""),
 );
 console.log(
   `Asserção de uso: confirmado ${usageTally.confirmed} · ausente ${usageTally.missing} · ` +
