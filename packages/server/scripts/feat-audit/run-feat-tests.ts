@@ -25,6 +25,14 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import {
+  judge,
+  type BatteryFeat,
+  type CheckEv,
+  type Scenario,
+  type TurnResult,
+  type Verdict,
+} from "./judge.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = join(here, "../..");
@@ -64,18 +72,6 @@ const BASE = `http://localhost:${PORT}`;
 // ---------------------------------------------------------------------------
 // Cenários a partir da battery.json
 // ---------------------------------------------------------------------------
-
-interface BatteryFeat {
-  name: string;
-  level: number | null;
-  actionType: string | null;
-  actionCost: number | null;
-  traits: string[];
-}
-interface Scenario extends BatteryFeat {
-  side: "combat" | "noncombat";
-  archetype: string;
-}
 
 function loadScenarios(): Scenario[] {
   const b = JSON.parse(readFileSync(BATTERY, "utf8")) as {
@@ -278,31 +274,6 @@ function stopServer(): void {
 // Execução de turno via SSE
 // ---------------------------------------------------------------------------
 
-interface CheckEv {
-  label: string;
-  die: number;
-  total: number;
-  dc: number;
-  degree: string;
-  attack?: {
-    attacker: string;
-    target: string;
-    attackerKind: string;
-    outcome: string;
-    damage: number | null;
-    damageType: string | null;
-  } | null;
-}
-interface TurnResult {
-  input: string;
-  narrative: string;
-  checks: CheckEv[];
-  finalState: Record<string, unknown> | null;
-  toolLines: string[];
-  errorLines: string[];
-  seconds: number;
-}
-
 async function runTurn(sessionId: string, text: string): Promise<TurnResult> {
   const logStart = serverLog.length;
   const started = Date.now();
@@ -355,146 +326,6 @@ async function runTurn(sessionId: string, text: string): Promise<TurnResult> {
 }
 
 // ---------------------------------------------------------------------------
-// Asserções
-// ---------------------------------------------------------------------------
-
-interface Verdict {
-  feat: string;
-  side: string;
-  archetype: string;
-  verdict: "PASS" | "FAIL" | "SUSPECT";
-  actionsSpent: number | null;
-  toolsUsed: string[];
-  notes: string[];
-  seconds: number;
-}
-
-function playerFromState(state: Record<string, unknown> | null): Record<string, unknown> | null {
-  const combat = (state as { combat?: { active?: boolean; combatants?: Record<string, unknown>[] } } | null)?.combat;
-  if (!combat?.combatants) return null;
-  return combat.combatants.find((c) => c.kind === "player") ?? null;
-}
-
-const FALSE_BLOW_KW =
-  /\b(blade|dagger|sword|strike|blow|fist|steel)\b[^.!]{0,60}\b(sinks|buries|slams into|connects|lands (solidly|squarely|true)|bites into|tears through|pierces)\b/i;
-
-function judge(s: Scenario, turns: TurnResult[]): Verdict {
-  const notes: string[] = [];
-  let verdict: Verdict["verdict"] = "PASS";
-  const useTurn = turns[turns.length - 1]!;
-  const toolsUsed = [
-    ...new Set(
-      useTurn.toolLines
-        .map((l) => l.match(/tool (\w+)\(/)?.[1] ?? "")
-        .filter(Boolean),
-    ),
-  ];
-
-  // Economia de ação (só no turno de uso, em combate, para feats com custo).
-  let actionsSpent: number | null = null;
-  const player = playerFromState(useTurn.finalState);
-  const combatActive = (useTurn.finalState as { combat?: { active?: boolean } } | null)?.combat?.active;
-  if (s.side === "combat" && player && typeof player.actionsRemaining === "number") {
-    actionsSpent = 3 - (player.actionsRemaining as number);
-    if (
-      s.actionType === "action" &&
-      (s.actionCost ?? 0) >= 1 &&
-      combatActive &&
-      actionsSpent < (s.actionCost ?? 0)
-    ) {
-      verdict = "FAIL";
-      notes.push(
-        `custo de ação não cobrado: feat custa ${s.actionCost}, turno gastou ${actionsSpent}`,
-      );
-    }
-  }
-
-  // DC inválido passou pela engine? (não deveria ser possível)
-  for (const c of useTurn.checks) {
-    if (!c.attack && c.dc < 5) {
-      verdict = "FAIL";
-      notes.push(`check com DC inválido (${c.dc}) escapou do guard`);
-    }
-  }
-
-  // Golpe narrado sem mecânica correspondente.
-  const anyHit = useTurn.checks.some(
-    (c) => c.attack && (c.attack.outcome === "hit" || c.attack.outcome === "criticalHit"),
-  );
-  if (s.side === "combat" && !anyHit && FALSE_BLOW_KW.test(useTurn.narrative)) {
-    verdict = "FAIL";
-    notes.push("narrativa descreve golpe conectando, mas nenhum hit mecânico ocorreu");
-  }
-
-  // Dupla contagem: update_state com hpDelta negativo no mesmo turno de um
-  // hit — só conta se a engine ACEITOU (chamadas rejeitadas pelo guard são o
-  // comportamento correto, não uma falha).
-  const manualDamage = useTurn.toolLines.some(
-    (l) =>
-      l.includes("update_state") &&
-      /"hpDelta":-\d+/.test(l) &&
-      /"target"/.test(l) &&
-      !l.includes("-> ERROR"),
-  );
-  if (anyHit && manualDamage) {
-    verdict = "FAIL";
-    notes.push("dupla contagem: hit da engine + hpDelta manual no mesmo turno");
-  }
-
-  // Erros de tool não recuperados (nenhuma tool bem-sucedida depois).
-  if (useTurn.errorLines.length > 0) {
-    const lastError = useTurn.toolLines.lastIndexOf(
-      useTurn.errorLines[useTurn.errorLines.length - 1]!,
-    );
-    const recovered = useTurn.toolLines
-      .slice(lastError + 1)
-      .some((l) => !l.includes("-> ERROR"));
-    if (!recovered && useTurn.checks.length === 0) {
-      if (verdict === "PASS") verdict = "SUSPECT";
-      notes.push(`tool errors sem recuperação: ${useTurn.errorLines.length}`);
-    } else {
-      notes.push(`tool errors recuperados: ${useTurn.errorLines.length}`);
-    }
-  }
-
-  // Nenhuma tool no turno de uso (feats ativos deveriam gerar mecânica).
-  if (
-    s.side === "combat" &&
-    s.actionType === "action" &&
-    useTurn.toolLines.length === 0
-  ) {
-    if (verdict === "PASS") verdict = "SUSPECT";
-    notes.push("nenhuma tool chamada no turno de uso de um feat com custo de ação");
-  }
-
-  // Fora de combate: uso ativo sem nenhum check nem update_state → suspeito.
-  // skill-activity e downtime são ATIVIDADES por definição (exigem mecânica
-  // mesmo quando o Foundry as marca actionType "passive" — caso Sow Rumor).
-  const isActivity =
-    s.archetype === "skill-activity" || s.archetype === "downtime";
-  if (
-    s.side === "noncombat" &&
-    (isActivity || s.actionType !== "passive") &&
-    useTurn.checks.length === 0 &&
-    !toolsUsed.includes("update_state")
-  ) {
-    if (verdict === "PASS") verdict = "SUSPECT";
-    notes.push("feat ativo fora de combate resolvido sem mecânica alguma");
-  }
-
-  return {
-    feat: s.name,
-    side: s.side,
-    archetype: s.archetype,
-    verdict,
-    actionsSpent,
-    toolsUsed,
-    notes,
-    seconds: turns.reduce((a, t) => a + t.seconds, 0),
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Progresso + relatório
 // ---------------------------------------------------------------------------
 
@@ -514,22 +345,44 @@ function writeReport(progress: Progress): string {
   const path = join(here, `report-${date}.md`);
   const all = Object.values(progress);
   const count = (v: string) => all.filter((r) => r.verdict === v).length;
+  const usage = (k: string) => all.filter((r) => r.usage?.kind === k).length;
+  const asserted = usage("confirmed") + usage("missing");
   const lines = [
     `# Feat audit — ${date}`,
     "",
     `${all.length} cenários | PASS ${count("PASS")} · FAIL ${count("FAIL")} · SUSPECT ${count("SUSPECT")}`,
     "",
+    // A cobertura é tão importante quanto o veredito: um PASS sem asserção de
+    // uso não prova que o feat funcionou, só que nada explodiu.
+    `**Cobertura de asserção de uso: ${asserted}/${all.length}** ` +
+      `(uso confirmado ${usage("confirmed")} · uso ausente ${usage("missing")} · ` +
+      `sem asserção ${usage("not-asserted")}). Cenários "sem asserção" são ponto ` +
+      `cego declarado — passar ali significa apenas que nada quebrou.`,
+    "",
   ];
+  const noAssert = all.filter((r) => r.usage?.kind === "not-asserted");
+  if (noAssert.length) {
+    lines.push(
+      "<details><summary>Cenários sem asserção de uso</summary>",
+      "",
+      ...noAssert.map((r) => `- \`${r.feat}\` — ${r.usage.kind === "not-asserted" ? r.usage.why : ""}`),
+      "",
+      "</details>",
+      "",
+    );
+  }
   const byArch = new Map<string, Verdict[]>();
   for (const r of all) {
     const key = `${r.side} / ${r.archetype}`;
     byArch.set(key, [...(byArch.get(key) ?? []), r]);
   }
   for (const [arch, list] of byArch) {
-    lines.push(`## ${arch}`, "", "| Feat | Veredito | Ações | Tools | Notas |", "|---|---|---|---|---|");
+    lines.push(`## ${arch}`, "", "| Feat | Veredito | Uso | Ações | Tools | Notas |", "|---|---|---|---|---|---|");
     for (const r of list) {
+      const u =
+        r.usage?.kind === "confirmed" ? "✅" : r.usage?.kind === "missing" ? "❌" : "—";
       lines.push(
-        `| ${r.feat} | ${r.verdict} | ${r.actionsSpent ?? "—"} | ${r.toolsUsed.join(", ") || "—"} | ${r.notes.join("; ") || "—"} |`,
+        `| ${r.feat} | ${r.verdict} | ${u} | ${r.actionsSpent ?? "—"} | ${r.toolsUsed.join(", ") || "—"} | ${r.notes.join("; ") || "—"} |`,
       );
     }
     lines.push("");
@@ -598,6 +451,7 @@ async function main() {
           toolsUsed: [],
           notes: [`erro do harness: ${(err as Error).message.slice(0, 120)}`],
           seconds: Math.round((Date.now() - started) / 1000),
+          usage: { kind: "not-asserted", why: "o cenário nem chegou a rodar" },
         };
         console.log(`ERRO — ${(err as Error).message.slice(0, 80)}`);
       }

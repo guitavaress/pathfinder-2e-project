@@ -2658,10 +2658,15 @@ export async function runRulesStage(
     for (const tc of toolCalls) {
       const args = parseToolArgs(tc.function.arguments);
       const outcome = await executeTool(session, tc.function.name, args, emit);
+      // 240 e não 80: este log É a fonte de verdade da bateria de feats (o
+      // harness lê o stdout do servidor para saber o que a engine respondeu).
+      // Com 80 caracteres, notas que a engine escreve no FIM da mensagem —
+      // como o `[+2 initiative from Incredible Initiative]` do start_combat —
+      // eram cortadas, e o juiz não conseguia verificar o passivo.
       console.log(
         `[GM][rules]   tool ${tc.function.name}(${JSON.stringify(args)}) -> ${
           outcome.isError ? "ERROR: " : ""
-        }${outcome.content.slice(0, 80)}`,
+        }${outcome.content.slice(0, 240)}`,
       );
       if (outcome.summaryLine) summaryLines.push(outcome.summaryLine);
       if (outcome.endedTurn) endedTurn = true;
