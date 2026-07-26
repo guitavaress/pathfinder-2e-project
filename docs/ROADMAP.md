@@ -11,8 +11,10 @@
 > 3. **A Régua é lei:** mecânica em código, voz no LLM. PR que mova estado para o
 >    modelo é rejeitado por princípio.
 > 4. **Todo comportamento mecânico novo nasce com teste** e estende a bateria
->    feat-audit. O gate vigente da bateria e os **353 testes** (322 server + 31
->    brain) são piso, não meta.
+>    feat-audit. O gate vigente da bateria e os **393 testes** (362 server + 31
+>    brain) são piso, não meta. Ao mexer no JUIZ da bateria, rode
+>    `replay-judge.ts` antes de gastar GPU — ele re-julga transcripts gravados e
+>    separa "o juiz mudou de opinião" de "o jogo mudou".
 > 5. Se uma tarefa contradisser um ADR, **pare e sinalize**.
 
 Ordem definida no **ADR-003**. Fases posteriores assumem as anteriores prontas.
@@ -55,14 +57,32 @@ action, custo lido da taxonomia do dataset); camada determinística de
 conformidade do dataset; e dois bugs de bloqueio corrigidos (arquivamento de
 campanha colidindo, e a bateria rodando contra o brain real do jogador).
 
-**Piso vigente (gate de 2026-07-25, pós-Fase 2): 353 testes unitários e 75/75
-na feat-audit.** O 75/75 de 2026-07-05 NÃO é o mesmo número: foi medido no LM
-Studio antes da migração para llama.cpp, com a bateria quebrada entre 14/07 e
-25/07. Progressão na stack atual: 71/75 (25/07) → 73/75 (26/07, após o fix do
-`[ENGINE CHECK]` + `lookup_rule` pela ficha + import total) → **75/75 (25/07,
-pós-Fase 2)**. Atenção ao ler essa curva: o rules stage roda a temperature 0.3
-e o mesmo cenário alterna entre rodadas — a diferença de 73 para 75 é
-compatível com variância + juiz cego, não é prova de melhora do jogo.
+**Piso vigente (gate de 2026-07-26, pós-conserto do juiz): 362 testes unitários
+e 70 PASS · 2 FLAKY · 2 FAIL · 1 SUSPECT em 75 cenários, cada um rodado 3×
+(`--repeat=3`), com cobertura de asserção de uso de 40/75.**
+
+**Este número NÃO é comparável com os anteriores** — e essa é a questão. Todos
+os gates até 25/07 (71/75 → 73/75 → 75/75) foram medidos por um juiz que
+aprovava 40 dos 75 cenários sem verificar nada: bastava não explodir. O 75/75
+de 25/07 era o auge dessa ilusão. A partir daqui a régua afere de verdade, e o
+que interessa não é só o veredito, mas a **cobertura**: quantos cenários o
+harness realmente sabe verificar.
+
+Os 35 cenários "sem asserção" são o ponto cego DECLARADO — nem falha nem
+aprovação. Por motivo: 26 passivos que a engine não implementa (nada
+observável), 4 reações bloqueadas na Fase 3 (gatilho depende de posição), 3 em
+que guardar a reação foi a jogada certa, 2 em que a engine declarou que a cena
+não se aplicava. Esse número só cai implementando mecânica — é o mapa honesto
+da dívida, não ruído a ser escondido.
+
+Os não-PASS, todos com causa nomeada:
+- `Shield Block` e `Clever Gambit` (FAIL 0/3) — reações cujo gatilho a engine
+  detecta mas cujo efeito não implementa. Dívida real, item da fila.
+- `Shackles of Law` (FLAKY 2/3) — cobrou 1 ação de um feat que custa 2 em uma
+  das três rodadas. Instabilidade de enforcement: candidato à escada da
+  doutrina 2.
+- `Acupuncturist` (FLAKY 2/3) e `Exotic Edge` (SUSPECT 0/3) — atividade fora de
+  combate resolvida sem mecânica; o feat não aparece em nenhuma tool aceita.
 
 Os 2 não-PASS do gate são AMBOS do juiz, não do jogo (exemplares documentados
 para o item 2 da fila): FAIL `Flying Blade` — mecânica perfeita (Strike com

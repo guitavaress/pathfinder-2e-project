@@ -21,7 +21,7 @@ decisions — with NPCs, a living world, and skill checks following the PF2e rul
 > the game mid-scene and pick up exactly where you left off, with a "Previously…" recap.
 > You can also travel with **NPC companions**: the engine runs their combat turns, and a voice
 > gate lets at most one of them speak per turn so their personalities stay distinct.
-> Validated by a 75-scenario feat-audit regression battery and 353 unit tests.
+> Validated by a 75-scenario feat-audit regression battery and 393 unit tests.
 
 ## How it works
 
@@ -182,7 +182,7 @@ deleted. Session numbers count real sittings.
 ## Tests and build
 
 ```bash
-npm test         # 353 unit tests: combat engine, dice/degrees, dying/recovery, encounter budget, use_item, spells, rest, companions + ally turns + voice gate, brain graph + gates, save-game/recap, parser
+npm test         # 393 unit tests: combat engine, dice/degrees, dying/recovery, encounter budget, use_item, spells, rest, companions + ally turns + voice gate, brain graph + gates, save-game/recap, parser
 npm run build
 ```
 

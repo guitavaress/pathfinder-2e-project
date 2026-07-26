@@ -23,7 +23,7 @@ resumo mecânico e narra a cena. Já existe uma **engine determinística de comb
 orçamento de XP, statblocks reais), a memória persistente ("Brain", grafo markdown)
 e continuidade de campanha (`save.json` + recap determinístico), além de
 **companheiros de grupo** (roster + turno de aliado em código + gate de voz,
-Fase 2/ADR-004). Cobertura: **353 testes unitários** (322 server + 31 brain) +
+Fase 2/ADR-004). Cobertura: **393 testes unitários** (362 server + 31 brain) +
 bateria feat-audit (gate vigente registrado no ROADMAP).
 
 ---
