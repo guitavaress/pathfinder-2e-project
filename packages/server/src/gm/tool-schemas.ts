@@ -29,7 +29,7 @@
  */
 import * as z from "zod/v4";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
-import { ENCOUNTER_DIFFICULTIES } from "./combat.js";
+import { ENCOUNTER_DIFFICULTIES, MAX_PARTY_SIZE } from "./combat.js";
 
 /**
  * Custo de ação. 0 é legítimo (save reativo puro), 3 é o teto do turno.
@@ -204,6 +204,37 @@ const lookupRuleSchema = z.strictObject({
 
 const getCharacterSchema = z.strictObject({});
 
+const manageCompanionSchema = z.strictObject({
+  action: z
+    .enum(["join", "leave"])
+    .describe(
+      "'join' when an NPC becomes a traveling companion of the party; 'leave' when a companion departs, is dismissed, or dies in the story.",
+    ),
+  name: z
+    .string()
+    .min(1)
+    .describe(
+      "The NPC's name as it appears in the scene. A real PF2e creature/NPC name gets its OFFICIAL statblock; an invented name gets honest level-based stats.",
+    ),
+  level: z
+    .number()
+    .int()
+    .min(-1)
+    .max(25)
+    .optional()
+    .describe(
+      "JOIN only, for NPCs NOT in the bestiary. Guide: townsperson = 0; trained guard/hunter = 1-2; veteran = 3-4; elite = 5+. Official creatures use their real level. If omitted, level 0.",
+    ),
+  persona: z
+    .string()
+    .min(1)
+    .max(300)
+    .optional()
+    .describe(
+      "JOIN only: a SHORT voice sketch for narration (1-2 sentences — temperament, speech style, one quirk). E.g. 'Dry-witted veteran; speaks in clipped sentences; hates being thanked.'",
+    ),
+});
+
 const updateStateSchema = z.strictObject({
   hpDelta: z
     .number()
@@ -302,6 +333,11 @@ export const TOOL_DEFS: readonly ToolDef[] = [
     name: "get_character",
     description: "Returns the player character's full sheet (attributes, skills, saves).",
     schema: getCharacterSchema,
+  },
+  {
+    name: "manage_companion",
+    description: `Adds or removes an NPC ally in the PARTY (the player + up to ${MAX_PARTY_SIZE - 1} companions). Call 'join' ONLY when the story has an NPC genuinely joining as a traveling companion (hired, sworn, rescued and coming along) — NEVER for bystanders, shopkeepers, or scene NPCs the player merely talks to. Call 'leave' when a companion departs for good. The ENGINE resolves the companion's real stats (official statblock for known creatures, level benchmark otherwise) and runs their combat turns automatically — you never roll for companions.`,
+    schema: manageCompanionSchema,
   },
   {
     name: "update_state",

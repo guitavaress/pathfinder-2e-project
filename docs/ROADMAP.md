@@ -11,7 +11,8 @@
 > 3. **A Régua é lei:** mecânica em código, voz no LLM. PR que mova estado para o
 >    modelo é rejeitado por princípio.
 > 4. **Todo comportamento mecânico novo nasce com teste** e estende a bateria
->    feat-audit. O **75/75** e os **195 testes** são piso, não meta.
+>    feat-audit. O gate vigente da bateria e os **353 testes** (322 server + 31
+>    brain) são piso, não meta.
 > 5. Se uma tarefa contradisser um ADR, **pare e sinalize**.
 
 Ordem definida no **ADR-003**. Fases posteriores assumem as anteriores prontas.
@@ -54,12 +55,14 @@ action, custo lido da taxonomia do dataset); camada determinística de
 conformidade do dataset; e dois bugs de bloqueio corrigidos (arquivamento de
 campanha colidindo, e a bateria rodando contra o brain real do jogador).
 
-**Piso atualizado (gate de 2026-07-26, pós-Fase 1.5): 305 testes unitários e
-73/75 na feat-audit — 73 PASS · 1 FAIL · 1 SUSPECT.** O 75/75 citado antes é de
-2026-07-05, medido no LM Studio antes da migração para llama.cpp, com a bateria
-quebrada entre 14/07 e 25/07 — não é comparável. Progressão na stack atual:
-71/75 (25/07) → 73/75 (26/07, após o fix do `[ENGINE CHECK]` + `lookup_rule`
-pela ficha + import total).
+**Piso vigente (gate de 2026-07-25, pós-Fase 2): 353 testes unitários e 75/75
+na feat-audit.** O 75/75 de 2026-07-05 NÃO é o mesmo número: foi medido no LM
+Studio antes da migração para llama.cpp, com a bateria quebrada entre 14/07 e
+25/07. Progressão na stack atual: 71/75 (25/07) → 73/75 (26/07, após o fix do
+`[ENGINE CHECK]` + `lookup_rule` pela ficha + import total) → **75/75 (25/07,
+pós-Fase 2)**. Atenção ao ler essa curva: o rules stage roda a temperature 0.3
+e o mesmo cenário alterna entre rodadas — a diferença de 73 para 75 é
+compatível com variância + juiz cego, não é prova de melhora do jogo.
 
 Os 2 não-PASS do gate são AMBOS do juiz, não do jogo (exemplares documentados
 para o item 2 da fila): FAIL `Flying Blade` — mecânica perfeita (Strike com
@@ -106,6 +109,69 @@ Também na fila: bump do ref 7.8.0 → 7.12.2 auditado pela conformidade; corrig
 
 ## Fase 2 — Companheiros de grupo (NPCs aliados)
 
+### ✅ CONCLUÍDA em 2026-07-25 (ver ADR-004)
+
+**Gate da fase: 75/75 na feat-audit** (rodada `--fresh` de 25/07, 44 min,
+0 FAIL · 0 SUSPECT) + **353 testes unitários** (322 server + 31 brain). A T3
+mexeu no revide inimigo, então o gate foi rodado do zero para provar
+empiricamente o que o teste unitário já afirmava: **sem aliados o combate não
+mudou**. Os dois não-PASS do gate anterior (73/75 de 26/07 — `Flying Blade` e
+`Esoteric Wayfinder`) passaram aqui, coerente com o diagnóstico registrado de
+que eram artefato do JUIZ, não defeito do jogo. Isso **não** conserta o juiz:
+a cegueira dele (40 de 75 cenários sem asserção de uso do feat) segue valendo
+como item 2 da fila de confiabilidade — uma rodada verde não é prova de régua
+boa, ainda mais a temperature 0.3.
+
+Companheiro é **engine**: o modelo só recruta/dispensa (`manage_companion`) e
+dubla a fala. Entregue em 5 tarefas, cada uma com gate verde:
+
+1. **Entidade** — `Companion` no shared com stats resolvidos e CONGELADOS no
+   recrutamento (statblock oficial do bestiary ou benchmark de nível, mesmo
+   guard de `hp<=0` do inimigo); roster em `GameState.companions`, persistido no
+   save (campo opcional: saves v1 seguem carregando). `allyCombatant` usa o
+   MESMO id do roster — é o elo que o `syncCompanions` percorre para levar
+   ferida de combate de volta ao roster (companheira sai da luta com 5 HP,
+   entra na próxima com 5 HP).
+2. **Tool `manage_companion`** — enforcement todo na engine: nível/statblock
+   oficial vence o palpite do modelo, dedupe fuzzy contra re-recrutar, teto de
+   party 4, saída bloqueada em combate ativo. Companheiros entram automaticamente
+   no `start_combat` como `kind:"ally"`, e o orçamento de XP escala com a party
+   real sem uma linha nova no `planEncounter` (duo: moderate 40 XP).
+3. **Turno do aliado** — `strikeAtPlayer` generalizado para `strikeAt` (qualquer
+   atacante/alvo), preservando a fronteira que importa: dying e o estado da
+   sessão seguem EXCLUSIVOS do jogador; ally/enemy a 0 HP fica `defeated`.
+   `resolveAllyTurns` espelha o motor inimigo (2 Strikes, MAP, statblock via
+   `sourceName`) e pode fechar a luta em VICTORY. O revide inimigo distribui os
+   golpes por **round-robin determinístico** entre defensores vivos — **sem
+   aliados o baseline é intacto**, testado explicitamente.
+4. **Gate "uma voz por vez"** (`gm/voice-gate.ts`) — a decisão de quem fala é
+   determinística e auditável: evento mecânico do companheiro extraído do resumo
+   (caiu > entrou/saiu > tomou dano > critou) > menção do jogador > banter em
+   cadência > silêncio. Só a persona do escolhido entra no contexto do narrador.
+5. **Bench do teto de vozes + cenários end-to-end** — ver abaixo.
+
+**Achado que mudou a compreensão do problema** (bench, 64 gerações): o risco do
+ADR-004 era real, mas o sintoma era outro. Com o gate, **nenhuma degradação até
+4 personas** (0 violações de silêncio, 0 vazamentos de marcador, escolhido falou
+23/24 na voz certa). Sem o gate, as vozes não se borram — elas **somem** (falou
+5/24). O gate é o que torna as personas vivas, não só contidas. Teto medido:
+**≥4 com gate**; subir `MAX_PARTY_SIZE` exige re-rodar o bench.
+
+**Caso descoberto na implementação:** o jogo solo mascarava o "jogador caído com
+aliados vivos" — o combate ficava ativo e congelado. Agora o ramo de dying move
+o mundo (aliados agem, inimigos revidam neles, o caído não é alvo) e, ao
+estabilizar, o combatente do jogador revive junto com o estado.
+
+**Fila registrada (não iniciada):** conjuração de aliado (hoje o aliado caster
+luta como marcial); política de alvo da magia inimiga (hoje foca sempre o
+jogador, decisão documentada no código); cura/Treat Wounds dirigida a
+companheiro caído.
+
+---
+
+<details>
+<summary>Plano original da fase (histórico)</summary>
+
 - **Objetivo:** permitir um grupo pequeno (3–4) de aliados, medindo o teto real do
   modelo.
 - **Por quê:** ADR-004. Responde à pergunta em aberto ("até onde o Gemma aguenta?")
@@ -130,6 +196,8 @@ Também na fila: bump do ref 7.8.0 → 7.12.2 auditado pela conformidade; corrig
   Aliado é engine; só a fala é modelo.
 - **Feito quando:** grupo de 3–4 jogável, com o teto de vozes documentado no
   ADR-004.
+
+</details>
 
 ---
 

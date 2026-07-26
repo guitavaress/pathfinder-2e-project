@@ -71,7 +71,8 @@ de histórico dimensionadas para os 64k (`RULES_CONTEXT_TURNS=16`,
 `NARRATIVE_CONTEXT_MESSAGES=80`, `SAVE_MESSAGE_TAIL=80` acompanha o narrador):
 1. **Rules** (`runRulesStage`): tool loop (roll_check, cast_spell, rest,
    start_combat, end_combat, end_turn, spend_actions, use_item, update_state,
-   lookup_rule, get_character) → resumo mecânico determinístico. `rest` cura
+   manage_companion, lookup_rule, get_character) → resumo mecânico
+   determinístico. `rest` cura
    com as regras reais (overnight: CON×nível + slots/focus; Treat Wounds:
    Medicine check DC 15 com toolkit) — cura inventada via `update_state` é
    rejeitada dentro e fora de combate. Em combate: 1 mensagem do
@@ -96,6 +97,21 @@ de histórico dimensionadas para os 64k (`RULES_CONTEXT_TURNS=16`,
    menor em combate, sem tools.
 
 SSE: `delta`/`check`/`state`/`phase`/`done`/`error`; o combate vai dentro de `state`.
+
+## Companheiros (Fase 2 / ADR-004)
+
+Companheiro é **engine**; o modelo só recruta (`manage_companion` join/leave) e
+dubla a fala. Roster em `GameState.companions` (persistido no save), stats
+resolvidos e CONGELADOS no recrutamento (statblock oficial ou benchmark), teto de
+party 4 (`MAX_PARTY_SIZE`). Entram sozinhos no `start_combat` como `kind:"ally"`
+— e o orçamento de XP escala com a party real. `resolveAllyTurns` roda o turno
+deles em código (2 Strikes, MAP, statblock via `sourceName`); o revide inimigo
+distribui golpes por round-robin entre os defensores vivos (**sem aliados o
+comportamento é o de sempre**). Só o JOGADOR tem dying/estado de sessão: aliado a
+0 HP fica `defeated`. `syncCompanions` leva ferida de combate de volta ao roster
+todo turno. A fala passa pelo gate `gm/voice-gate.ts`: **no máximo uma persona por
+turno** (evento mecânico > menção > banter > silêncio) — sem gate as vozes somem,
+com gate não há degradação até 4 (bench em `scripts/voice-bench/`).
 
 ## Brain e continuidade de campanha
 

@@ -19,7 +19,9 @@ decisions — with NPCs, a living world, and skill checks following the PF2e rul
 > **dying/recovery rules** — you can actually die. Between sittings the game **remembers**: a
 > markdown memory graph (the Brain) grows as you play, and **campaign continuity** lets you close
 > the game mid-scene and pick up exactly where you left off, with a "Previously…" recap.
-> Validated by a 75-scenario feat-audit regression battery (75/75 PASS) and 195 unit tests.
+> You can also travel with **NPC companions**: the engine runs their combat turns, and a voice
+> gate lets at most one of them speak per turn so their personalities stay distinct.
+> Validated by a 75-scenario feat-audit regression battery and 353 unit tests.
 
 ## How it works
 
@@ -151,6 +153,22 @@ auditable in the activity feed, never silent. The narrator reads relevant nodes 
 NPCs remember you. Press **B** in game to open the **Grimório da Memória**: a constellation graph
 UI over the whole thing. Opt out with `BRAIN_DISABLED=1`; relocate with `BRAIN_PATH`.
 
+## Companions
+
+NPCs can join you on the road (up to a party of four). When the story has someone genuinely
+signing on, the GM calls a tool and the **engine** takes over: stats are resolved once from the
+official bestiary statblock (or an honest level benchmark) and frozen, the companion joins combat
+automatically, and **their combat turns run in code** — Strikes, multiple attack penalty, real
+attack data — exactly like enemy turns. Enemies spread their retaliation across whoever is still
+standing. Wounds persist between fights and across sessions; only *your* character has the
+dying/recovery subsystem, so a downed companion is simply out of the fight.
+
+Their voices go through a **gate**: at most one companion speaks per turn, chosen deterministically
+(something mechanical happened to them > you addressed them by name > periodic banter > silence),
+and only that one's persona reaches the narrator. A benchmark with 1–4 personas found no
+degradation up to four — and, tellingly, that dumping every persona into the prompt at once doesn't
+blur them, it makes them *vanish* into generic prose. The gate is what keeps them alive.
+
 ## Campaign continuity
 
 The server writes `brain/save.json` after every turn: character, state (HP, conditions, spell
@@ -164,7 +182,7 @@ deleted. Session numbers count real sittings.
 ## Tests and build
 
 ```bash
-npm test         # 195 unit tests: combat engine, dice/degrees, dying/recovery, encounter budget, use_item, spells, rest, brain graph + gates, save-game/recap, parser
+npm test         # 353 unit tests: combat engine, dice/degrees, dying/recovery, encounter budget, use_item, spells, rest, companions + ally turns + voice gate, brain graph + gates, save-game/recap, parser
 npm run build
 ```
 

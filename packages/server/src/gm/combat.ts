@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Character, Combat, Combatant, DegreeOfSuccess } from "@pf2e/shared";
+import type { Character, Combat, Combatant, Companion, DegreeOfSuccess } from "@pf2e/shared";
 // Import de TIPO apenas: combat.ts segue puro (nunca carrega o dataset em runtime).
 import type { CreatureStatblock } from "../rules/dataset.js";
 import { degreeOfSuccess } from "../dice/check.js";
@@ -300,6 +300,78 @@ export function enemyCombatant(
     maxHp: b.hp,
     currentHp: b.hp,
     level,
+  });
+}
+
+/** Teto de party do ADR-004: jogador + até 3 companheiros. */
+export const MAX_PARTY_SIZE = 4;
+
+/**
+ * Builds a Companion at recruit time. With a real statblock (bestiary NPC)
+ * uses its AC/HP/perception/saves; without, the level benchmark — the same
+ * two honest paths an enemy gets. Stats are resolved ONCE and stored on the
+ * companion so they never drift under a dataset change.
+ */
+export function newCompanion(
+  name: string,
+  level: number,
+  persona: string,
+  sb?: CreatureStatblock & { sourceName: string; traits: string[] },
+): Companion {
+  // Mesmo guard do inimigo: statblock sem HP utilizável cai no benchmark.
+  if (sb && !(sb.hp > 0)) sb = undefined;
+  if (sb) {
+    return {
+      id: randomUUID().slice(0, 8),
+      name,
+      level,
+      ac: sb.ac,
+      maxHp: sb.hp,
+      currentHp: sb.hp,
+      perception: sb.perception,
+      conditions: [],
+      traits: sb.traits,
+      persona,
+      sourceName: sb.sourceName,
+      saves: sb.saves,
+    };
+  }
+  const b = benchmark(level);
+  return {
+    id: randomUUID().slice(0, 8),
+    name,
+    level,
+    ac: b.ac,
+    maxHp: b.hp,
+    currentHp: b.hp,
+    perception: b.perception,
+    conditions: [],
+    traits: [],
+    persona,
+  };
+}
+
+/**
+ * Builds the ally combatant for a companion entering combat. HP and conditions
+ * carry over from the roster (a wounded companion enters wounded); a companion
+ * at 0 HP enters DEFEATED — the roster never lies to the fight.
+ */
+export function allyCombatant(comp: Companion): Combatant {
+  const hp = Math.max(0, Math.min(comp.currentHp, comp.maxHp));
+  return newCombatant({
+    id: comp.id,
+    name: comp.name,
+    kind: "ally",
+    initiative: d20() + comp.perception,
+    ac: comp.ac,
+    maxHp: comp.maxHp,
+    currentHp: hp,
+    conditions: [...comp.conditions],
+    level: comp.level,
+    traits: [...comp.traits],
+    sourceName: comp.sourceName,
+    saves: comp.saves,
+    defeated: hp === 0,
   });
 }
 
