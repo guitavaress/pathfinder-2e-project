@@ -14,6 +14,8 @@
  * implementa — o juiz **declara que não asseriu** em vez de fingir que passou.
  * Ponto cego declarado é auditável; ponto cego silencioso vira falso conforto.
  */
+import { degreeOfSuccess } from "../../src/dice/check.js";
+import { PLAYER_STRIKE_REACTIONS } from "../../src/gm/combat.js";
 
 // ---------------------------------------------------------------------------
 // Tipos compartilhados com o harness
@@ -217,6 +219,23 @@ export function reactionInChecks(turn: TurnResult): boolean {
 }
 
 /**
+ * O bônus de CA da reação teria MUDADO algum golpe inimigo deste turno?
+ *
+ * A engine só gasta a reação quando ela altera o desfecho (ver
+ * `playerReactionVsStrike`). Sem esta pergunta, o juiz acusava o jogo toda vez
+ * que o inimigo errava sozinho: gatilho servido, reação intacta, "feat não
+ * usado" — quando guardar a reação era exatamente a jogada certa. Os dois lados
+ * leem a MESMA tabela (`PLAYER_STRIKE_REACTIONS`) justamente para não voltarem
+ * a discordar.
+ */
+export function reactionWouldHaveMattered(turn: TurnResult, acBonus: number): boolean {
+  return turn.checks.some((c) => {
+    if (c.attack?.attackerKind !== "enemy") return false;
+    return degreeOfSuccess(c.die, c.total, c.dc + acBonus) !== c.degree;
+  });
+}
+
+/**
  * A engine DECLAROU ao narrador que nada foi resolvido neste turno
  * (`buildMechanicalSummary`, doutrina 4: o que não está nas linhas não
  * aconteceu).
@@ -288,9 +307,21 @@ export function assertUsage(s: Scenario, turns: TurnResult[]): UsageAssertion {
         why: "o gatilho não ocorreu no turno (nenhum ataque inimigo)",
       };
     }
+    // A engine implementa esta reação? Se sim, deixar de usá-la só é falha
+    // quando ela MUDARIA algum golpe — guardar a reação num ataque que já
+    // erraria é a jogada certa, não um feat ignorado.
+    const spec = PLAYER_STRIKE_REACTIONS[norm(s.name)];
+    if (spec && !reactionWouldHaveMattered(useTurn, spec.acBonus)) {
+      return {
+        kind: "not-asserted",
+        why: `nenhum golpe do turno mudaria com +${spec.acBonus} de CA — guardar a reação foi correto`,
+      };
+    }
     return {
       kind: "missing",
-      why: "o inimigo atacou (gatilho servido) e a reação do jogador seguiu DISPONÍVEL",
+      why: spec
+        ? "o inimigo atacou, a reação MUDARIA o golpe e mesmo assim seguiu DISPONÍVEL"
+        : "o inimigo atacou (gatilho servido) e a engine não implementa esta reação",
     };
   }
 

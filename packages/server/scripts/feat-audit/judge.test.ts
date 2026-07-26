@@ -68,10 +68,15 @@ function state(opts: { actions?: number; reaction?: boolean; active?: boolean } 
   };
 }
 
+/**
+ * Golpe inimigo que ACERTA por margem de 1 — internamente consistente
+ * (total >= dc) e, crucialmente, o tipo de golpe que +2 de CA VIRARIA em erro.
+ * É o cenário em que deixar de usar a reação é falha de verdade.
+ */
 const enemyHit = {
   label: "Bandit Machete Strike vs Ferro (AC 22)",
   die: 15,
-  total: 20,
+  total: 23,
   dc: 22,
   degree: "success",
   attack: {
@@ -166,11 +171,40 @@ describe("featNamedInTools", () => {
 // ---------------------------------------------------------------------------
 
 describe("assertUsage — reação", () => {
-  it("gatilho servido e reação intacta = uso AUSENTE (a lacuna real do jogo)", () => {
+  it("golpe que a reação VIRARIA e reação intacta = uso AUSENTE", () => {
     const t = turn({ checks: [enemyHit], finalState: state({ reaction: true }) });
     const u = assertUsage(scenario(), [t]);
     expect(u.kind).toBe("missing");
-    expect(u.kind === "missing" && u.why).toMatch(/gatilho servido/);
+    expect(u.kind === "missing" && u.why).toMatch(/MUDARIA o golpe/);
+  });
+
+  it("REGRESSÃO: golpe que já erraria sozinho NÃO acusa — guardar foi correto", () => {
+    // Gate de 26/07: os dois ataques do turno erraram por margem folgada, o
+    // +2 de CA não mudaria nada, a engine guardou a reação (jogada certa) e o
+    // juiz marcava FAIL. Nimble Dodge, Reactive Shield e Flashy Dodge ficaram
+    // FLAKY 1/3 por causa disso.
+    const miss = {
+      ...enemyHit,
+      die: 8,
+      total: 17,
+      dc: 22,
+      degree: "failure",
+      attack: { ...enemyHit.attack, outcome: "miss", damage: null },
+    };
+    const u = assertUsage(scenario(), [
+      turn({ checks: [miss], finalState: state({ reaction: true }) }),
+    ]);
+    expect(u.kind).toBe("not-asserted");
+    expect(u.kind === "not-asserted" && u.why).toMatch(/guardar a reação foi correto/);
+  });
+
+  it("feat que a engine NÃO implementa segue acusado (lacuna real)", () => {
+    // Shield Block: gatilho detectável, efeito não implementado. Continua FAIL.
+    const u = assertUsage(scenario({ name: "Shield Block" }), [
+      turn({ checks: [enemyHit], finalState: state({ reaction: true }) }),
+    ]);
+    expect(u.kind).toBe("missing");
+    expect(u.kind === "missing" && u.why).toMatch(/não implementa/);
   });
 
   it("reação consumida = uso CONFIRMADO", () => {

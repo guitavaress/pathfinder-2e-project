@@ -307,6 +307,33 @@ export function enemyCombatant(
 export const MAX_PARTY_SIZE = 4;
 
 /**
+ * Reações DEFENSIVAS do jogador que a engine dispara contra um Strike inimigo
+ * (ver `playerReactionVsStrike` em agent.ts).
+ *
+ * Mora AQUI, no módulo puro, porque o JUIZ da bateria também precisa dela: ele
+ * tem de saber quanto de CA a reação daria para decidir se deixar de usá-la foi
+ * erro ou economia. Quando cada lado tinha sua própria ideia disso, a engine
+ * guardava a reação num golpe que já erraria (correto) e o juiz acusava o jogo
+ * de não honrar o feat (gate de 26/07). Uma fonte, os dois concordam por
+ * construção.
+ *
+ * Só entram reações cujo gatilho a engine SABE produzir ("uma criatura te
+ * ataca"). Reações de movimento dependem de posição — Fase 3.
+ */
+export const PLAYER_STRIKE_REACTIONS: Record<
+  string,
+  { acBonus: number; meleeOnly?: boolean; needsShield?: boolean }
+> = {
+  // Trigger: "A creature targets you with an attack and you can see the attacker."
+  "nimble dodge": { acBonus: 2 },
+  // Trigger: "A creature you can see targets you with an attack." (panache não
+  // é modelado; o feat na ficha é o gate.)
+  "flashy dodge": { acBonus: 2 },
+  // Trigger: "An enemy hits you with a melee Strike." Raise a Shield na hora.
+  "reactive shield": { acBonus: 2, meleeOnly: true, needsShield: true },
+};
+
+/**
  * Builds a Companion at recruit time. With a real statblock (bestiary NPC)
  * uses its AC/HP/perception/saves; without, the level benchmark — the same
  * two honest paths an enemy gets. Stats are resolved ONCE and stored on the

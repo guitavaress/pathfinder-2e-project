@@ -50,6 +50,7 @@ import {
   mapPenalty,
   MAX_PARTY_SIZE,
   newCompanion,
+  PLAYER_STRIKE_REACTIONS,
   normalizeName,
   passiveFeatBonus,
   planEncounter,
@@ -2141,34 +2142,17 @@ function applyPersistentTicks(
 }
 
 /**
- * Reações DEFENSIVAS do jogador que a engine dispara contra um Strike inimigo.
+ * POR QUE A REAÇÃO DO JOGADOR É RESOLVIDA AQUI (achado de 2026-07-26, ao
+ * consertar o juiz da bateria): `chargeNonAction` só era alcançável por tool
+ * call do modelo, ou seja, durante o turno do JOGADOR. Mas o revide inimigo é
+ * resolvido em código DEPOIS do estágio de regras — não havia instante em que o
+ * modelo pudesse reagir ao golpe. A reação era estruturalmente impossível de
+ * disparar no gatilho certo, e 9 cenários da bateria passavam sem o feat ter
+ * sido usado. Isto é o simétrico de `triggerEnemyReactions`.
  *
- * POR QUE ISTO EXISTE (achado de 2026-07-26, ao consertar o juiz da bateria):
- * `chargeNonAction` só era alcançável por tool call do modelo, ou seja, durante
- * o turno do JOGADOR. Mas o revide inimigo é resolvido em código DEPOIS do
- * estágio de regras — não havia instante em que o modelo pudesse reagir ao
- * golpe. Resultado: a reação do jogador era estruturalmente impossível de
- * disparar no gatilho certo, e `Nimble Dodge`/`Reactive Shield` ficaram 9
- * cenários da bateria passando sem nunca terem sido usados. Isto é o simétrico
- * de `triggerEnemyReactions`, que já existia para o inimigo.
- *
- * Só entram reações cujo gatilho a engine SABE produzir: "uma criatura te ataca".
- * Reações de movimento (Stand Still, Reactive Strike, Disrupt Prey) dependem de
- * alcance e posição — Fase 3; sem grid a engine não tem como saber que o
- * gatilho ocorreu, e fingir que sabe seria pior que não implementar.
+ * A tabela `PLAYER_STRIKE_REACTIONS` mora em combat.ts porque o juiz da bateria
+ * também a lê — ver o comentário lá.
  */
-const PLAYER_STRIKE_REACTIONS: Record<
-  string,
-  { acBonus: number; meleeOnly?: boolean; needsShield?: boolean }
-> = {
-  // Trigger: "A creature targets you with an attack and you can see the attacker."
-  "nimble dodge": { acBonus: 2 },
-  // Trigger: "A creature you can see targets you with an attack." (panache não
-  // é modelado; o feat na ficha é o gate.)
-  "flashy dodge": { acBonus: 2 },
-  // Trigger: "An enemy hits you with a melee Strike." Raise a Shield na hora.
-  "reactive shield": { acBonus: 2, meleeOnly: true, needsShield: true },
-};
 
 /** O personagem carrega um escudo no Equipment/armor? (Reactive Shield). */
 function hasShield(c: Character): boolean {
