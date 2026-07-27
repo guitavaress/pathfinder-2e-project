@@ -25,6 +25,7 @@ import {
   prefixOf,
   rollOptionsFor,
 } from "./roll-options.js";
+import { evaluate } from "./predicate.js";
 
 /**
  * Um prefixo de roll option com este número de ocorrências ou mais é DOMÍNIO
@@ -32,6 +33,41 @@ import {
  * namespaces de um feat só (`chimera-flail:head:lion`), que não se enumera.
  */
 const HEAVY_DOMAIN = 50;
+
+/**
+ * Contexto MÁXIMO — jogador com ficha atacando um alvo com uma arma. É o teto
+ * do que a engine sabe hoje; medir contra ele diz quanto do dado é alcançável
+ * sem modelar nada de novo.
+ */
+function maximalRollOptions(): ReturnType<typeof rollOptionsFor> {
+  return rollOptionsFor({
+    self: {
+      kind: "player",
+      level: 5,
+      traits: ["human"],
+      conditions: ["off-guard"],
+      className: "Fighter",
+      ancestry: "Human",
+      heritage: "Versatile Heritage",
+      feats: [],
+      classFeatures: [],
+      skills: {},
+    },
+    target: { kind: "enemy", level: 3, traits: ["undead"], conditions: ["frightened 1"] },
+    action: "Strike",
+    item: {
+      name: "Longsword +1 (striking)",
+      base: "Longsword",
+      traits: ["versatile-p"],
+      type: "weapon",
+      category: "martial",
+      melee: true,
+      ranged: false,
+      damageType: "slashing",
+      rank: 1,
+    },
+  });
+}
 import { isOfficialCondition, parseDie, rollFormula } from "../gm/agent.js";
 import { enemyCombatant } from "../gm/combat.js";
 
@@ -269,34 +305,7 @@ describe.skipIf(!hasGenerated)("conformidade do dataset (requer generated/)", ()
     }
     expect(counts.size).toBeGreaterThan(1000);
 
-    // Contexto MÁXIMO: jogador com ficha atacando um alvo com um item.
-    const full = rollOptionsFor({
-      self: {
-        kind: "player",
-        level: 5,
-        traits: ["human"],
-        conditions: ["off-guard"],
-        className: "Fighter",
-        ancestry: "Human",
-        heritage: "Versatile Heritage",
-        feats: [],
-        classFeatures: [],
-        skills: {},
-      },
-      target: { kind: "enemy", level: 3, traits: ["undead"], conditions: ["frightened 1"] },
-      action: "Strike",
-      item: {
-        name: "Longsword +1 (striking)",
-        base: "Longsword",
-        traits: ["versatile-p"],
-        type: "weapon",
-        category: "martial",
-        melee: true,
-        ranged: false,
-        damageType: "slashing",
-        rank: 1,
-      },
-    });
+    const full = maximalRollOptions();
 
     let decidable = 0;
     let declared = 0;
@@ -319,6 +328,45 @@ describe.skipIf(!hasGenerated)("conformidade do dataset (requer generated/)", ()
     // NÃO se admite é um domínio de peso passando despercebido: ou a engine o
     // cobre, ou ele está declarado. Import novo com domínio grande falha aqui.
     expect(heavy).toEqual([]);
+  });
+
+  it("o avaliador de predicados é TOTAL sobre a gramática real do dataset", () => {
+    // A pergunta: existe alguma forma sintática nos 7.948 predicados reais que
+    // o avaliador não reconheça? Forma não reconhecida nunca vira verdadeiro,
+    // mas também não pode passar despercebida — é gramática que falta.
+    const full = maximalRollOptions();
+    let decided = 0;
+    let unknown = 0;
+    let total = 0;
+    const malformed = new Map<string, number>();
+    const undecidedPrefix = new Map<string, number>();
+    for (const file of readdirSync(generatedDir).filter((f) => f.endsWith(".json"))) {
+      if (file === "manifest.json" || file === "uuid-index.json") continue;
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as { predicate?: unknown }[]) {
+          if (!re?.predicate) continue;
+          total += 1;
+          const ev = evaluate(re.predicate, full);
+          if (ev.value === "unknown") unknown += 1;
+          else decided += 1;
+          for (const m of ev.malformed) malformed.set(m, (malformed.get(m) ?? 0) + 1);
+          for (const u of ev.undecided) {
+            const p = prefixOf(u);
+            undecidedPrefix.set(p, (undecidedPrefix.get(p) ?? 0) + 1);
+          }
+        }
+      }
+    }
+    expect(total).toBeGreaterThan(5000);
+    const topUndecided = [...undecidedPrefix.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([k, v]) => `${k}(${v})`);
+    console.log(
+      `[T3] predicados: ${total} | decididos ${decided} (${Math.round((decided / total) * 100)}%) | indecidíveis ${unknown} → ${topUndecided.join(" ")}`,
+    );
+    // Gramática incompleta é bug de código, não dívida de modelagem: zero.
+    expect([...malformed.entries()]).toEqual([]);
   });
 
   it("toda entrada de defesa do bestiary cai num balde CONHECIDO", () => {
