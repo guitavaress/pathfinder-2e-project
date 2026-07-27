@@ -11,6 +11,7 @@ import {
   type DamageParcel,
   type Defenses,
 } from "../rules/damage.js";
+import { ModifierStack, type Modifier } from "../rules/modifiers.js";
 
 /** Rolls `n` dice with `faces` sides and returns the total. */
 export function rollDice(n: number, faces: number): number {
@@ -659,20 +660,76 @@ export function isOffGuard(c: Combatant): boolean {
 }
 
 /**
- * Effective AC for a Strike against `target`: base AC −2 if off-guard
- * (circumstance) − the target's own frightened value (status penalty to DCs/AC).
+ * Fonte dos modificadores de condição. Fica INJETADA porque `combat.ts` é puro
+ * (nunca carrega o dataset em runtime) e a fonte oficial vive no dado. Sem
+ * registro — em teste unitário, por exemplo — vale o fallback embutido abaixo,
+ * que é o comportamento histórico da engine.
+ *
+ * Um ponto de injeção só, e não um parâmetro em cada chamada: com 10 call sites
+ * de `effectiveAC`/`attackStatusPenalty`, parâmetro é convite a um deles
+ * esquecer e a engine divergir de si mesma.
  */
-export function effectiveAC(target: Combatant): number {
-  let ac = target.ac;
-  if (isOffGuard(target)) ac -= 2;
-  ac -= conditionValue(target, "frightened");
-  return ac;
+export type ConditionModifierSource = (
+  conditions: string[],
+  selector: "ac" | "attack-roll",
+) => Modifier[];
+
+let conditionSource: ConditionModifierSource | null = null;
+
+export function setConditionModifierSource(fn: ConditionModifierSource | null): void {
+  conditionSource = fn;
 }
 
-/** Status penalty to the attacker's Strike rolls (−frightened). */
+/**
+ * Fallback embutido: off-guard (circunstância −2 na CA) e frightened (status −N
+ * em tudo). É o que a engine sempre aplicou à mão — mantido para que o núcleo
+ * puro funcione sem dataset.
+ */
+function builtinConditionModifiers(
+  conditions: string[],
+  selector: "ac" | "attack-roll",
+): Modifier[] {
+  const mods: Modifier[] = [];
+  if (selector === "ac" && conditions.some((c) => /off-guard|flat-footed/i.test(c))) {
+    mods.push({ slug: "off-guard", type: "circumstance", value: -2 });
+  }
+  const frightened = valueOfCondition(conditions, "frightened");
+  if (frightened > 0) {
+    mods.push({ slug: "frightened", type: "status", value: -frightened });
+  }
+  return mods;
+}
+
+/** Valor de uma condição numa lista crua ("frightened 2" → 2). */
+function valueOfCondition(conditions: string[], name: string): number {
+  for (const cond of conditions) {
+    const m = cond.toLowerCase().match(new RegExp(`^${name}\\s*(\\d+)?$`));
+    if (m) return m[1] ? Number(m[1]) : 1;
+  }
+  return 0;
+}
+
+/** A pilha de modificadores de condição que incide sobre um seletor. */
+export function conditionStack(
+  c: Combatant,
+  selector: "ac" | "attack-roll",
+): ModifierStack {
+  const source = conditionSource ?? builtinConditionModifiers;
+  return new ModifierStack().addAll(source(c.conditions, selector));
+}
+
+/**
+ * Effective AC for a Strike against `target`. Os modificadores das condições
+ * empilham por tipo (PF2e): off-guard é circunstância e frightened é status,
+ * então somam entre si — mas dois status não somam entre eles.
+ */
+export function effectiveAC(target: Combatant): number {
+  return target.ac + conditionStack(target, "ac").total();
+}
+
+/** Penalidade das condições do atacante sobre a rolagem de ataque. */
 export function attackStatusPenalty(attacker: Combatant): number {
-  const v = conditionValue(attacker, "frightened");
-  return v === 0 ? 0 : -v; // avoid JS -0 from negating zero
+  return conditionStack(attacker, "attack-roll").total();
 }
 
 /**

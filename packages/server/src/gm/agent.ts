@@ -26,6 +26,7 @@ import {
 } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
 import { scaleParcels, type DamageParcel } from "../rules/damage.js";
+import { conditionModifiersFor } from "../rules/condition-modifiers.js";
 import { buildTools } from "./tool-schemas.js";
 import {
   allyCombatant,
@@ -59,6 +60,7 @@ import {
   playerOf,
   partySizeOf,
   rollDice,
+  setConditionModifierSource,
   strikeProfileFrom,
   tickEndOfRound,
   tickPersistentDamage,
@@ -82,6 +84,16 @@ import {
   characterSheetBlock,
 } from "./prompts.js";
 import type { Session } from "./sessions.js";
+
+/**
+ * Liga o DADO oficial como fonte dos modificadores de condição (Fase 2.5 / T4).
+ *
+ * `combat.ts` é puro e não carrega o dataset; `agent.ts` já carrega. Um ponto
+ * de injeção só, no import — nenhum call site de `effectiveAC` pode esquecer, e
+ * o núcleo puro continua funcionando (com o fallback embutido) em teste unitário
+ * sem `generated/`.
+ */
+setConditionModifierSource(conditionModifiersFor);
 
 /**
  * Single model that drives both stages by default. Each stage runs its own

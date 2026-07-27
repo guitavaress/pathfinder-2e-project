@@ -740,6 +740,15 @@ export function spellRecord(name: string): RuleRecord | null {
   return best;
 }
 
+/**
+ * Os registros da categoria `conditions`, sem fuzzy. `lookupLocalRule` casa por
+ * substring nas categorias da política, e "prone" acabaria num feat de nome
+ * parecido — quem consome rule element de condição precisa do exato.
+ */
+export function conditionRecords(): RuleRecord[] {
+  return load().filter((r) => r.category === "conditions");
+}
+
 let conditionNames: Set<string> | null = null;
 
 /**
