@@ -85,6 +85,92 @@ describe("applyDamage", () => {
   });
 });
 
+describe("applyDamage tipado (Fase 2.5 / T1)", () => {
+  it("resistência do alvo reduz o HP perdido e explica na nota", () => {
+    const c = mkCombatant({
+      name: "Skeleton",
+      kind: "enemy",
+      currentHp: 20,
+      resistances: [{ type: "slashing", value: 5 }],
+    });
+    const adj = applyDamage(c, [{ amount: 12, type: "slashing" }]);
+    expect(c.currentHp).toBe(13);
+    expect(adj.raw).toBe(12);
+    expect(adj.applied).toBe(7);
+    expect(adj.note).toContain("resistance slashing -5");
+  });
+
+  it("fraqueza do alvo aumenta o dano — e pode derrubá-lo", () => {
+    const c = mkCombatant({
+      name: "Vampire Spawn",
+      kind: "enemy",
+      currentHp: 8,
+      weaknesses: [{ type: "fire", value: 5 }],
+    });
+    applyDamage(c, [{ amount: 5, type: "fire" }]);
+    expect(c.currentHp).toBe(0);
+    expect(c.defeated).toBe(true);
+  });
+
+  it("imunidade zera o dano: o alvo NÃO perde HP nem é derrotado", () => {
+    const c = mkCombatant({
+      name: "Fire Elemental",
+      kind: "enemy",
+      currentHp: 3,
+      immunities: ["fire"],
+    });
+    const adj = applyDamage(c, [{ amount: 40, type: "fire" }]);
+    expect(c.currentHp).toBe(3);
+    expect(c.defeated).toBe(false);
+    expect(adj.applied).toBe(0);
+  });
+
+  it("golpe multi-tipo mede cada parcela contra a defesa certa", () => {
+    // Statblock com "1d8 piercing + 1d6 fire" contra quem só resiste a fogo.
+    const c = mkCombatant({
+      name: "Salamander",
+      kind: "enemy",
+      currentHp: 30,
+      resistances: [{ type: "fire", value: 10 }],
+    });
+    applyDamage(c, [
+      { amount: 8, type: "piercing" },
+      { amount: 6, type: "fire" },
+    ]);
+    expect(c.currentHp).toBe(22); // 8 passa inteiro, 6 de fogo somem
+  });
+
+  it("dano sem tipo (update_state/hpDelta) ignora defesa tipada", () => {
+    const c = mkCombatant({
+      name: "Golem",
+      kind: "enemy",
+      currentHp: 20,
+      resistances: [{ type: "physical", value: 10 }],
+    });
+    applyDamage(c, 12);
+    expect(c.currentHp).toBe(8);
+  });
+
+  it("resistência incide DEPOIS do dobro do crítico", () => {
+    const c = mkCombatant({
+      name: "Guard",
+      kind: "enemy",
+      currentHp: 40,
+      resistances: [{ type: "piercing", value: 5 }],
+    });
+    // O call site dobra a parcela antes de aplicar: (6×2) − 5 = 7, não (6−5)×2.
+    applyDamage(c, [{ amount: 6 * 2, type: "piercing" }]);
+    expect(c.currentHp).toBe(33);
+  });
+
+  it("combatente sem defesas declaradas se comporta como antes", () => {
+    const c = mkCombatant({ name: "Thug", kind: "enemy", currentHp: 10 });
+    const adj = applyDamage(c, [{ amount: 4, type: "slashing" }]);
+    expect(c.currentHp).toBe(6);
+    expect(adj.note).toBe("");
+  });
+});
+
 describe("buildCombat", () => {
   it("ordena por iniciativa (maior primeiro) e prepara o 1º turno", () => {
     const combat = buildCombat([
@@ -583,6 +669,26 @@ describe("enemyCombatant / strikeProfileFrom (statblock literal, sem dataset)", 
     expect(c.maxHp).toBe(b.hp);
     expect(c.sourceName).toBeUndefined();
     expect(c.saves).toBeUndefined();
+    expect(c.resistances).toBeUndefined();
+  });
+
+  it("traz imunidade/fraqueza/resistência do statblock para o combate", () => {
+    const c = enemyCombatant("Skeleton Guard", 0, {
+      ...sb,
+      sourceName: "Skeleton Guard",
+      traits: ["undead"],
+      immunities: ["death-effects", "poison"],
+      weaknesses: [{ type: "bludgeoning", value: 5 }],
+      resistances: [{ type: "cold", value: 5 }],
+    });
+    expect(c.immunities).toEqual(["death-effects", "poison"]);
+    expect(c.weaknesses).toEqual([{ type: "bludgeoning", value: 5 }]);
+    // E o dado chega até a aplicação: 4 de maça viram 9 pela fraqueza, e o
+    // esqueleto de 8 HP cai — sem a fraqueza sobrariam 4 HP.
+    const adj = applyDamage(c, [{ amount: 4, type: "bludgeoning" }]);
+    expect(adj.applied).toBe(9);
+    expect(c.currentHp).toBe(0);
+    expect(c.defeated).toBe(true);
   });
 
   it("strikeProfileFrom prefere melee sobre ranged e lê agile das traits", () => {

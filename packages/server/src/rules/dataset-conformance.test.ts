@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { costProfileOf, type RuleRecord } from "./dataset.js";
+import { classifyDefense, normalizeDamageType } from "./damage.js";
 import { isOfficialCondition, parseDie, rollFormula } from "../gm/agent.js";
 import { enemyCombatant } from "../gm/combat.js";
 
@@ -217,6 +218,68 @@ describe.skipIf(!hasGenerated)("conformidade do dataset (requer generated/)", ()
       }
     }
     expect(broken.slice(0, 20)).toEqual([]);
+  });
+
+  it("toda entrada de defesa do bestiary cai num balde CONHECIDO", () => {
+    // A pergunta que este teste responde: apareceu algum tipo de defesa que a
+    // T1 não classificou? "unknown" seria ignorado em silêncio no combate —
+    // exatamente o erro que a Fase 2.5 existe para acabar.
+    const unknown = new Map<string, number>();
+    for (const r of raw("bestiary.json")) {
+      const sb = r.statblock as unknown as {
+        immunities?: string[];
+        weaknesses?: { type: string }[];
+        resistances?: { type: string }[];
+      };
+      if (!sb) continue;
+      const entries = [
+        ...(sb.immunities ?? []),
+        ...(sb.weaknesses ?? []).map((w) => w.type),
+        ...(sb.resistances ?? []).map((w) => w.type),
+      ];
+      for (const e of entries) {
+        if (classifyDefense(e) !== "unknown") continue;
+        unknown.set(e, (unknown.get(e) ?? 0) + 1);
+      }
+    }
+    expect([...unknown.keys()].sort()).toEqual([]);
+  });
+
+  it("mede o ponto cego declarado das defesas não suportadas", () => {
+    // Não é asserção de qualidade — é o número da DÍVIDA, visível a cada run.
+    // Sobe quando um import novo traz defesa que exige contexto que não temos.
+    const counts: Record<string, number> = {};
+    let creaturesAffected = 0;
+    for (const r of raw("bestiary.json")) {
+      const sb = r.statblock as unknown as {
+        immunities?: string[];
+        weaknesses?: { type: string }[];
+        resistances?: { type: string }[];
+      };
+      if (!sb) continue;
+      const entries = [
+        ...(sb.immunities ?? []),
+        ...(sb.weaknesses ?? []).map((w) => w.type),
+        ...(sb.resistances ?? []).map((w) => w.type),
+      ];
+      let affected = false;
+      for (const e of entries) {
+        if (classifyDefense(e) !== "unsupported") continue;
+        counts[normalizeDamageType(e)] = (counts[normalizeDamageType(e)] ?? 0) + 1;
+        affected = true;
+      }
+      if (affected) creaturesAffected += 1;
+    }
+    const top = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([k, v]) => `${k}:${v}`);
+    console.log(
+      `[T1] defesas não suportadas — ${creaturesAffected} criaturas afetadas; top: ${top.join(" ")}`,
+    );
+    // Material de arma é a maior fatia e depende de rastrear a arma usada:
+    // fica DECLARADO aqui, não implementado (ver plano da Fase 2.5).
+    expect(creaturesAffected).toBeGreaterThan(0);
   });
 
   it("toda fórmula de dano de arma/ataque do bestiary é parseável", () => {

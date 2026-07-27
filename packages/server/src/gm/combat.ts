@@ -3,6 +3,14 @@ import type { Character, Combat, Combatant, Companion, DegreeOfSuccess } from "@
 // Import de TIPO apenas: combat.ts segue puro (nunca carrega o dataset em runtime).
 import type { CreatureStatblock } from "../rules/dataset.js";
 import { degreeOfSuccess } from "../dice/check.js";
+import {
+  adjustDamage,
+  parsePlayerResistances,
+  UNTYPED,
+  type DamageAdjustment,
+  type DamageParcel,
+  type Defenses,
+} from "../rules/damage.js";
 
 /** Rolls `n` dice with `faces` sides and returns the total. */
 export function rollDice(n: number, faces: number): number {
@@ -250,8 +258,23 @@ export function passiveFeatBonus(
 }
 
 /** Builds the player's combatant from the sheet + current HP. */
+/**
+ * Recorta as defesas tipadas de um statblock. Campo vazio fica AUSENTE (mesmo
+ * padrão do importador) — save menor e `undefined` já significa "sem defesa".
+ */
+function statblockDefenses(sb: CreatureStatblock): Defenses {
+  return {
+    ...(sb.immunities?.length ? { immunities: sb.immunities } : {}),
+    ...(sb.weaknesses?.length ? { weaknesses: sb.weaknesses } : {}),
+    ...(sb.resistances?.length ? { resistances: sb.resistances } : {}),
+  };
+}
+
 export function playerCombatant(character: Character, currentHp: number): Combatant {
   const passive = passiveFeatBonus(character, "initiative");
+  // Pathbuilder manda resistências como texto livre; o que não tiver valor
+  // numérico fica de fora (declarado em `unparsed`), nunca vira 0 silencioso.
+  const { resistances } = parsePlayerResistances(character.resistances);
   return newCombatant({
     name: character.name,
     kind: "player",
@@ -260,6 +283,7 @@ export function playerCombatant(character: Character, currentHp: number): Combat
     maxHp: character.maxHp,
     currentHp,
     level: character.level,
+    ...(resistances.length ? { resistances } : {}),
   });
 }
 
@@ -289,6 +313,7 @@ export function enemyCombatant(
       traits: sb.traits,
       sourceName: sb.sourceName,
       saves: sb.saves,
+      ...statblockDefenses(sb),
     });
   }
   const b = benchmark(level);
@@ -361,6 +386,7 @@ export function newCompanion(
       persona,
       sourceName: sb.sourceName,
       saves: sb.saves,
+      ...statblockDefenses(sb),
     };
   }
   const b = benchmark(level);
@@ -398,6 +424,9 @@ export function allyCombatant(comp: Companion): Combatant {
     traits: [...comp.traits],
     sourceName: comp.sourceName,
     saves: comp.saves,
+    ...(comp.immunities?.length ? { immunities: comp.immunities } : {}),
+    ...(comp.weaknesses?.length ? { weaknesses: comp.weaknesses } : {}),
+    ...(comp.resistances?.length ? { resistances: comp.resistances } : {}),
     defeated: hp === 0,
   });
 }
@@ -687,6 +716,8 @@ export interface PersistentTick {
   flatRoll: number;
   /** true quando o flat check (DC 15) encerrou a condição. */
   ended: boolean;
+  /** Ajuste por imunidade/fraqueza/resistência (`""` quando não houve). */
+  note: string;
 }
 
 const PERSISTENT_RE = /^persistent\s+(.+?)\s+damage(?:\s+(\d+(?:d\d+)?(?:[+-]\d+)?))?$/i;
@@ -709,7 +740,9 @@ export function tickPersistentDamage(combat: Combat): PersistentTick[] {
       if (!m) continue;
       const amount = rollPersistentAmount(m[2]);
       const before = c.currentHp;
-      applyDamage(c, amount);
+      // O tipo já está na condição ("persistent fire damage 1d6") — dano
+      // persistente também respeita imunidade/resistência.
+      const adj = applyDamage(c, [{ amount, type: m[1]! }]);
       const flatRoll = d20();
       const ended = flatRoll >= 15;
       if (ended || c.defeated) {
@@ -723,16 +756,40 @@ export function tickPersistentDamage(combat: Combat): PersistentTick[] {
         after: c.currentHp,
         flatRoll,
         ended,
+        note: adj.note,
       });
     }
   }
   return out;
 }
 
-/** Applies damage (>=0) to a combatant, clamping HP and flagging defeat. */
-export function applyDamage(target: Combatant, amount: number): void {
-  target.currentHp = Math.max(0, target.currentHp - Math.max(0, amount));
+/** As defesas tipadas de um combatente, no formato que `adjustDamage` espera. */
+export function defensesOf(target: Combatant): Defenses {
+  return {
+    immunities: target.immunities,
+    weaknesses: target.weaknesses,
+    resistances: target.resistances,
+  };
+}
+
+/**
+ * Applies damage to a combatant, clamping HP and flagging defeat.
+ *
+ * Aceita um número (dano SEM tipo — `update_state`, testes) ou as parcelas
+ * tipadas da instância, e nesse caso passa por imunidade/fraqueza/resistência.
+ * Devolve o ajuste para que o resumo mecânico mostre POR QUE o HP caiu o que
+ * caiu — dano tipado que some sem explicação é estado mentindo.
+ */
+export function applyDamage(
+  target: Combatant,
+  damage: number | DamageParcel[],
+): DamageAdjustment {
+  const parcels: DamageParcel[] =
+    typeof damage === "number" ? [{ amount: damage, type: UNTYPED }] : damage;
+  const adj = adjustDamage(parcels, defensesOf(target));
+  target.currentHp = Math.max(0, target.currentHp - adj.applied);
   if (target.currentHp === 0) target.defeated = true;
+  return adj;
 }
 
 /**

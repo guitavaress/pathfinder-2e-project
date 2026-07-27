@@ -219,6 +219,13 @@ export const SceneEventSchema = z.discriminatedUnion("type", [
 ]);
 export type SceneEvent = z.infer<typeof SceneEventSchema>;
 
+/** Resistência/fraqueza do statblock: tipo de dano + valor ("fire 5"). */
+export const TypedDefenseSchema = z.object({
+  type: z.string(),
+  value: z.number().int(),
+});
+export type TypedDefense = z.infer<typeof TypedDefenseSchema>;
+
 /**
  * An NPC ally traveling with the player (ADR-004). The MECHANICAL half lives
  * here: stats resolved at recruit time (bestiary statblock or level benchmark)
@@ -248,6 +255,10 @@ export const CompanionSchema = z.object({
       will: z.number().int(),
     })
     .optional(),
+  /** Defesas tipadas do statblock, congeladas no recrutamento junto com o resto. */
+  immunities: z.array(z.string()).optional(),
+  weaknesses: z.array(TypedDefenseSchema).optional(),
+  resistances: z.array(TypedDefenseSchema).optional(),
 });
 export type Companion = z.infer<typeof CompanionSchema>;
 
@@ -283,6 +294,11 @@ export const CombatantSchema = z.object({
       will: z.number().int(),
     })
     .optional(),
+  /** Imunidade/fraqueza/resistência a dano (statblock oficial ou ficha).
+   *  Opcionais: saves antigos, gravados antes da Fase 2.5, seguem carregando. */
+  immunities: z.array(z.string()).optional(),
+  weaknesses: z.array(TypedDefenseSchema).optional(),
+  resistances: z.array(TypedDefenseSchema).optional(),
 });
 export type Combatant = z.infer<typeof CombatantSchema>;
 

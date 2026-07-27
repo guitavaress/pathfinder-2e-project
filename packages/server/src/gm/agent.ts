@@ -25,6 +25,7 @@ import {
   type SpellMechanics,
 } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
+import { scaleParcels, type DamageParcel } from "../rules/damage.js";
 import { buildTools } from "./tool-schemas.js";
 import {
   allyCombatant,
@@ -490,19 +491,30 @@ export function rollFormula(formula: string): number {
   return Math.max(0, total);
 }
 
-/** Rolls Strike damage for the active attacker against a target. */
+/**
+ * Rolls Strike damage for the active attacker against a target.
+ *
+ * Devolve também as PARCELAS tipadas: um Strike de statblock pode ser
+ * "1d8 piercing + 1d6 fire", e colapsar isso num tipo só apagaria a fraqueza a
+ * fogo do alvo. `type` segue existindo para o texto do resumo.
+ */
 function rollDamage(
   session: Session,
   attacker: Combatant | undefined,
   input: Record<string, unknown>,
-): { amount: number; type: string } {
+): { amount: number; type: string; parcels: DamageParcel[] } {
   const crit = input.crit === true || input.degree === "criticalSuccess";
   const dbl = (n: number) => (crit ? n * 2 : n);
+  const one = (amount: number, type: string) => ({
+    amount,
+    type,
+    parcels: [{ amount, type }],
+  });
 
   const formula = input.formula ? String(input.formula) : "";
   if (formula) {
     const type = input.damageType ? String(input.damageType) : "damage";
-    return { amount: dbl(rollFormula(formula)), type };
+    return one(dbl(rollFormula(formula)), type);
   }
 
   if (attacker?.kind === "player") {
@@ -516,7 +528,7 @@ function rollDamage(
       const type = input.damageType
         ? String(input.damageType)
         : (DAMAGE_TYPE_NAMES[w.damageType] ?? w.damageType ?? "damage");
-      return { amount, type };
+      return one(amount, type);
     }
   }
 
@@ -525,11 +537,16 @@ function rollDamage(
   const profile = attacker
     ? strikeProfileFor(attacker)
     : strikeProfileFrom(undefined, 0);
-  const amount = profile.damage.reduce((sum, d) => sum + rollFormula(d.formula), 0);
-  const type = input.damageType
-    ? String(input.damageType)
-    : (profile.damage[0]?.type ?? "damage");
-  return { amount: dbl(amount), type };
+  // Tipo forçado pela tool colapsa as parcelas (o modelo declarou UM tipo);
+  // sem ele, cada entrada do statblock vira parcela própria.
+  const forced = input.damageType ? String(input.damageType) : null;
+  const rolled = profile.damage.map((d) => ({
+    amount: dbl(rollFormula(d.formula)),
+    type: forced ?? d.type,
+  }));
+  const amount = rolled.reduce((sum, d) => sum + d.amount, 0);
+  const type = forced ?? profile.damage[0]?.type ?? "damage";
+  return { amount, type, parcels: rolled.length > 0 ? rolled : [{ amount, type }] };
 }
 
 /** Title-cases a weapon/skill name for the summary ("dagger" → "Dagger"). */
@@ -649,19 +666,24 @@ function castActionCost(raw: string | undefined): number {
 function rollSpellDamage(
   mech: SpellMechanics,
   castRank: number,
-): { total: number; type: string } {
+): { total: number; type: string; parcels: DamageParcel[] } {
   const steps = mech.heighten
     ? Math.max(0, Math.floor((castRank - mech.rank) / mech.heighten.interval))
     : 0;
   let total = 0;
   let type = "";
+  // Cada entrada de dano da magia vira parcela própria: magia de dois tipos
+  // (ex.: fogo + som) precisa ser medida contra as defesas de CADA tipo.
+  const parcels: DamageParcel[] = [];
   mech.damage.forEach((d, i) => {
-    total += rollFormula(d.formula);
+    let amount = rollFormula(d.formula);
     const add = mech.heighten?.add[i];
-    if (add) for (let s = 0; s < steps; s++) total += rollFormula(add);
+    if (add) for (let s = 0; s < steps; s++) amount += rollFormula(add);
+    total += amount;
+    parcels.push({ amount, type: d.type });
     if (!type && d.type && d.type !== "untyped") type = d.type;
   });
-  return { total, type };
+  return { total, type, parcels };
 }
 
 /** Devolve o slot/focus cobrado quando a conjuração acabou rejeitada. */
@@ -828,7 +850,7 @@ export async function executeTool(
 
         // On a hit, roll and apply damage automatically (no separate tool call).
         let damageLine = "";
-        let dmg: { amount: number; type: string } | null = null;
+        let dmg: { amount: number; type: string; parcels: DamageParcel[] } | null = null;
         if (hit) {
           dmg = rollDamage(session, attacker, {
             weapon: skill,
@@ -841,17 +863,20 @@ export async function executeTool(
             if (isOffGuard(target) && saDice > 0) {
               const sneak = crit ? rollDice(saDice, 6) * 2 : rollDice(saDice, 6);
               dmg.amount += sneak;
+              // Parcela PRÓPRIA: dano de precisão tem o tipo da arma, mas 464
+              // criaturas são imunes a precisão — só a parcela cai, não o golpe.
+              dmg.parcels.push({ amount: sneak, type: dmg.type, category: "precision" });
             }
           }
           const before = target.currentHp;
-          applyDamage(target, dmg.amount);
+          const adj = applyDamage(target, dmg.parcels);
           turnSet(turnStruck, session).add(target.id);
           if (target.kind === "player") session.state.currentHp = target.currentHp;
           let defeatedNote = target.defeated ? ` — ${target.name} DEFEATED` : "";
           if (target.kind === "player" && target.defeated) {
             defeatedNote = ` — ${enterDying(session, crit)}`;
           }
-          damageLine = ` for ${dmg.amount} ${dmg.type}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
+          damageLine = ` for ${dmg.amount} ${dmg.type}${adj.note}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
         }
         // Emit the roll with full attack context so the UI can render it richly.
         result.attack = {
@@ -1238,8 +1263,8 @@ export async function executeTool(
           const dmg = rollSpellDamage(mech, castRank);
           const amount = crit ? dmg.total * 2 : dmg.total;
           const before = target.currentHp;
-          applyDamage(target, amount);
-          dmgNote = ` for ${amount} ${dmg.type || "damage"}; ${target.name} ${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""}`;
+          const adj = applyDamage(target, scaleParcels(dmg.parcels, amount));
+          dmgNote = ` for ${amount} ${dmg.type || "damage"}${adj.note}; ${target.name} ${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""}`;
         }
         result.attack = {
           attacker: c.name,
@@ -1302,9 +1327,9 @@ export async function executeTool(
           const amount = Math.floor(dmg.total * mult);
           if (amount > 0) {
             const before = target.currentHp;
-            applyDamage(target, amount);
+            const adj = applyDamage(target, scaleParcels(dmg.parcels, amount));
             parts.push(
-              `${target.name} ${DEGREE_EN[result.degree]} → takes ${amount} ${dmg.type || "damage"} (${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""})`,
+              `${target.name} ${DEGREE_EN[result.degree]} → takes ${amount} ${dmg.type || "damage"}${adj.note} (${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""})`,
             );
           } else {
             parts.push(`${target.name} ${DEGREE_EN[result.degree]} → unharmed`);
@@ -1735,11 +1760,17 @@ export async function executeTool(
         let dmg: { amount: number; type: string } | null = null;
         if (hit) {
           const base = rollDice(record!.damage!.dice, parseDie(record!.damage!.die));
-          let amount = crit ? base * 2 : base;
+          const direct = crit ? base * 2 : base;
+          let amount = direct;
           if (record!.splash) amount += record!.splash;
           dmg = { amount, type: record!.damage!.type };
+          // Splash é parcela própria: 283 criaturas têm fraqueza a splash-damage.
+          const parcels: DamageParcel[] = [{ amount: direct, type: dmg.type }];
+          if (record!.splash) {
+            parcels.push({ amount: record!.splash, type: dmg.type, category: "splash" });
+          }
           const before = target.currentHp;
-          applyDamage(target, amount);
+          const adj = applyDamage(target, parcels);
           turnSet(turnStruck, session).add(target.id);
           let extra = "";
           if (record!.persistent) {
@@ -1749,7 +1780,7 @@ export async function executeTool(
           }
           if (record!.splash) extra += ` (incl. ${record!.splash} splash)`;
           const defeatedNote = target.defeated ? ` — ${target.name} DEFEATED` : "";
-          damageLine = ` for ${amount} ${dmg.type}${extra}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
+          damageLine = ` for ${amount} ${dmg.type}${adj.note}${extra}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
         }
         consume(); // a bomba se foi mesmo errando o arremesso
         result.attack = {
@@ -2124,7 +2155,7 @@ function applyPersistentTicks(
     }
     const fate = t.ended || c.defeated ? "it ends" : "it continues";
     lines.push(
-      `- Persistent ${t.type} damage: ${c.name} takes ${t.amount} (${t.before}→${t.after} HP)${downNote}; ${fate}.`,
+      `- Persistent ${t.type} damage: ${c.name} takes ${t.amount}${t.note} (${t.before}→${t.after} HP)${downNote}; ${fate}.`,
     );
   }
 
@@ -2251,7 +2282,12 @@ function strikeAt(
     amount = parts.reduce((sum, p) => sum + p.rolled, 0);
     if (crit) amount *= 2;
     const before = target.currentHp;
-    applyDamage(target, amount);
+    // Cada entrada do statblock entra tipada: dobrar parcela a parcela dá
+    // exatamente o mesmo total (×2 não arredonda), e preserva os tipos.
+    const adj = applyDamage(
+      target,
+      parts.map((p) => ({ amount: crit ? p.rolled * 2 : p.rolled, type: p.type })),
+    );
     if (target.kind === "player") session.state.currentHp = target.currentHp;
     // Dano persistente do ataque (dados do statblock) vira condição no
     // hit; mesmo tipo não empilha (mantém a existente).
@@ -2279,7 +2315,7 @@ function strikeAt(
         : parts.length > 1
           ? ` (${parts.map((p) => `${crit ? p.rolled * 2 : p.rolled} ${p.type || "damage"}`).join(" + ")})`
           : "";
-    dmgLine = ` for ${amount}${typeNote}${persistentNote}; ${target.name} ${before}→${target.currentHp} HP${down}`;
+    dmgLine = ` for ${amount}${typeNote}${adj.note}${persistentNote}; ${target.name} ${before}→${target.currentHp} HP${down}`;
   }
   const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
   result.attack = {
@@ -2361,16 +2397,17 @@ function enemySpellTurn(
             : 0;
     const amount = Math.floor(dmg.total * mult);
     let downNote = "";
+    let adjNote = "";
     const before = player.currentHp;
     if (amount > 0) {
-      applyDamage(player, amount);
+      adjNote = applyDamage(player, scaleParcels(dmg.parcels, amount)).note;
       session.state.currentHp = player.currentHp;
       if (player.defeated) downNote = ` — ${enterDying(session, result.degree === "criticalFailure")}`;
     }
     emit({ type: "state", state: session.state });
     const dmgNote =
       amount > 0
-        ? ` takes ${amount} ${dmg.type || "damage"} (${before}→${player.currentHp} HP)${downNote}`
+        ? ` takes ${amount} ${dmg.type || "damage"}${adjNote} (${before}→${player.currentHp} HP)${downNote}`
         : " is unharmed";
     return `- ${enemy.name} casts ${pick.name}: ${player.name} ${saveKey} save ${DEGREE_EN[result.degree]} →${dmgNote}.`;
   }
@@ -2388,10 +2425,10 @@ function enemySpellTurn(
   if (hit) {
     const amount = crit ? dmg.total * 2 : dmg.total;
     const before = player.currentHp;
-    applyDamage(player, amount);
+    const adj = applyDamage(player, scaleParcels(dmg.parcels, amount));
     session.state.currentHp = player.currentHp;
     const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
-    dmgLine = ` for ${amount} ${dmg.type || "damage"}; ${player.name} ${before}→${player.currentHp} HP${down}`;
+    dmgLine = ` for ${amount} ${dmg.type || "damage"}${adj.note}; ${player.name} ${before}→${player.currentHp} HP${down}`;
   }
   result.attack = {
     attacker: enemy.name,
