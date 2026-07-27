@@ -19,6 +19,19 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { costProfileOf, type RuleRecord } from "./dataset.js";
 import { classifyDefense, normalizeDamageType } from "./damage.js";
+import {
+  coversStatement,
+  DECLARED_UNCOVERED,
+  prefixOf,
+  rollOptionsFor,
+} from "./roll-options.js";
+
+/**
+ * Um prefixo de roll option com este número de ocorrências ou mais é DOMÍNIO
+ * DE PESO: tem de estar coberto ou declarado. Abaixo disso é a cauda de
+ * namespaces de um feat só (`chimera-flail:head:lion`), que não se enumera.
+ */
+const HEAVY_DOMAIN = 50;
 import { isOfficialCondition, parseDie, rollFormula } from "../gm/agent.js";
 import { enemyCombatant } from "../gm/combat.js";
 
@@ -218,6 +231,94 @@ describe.skipIf(!hasGenerated)("conformidade do dataset (requer generated/)", ()
       }
     }
     expect(broken.slice(0, 20)).toEqual([]);
+  });
+
+  it("mede a cobertura das roll options sobre os predicados REAIS", () => {
+    // T2 não altera comportamento — instala vocabulário. O que este teste
+    // guarda é a honestidade dele: todo statement do dataset ou é decidível
+    // pelo contexto máximo, ou está DECLARADO como não modelado. Statement que
+    // não caia em nenhum dos dois é ponto cego silencioso — e quebra aqui.
+    const counts = new Map<string, number>();
+    const collect = (p: unknown): void => {
+      if (typeof p === "string") {
+        counts.set(p, (counts.get(p) ?? 0) + 1);
+        return;
+      }
+      if (Array.isArray(p)) {
+        p.forEach(collect);
+        return;
+      }
+      if (p && typeof p === "object") {
+        for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+          if (["or", "and", "not", "nor", "nand", "xor"].includes(k)) collect(v);
+          else if (["gte", "lte", "gt", "lt", "eq"].includes(k)) {
+            if (Array.isArray(v) && typeof v[0] === "string") {
+              counts.set(v[0], (counts.get(v[0]) ?? 0) + 1);
+            }
+          } else collect(v);
+        }
+      }
+    };
+    for (const file of readdirSync(generatedDir).filter((f) => f.endsWith(".json"))) {
+      if (file === "manifest.json" || file === "uuid-index.json") continue;
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as { predicate?: unknown }[]) {
+          if (re?.predicate) collect(re.predicate);
+        }
+      }
+    }
+    expect(counts.size).toBeGreaterThan(1000);
+
+    // Contexto MÁXIMO: jogador com ficha atacando um alvo com um item.
+    const full = rollOptionsFor({
+      self: {
+        kind: "player",
+        level: 5,
+        traits: ["human"],
+        conditions: ["off-guard"],
+        className: "Fighter",
+        ancestry: "Human",
+        heritage: "Versatile Heritage",
+        feats: [],
+        classFeatures: [],
+        skills: {},
+      },
+      target: { kind: "enemy", level: 3, traits: ["undead"], conditions: ["frightened 1"] },
+      action: "Strike",
+      item: {
+        name: "Longsword +1 (striking)",
+        base: "Longsword",
+        traits: ["versatile-p"],
+        type: "weapon",
+        category: "martial",
+        melee: true,
+        ranged: false,
+        damageType: "slashing",
+        rank: 1,
+      },
+    });
+
+    let decidable = 0;
+    let declared = 0;
+    const orphans = new Map<string, number>();
+    for (const [stmt, n] of counts) {
+      if (coversStatement(full, stmt)) decidable += n;
+      else if ((DECLARED_UNCOVERED as readonly string[]).includes(prefixOf(stmt))) declared += n;
+      else orphans.set(prefixOf(stmt), (orphans.get(prefixOf(stmt)) ?? 0) + n);
+    }
+    const orphanTotal = [...orphans.values()].reduce((s, v) => s + v, 0);
+    const total = decidable + declared + orphanTotal;
+    const heavy = [...orphans.entries()]
+      .filter(([, n]) => n >= HEAVY_DOMAIN)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}(${v})`);
+    console.log(
+      `[T2] statements: ${total} | decidíveis ${decidable} (${Math.round((decidable / total) * 100)}%) | declarados ${declared} | cauda não enumerada ${orphanTotal} em ${orphans.size} prefixos`,
+    );
+    // A cauda de namespaces de um feat só é esperada e não se enumera. O que
+    // NÃO se admite é um domínio de peso passando despercebido: ou a engine o
+    // cobre, ou ele está declarado. Import novo com domínio grande falha aqui.
+    expect(heavy).toEqual([]);
   });
 
   it("toda entrada de defesa do bestiary cai num balde CONHECIDO", () => {
