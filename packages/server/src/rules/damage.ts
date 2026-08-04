@@ -194,6 +194,12 @@ const ALIASES: Record<string, string> = {
   evil: "unholy",
   "negative-energy": "void",
   "positive-energy": "vitality",
+  // Abreviações do export do Pathbuilder (`Weapon.damageType` é "P", não
+  // "piercing"). Sem expandir, a arma da ficha nunca casa com a fraqueza do
+  // alvo nem com `item:damage:type:*` do dado.
+  p: "piercing",
+  s: "slashing",
+  b: "bludgeoning",
 };
 
 /** Normaliza para o vocabulário do dataset: minúsculo, hifenizado, sem alias. */
