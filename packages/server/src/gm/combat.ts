@@ -12,6 +12,7 @@ import {
   type Defenses,
 } from "../rules/damage.js";
 import { ModifierStack, type Modifier } from "../rules/modifiers.js";
+import type { RollOptions } from "../rules/roll-options.js";
 
 /** Rolls `n` dice with `faces` sides and returns the total. */
 export function rollDice(n: number, faces: number): number {
@@ -672,6 +673,7 @@ export function isOffGuard(c: Combatant): boolean {
 export type ConditionModifierSource = (
   conditions: string[],
   selector: "ac" | "attack-roll",
+  ro?: RollOptions,
 ) => Modifier[];
 
 let conditionSource: ConditionModifierSource | null = null;
@@ -709,13 +711,22 @@ function valueOfCondition(conditions: string[], name: string): number {
   return 0;
 }
 
-/** A pilha de modificadores de condição que incide sobre um seletor. */
+/**
+ * A pilha de modificadores de condição que incide sobre um seletor.
+ *
+ * `ro` é o contexto da rolagem DO PONTO DE VISTA de `c`: em PF2e o rule element
+ * mora no ator, e `self:` dentro do predicado é sempre o dono da condição. Por
+ * isso a CA do defensor e a rolagem do atacante pedem contextos diferentes —
+ * ver `rollOptionsOf` em `agent.ts`. Sem `ro`, condição com predicado não
+ * aplica (indecidível não é permissão).
+ */
 export function conditionStack(
   c: Combatant,
   selector: "ac" | "attack-roll",
+  ro?: RollOptions,
 ): ModifierStack {
   const source = conditionSource ?? builtinConditionModifiers;
-  return new ModifierStack().addAll(source(c.conditions, selector));
+  return new ModifierStack().addAll(source(c.conditions, selector, ro));
 }
 
 /**
@@ -723,13 +734,13 @@ export function conditionStack(
  * empilham por tipo (PF2e): off-guard é circunstância e frightened é status,
  * então somam entre si — mas dois status não somam entre eles.
  */
-export function effectiveAC(target: Combatant): number {
-  return target.ac + conditionStack(target, "ac").total();
+export function effectiveAC(target: Combatant, ro?: RollOptions): number {
+  return target.ac + conditionStack(target, "ac", ro).total();
 }
 
 /** Penalidade das condições do atacante sobre a rolagem de ataque. */
-export function attackStatusPenalty(attacker: Combatant): number {
-  return conditionStack(attacker, "attack-roll").total();
+export function attackStatusPenalty(attacker: Combatant, ro?: RollOptions): number {
+  return conditionStack(attacker, "attack-roll", ro).total();
 }
 
 /**

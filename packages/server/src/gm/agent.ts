@@ -27,6 +27,8 @@ import {
 import { lookupWebRule } from "../rules/web.js";
 import { scaleParcels, type DamageParcel } from "../rules/damage.js";
 import { conditionModifiersFor } from "../rules/condition-modifiers.js";
+import { rollOptionsForCheck } from "../rules/roll-context.js";
+import type { RollOptions } from "../rules/roll-options.js";
 import { buildTools } from "./tool-schemas.js";
 import {
   allyCombatant,
@@ -94,6 +96,29 @@ import type { Session } from "./sessions.js";
  * sem `generated/`.
  */
 setConditionModifierSource(conditionModifiersFor);
+
+/**
+ * As roll options DO PONTO DE VISTA de `self` (Fase 2.5 / T5.2).
+ *
+ * Em PF2e o rule element mora no ator e o `self:` do predicado é sempre o dono
+ * da condição — então a CA do defensor e a rolagem do atacante NÃO podem
+ * compartilhar um contexto só. Um Strike monta dois: `(alvo, atacante)` para a
+ * CA e `(atacante, alvo)` para o ataque. Trocar os papéis inverteria silen-
+ * ciosamente todo predicado que fala de alvo.
+ */
+function rollOptionsOf(
+  session: Session,
+  self: Combatant,
+  target?: Combatant,
+  opts: { action?: string; item?: string; damageType?: string } = {},
+): RollOptions {
+  return rollOptionsForCheck({
+    ...(self.kind === "player" ? { character: session.character } : {}),
+    self,
+    ...(target ? { target } : {}),
+    ...opts,
+  });
+}
 
 /**
  * Single model that drives both stages by default. Each stage runs its own
@@ -836,8 +861,12 @@ export async function executeTool(
         const map = mapPenalty(attacker.mapProgress, agile);
         // Conditions as real mechanics: off-guard −2 AC, frightened −N to
         // the target's AC and to the attacker's rolls.
-        const ac = effectiveAC(target);
-        const statusPen = attackStatusPenalty(attacker);
+        const weaponName = findSheetWeapon(session.character, skill)?.name ?? skill;
+        const ac = effectiveAC(target, rollOptionsOf(session, target, attacker, { action: "Strike" }));
+        const statusPen = attackStatusPenalty(
+          attacker,
+          rollOptionsOf(session, attacker, target, { action: "Strike", item: weaponName }),
+        );
         const mapLabel = map ? `, MAP ${map}` : "";
         const result = rollCheck(
           `${reason} (${skill} vs AC ${ac}${mapLabel})`,
@@ -1261,7 +1290,7 @@ export async function executeTool(
           };
         }
         const map = mapPenalty(you!.mapProgress);
-        const ac = effectiveAC(target);
+        const ac = effectiveAC(target, rollOptionsOf(session, target, you!, { action: sheetName }));
         const result = rollCheck(
           `${sheetName} spell attack: ${c.name} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`,
           (entry.attack ?? 0) + map,
@@ -1756,8 +1785,11 @@ export async function executeTool(
         you!.actionsRemaining -= cost;
         const atkBonus = bombAttackBonus(session.character, record!);
         const map = mapPenalty(you!.mapProgress, traits.includes("agile"));
-        const ac = effectiveAC(target);
-        const statusPen = attackStatusPenalty(you!);
+        const ac = effectiveAC(target, rollOptionsOf(session, target, you!, { action: "Strike" }));
+        const statusPen = attackStatusPenalty(
+          you!,
+          rollOptionsOf(session, you!, target, { action: "Strike", item: owned.name }),
+        );
         const mapLabel = map ? `, MAP ${map}` : "";
         const result = rollCheck(
           `${reason} (${owned.name} vs AC ${ac}${mapLabel})`,
@@ -2261,10 +2293,11 @@ function strikeAt(
   const map = mapPenalty(attacker.mapProgress, profile.agile);
   const mapTag = map ? ` [MAP ${map}${profile.agile ? " agile" : ""}]` : "";
   // Same condition math as player Strikes (off-guard/frightened both ways).
-  const ac = effectiveAC(target);
+  const ac = effectiveAC(target, rollOptionsOf(session, target, attacker, { action: "Strike" }));
   const reactionTag = opts.reactionName ? `Reaction (${opts.reactionName}): ` : "";
   const label = `${reactionTag}${attacker.name} ${strikeName} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
-  const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(attacker), ac);
+  const attackRo = rollOptionsOf(session, attacker, target, { action: "Strike" });
+  const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(attacker, attackRo), ac);
   attacker.mapProgress += 1;
   // Reação DEFENSIVA do jogador (Nimble Dodge, Reactive Shield…): dispara aqui,
   // que é o único ponto onde a engine sabe que o gatilho ("uma criatura te
@@ -2425,10 +2458,10 @@ function enemySpellTurn(
   }
 
   // Spell attack contra a AC do jogador (sem MAP: primeira ação do turno).
-  const ac = effectiveAC(player);
+  const ac = effectiveAC(player, rollOptionsOf(session, player, enemy, { action: pick.name }));
   const result = rollCheck(
     `${pick.name} spell attack: ${enemy.name} vs ${player.name} (AC ${ac})`,
-    pick.attack + attackStatusPenalty(enemy),
+    pick.attack + attackStatusPenalty(enemy, rollOptionsOf(session, enemy, player, { action: pick.name })),
     ac,
   );
   const crit = result.degree === "criticalSuccess";

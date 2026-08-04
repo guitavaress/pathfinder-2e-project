@@ -104,13 +104,18 @@ export function splitConditionName(raw: string): { name: string; value: number }
  * `all` no dado significa "toda checagem e DC" — cobre tanto a CA do alvo
  * quanto a rolagem de ataque do atacante.
  *
+ * `selector` é string livre e não a união estreita da engine porque o dado usa
+ * ~40 seletores (`saving-throw`, `perception`, `athletics`, `fortitude`…) e
+ * fechar o tipo aqui obrigaria a reescrever a assinatura a cada seletor novo —
+ * quem restringe é o chamador (`conditionStack` em `combat.ts`).
+ *
  * Predicado presente e não seguramente verdadeiro NÃO aplica: sem contexto de
  * rolagem (`ro`), um `FlatModifier` condicional fica de fora em vez de entrar
  * por omissão. É a mesma regra da T3 — indecidível não é permissão.
  */
 export function conditionModifiersFor(
   conditions: string[],
-  selector: "ac" | "attack-roll",
+  selector: string,
   ro?: RollOptions,
 ): Modifier[] {
   const out: Modifier[] = [];

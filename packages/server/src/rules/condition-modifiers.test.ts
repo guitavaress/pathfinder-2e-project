@@ -86,6 +86,27 @@ describe.skipIf(!hasGenerated)("condições lidas do dado oficial", () => {
     expect(hp?.value).toBeNull();
   });
 
+  it("predicado DECIDÍVEL pelo contexto aplica (T5.2)", () => {
+    // Malevolence: `or:[origin:trait:haunt, item:trait:curse, item:trait:possession]`
+    // sobre `saving-throw`. `origin:*` é domínio declarado como não coberto,
+    // mas num `or` basta UM braço verdadeiro — com o item amaldiçoado em jogo,
+    // o modificador entra. É exatamente o caminho que ficava morto enquanto
+    // `ro` não chegava até aqui.
+    const withCurse = rollOptionsFor({ item: { traits: ["curse"] } });
+    const mods = conditionModifiersFor(["malevolence 2"], "saving-throw", withCurse);
+    expect(mods).toEqual([
+      { slug: "malevolence", type: "status", value: -2, source: "malevolence" },
+    ]);
+  });
+
+  it("o mesmo predicado sem o braço verdadeiro segue INDECIDÍVEL", () => {
+    // Item sem o traço: `item:trait:curse` é falso (coberto), mas
+    // `origin:trait:haunt` continua "não sei" — o `or` inteiro é indecidível,
+    // e indecidível não aplica.
+    const noCurse = rollOptionsFor({ item: { traits: ["magical"] } });
+    expect(conditionModifiersFor(["malevolence 2"], "saving-throw", noCurse)).toEqual([]);
+  });
+
   it("predicado não seguramente verdadeiro NÃO aplica", () => {
     // Deafened só penaliza perícia auditiva / iniciativa por percepção. Sem
     // contexto de rolagem, fica de fora — indecidível não é permissão (T3).

@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Combatant } from "@pf2e/shared";
+import { rollOptionsFor, type RollOptions } from "../rules/roll-options.js";
 import {
   advanceTurn,
+  setConditionModifierSource,
   applyDamage,
   applyRecovery,
   attackStatusPenalty,
@@ -412,6 +414,52 @@ describe("condições como mecânica", () => {
       attackStatusPenalty(mkCombatant({ name: "A", kind: "enemy", conditions: ["frightened 2"] })),
     ).toBe(-2);
     expect(attackStatusPenalty(mkCombatant({ name: "B", kind: "enemy" }))).toBe(0);
+  });
+
+  /**
+   * O contexto da rolagem tem de CHEGAR à fonte de modificadores (T5.2). Até
+   * aqui `ConditionModifierSource` não tinha esse parâmetro, então
+   * `conditionModifiersFor` recebia `ro` indefinido e descartava todo
+   * FlatModifier com predicado — o caminho condicional existia e estava morto.
+   */
+  describe("o contexto da rolagem chega à fonte de modificadores", () => {
+    afterEach(() => setConditionModifierSource(null));
+
+    it("effectiveAC e attackStatusPenalty repassam as roll options", () => {
+      const seen: (RollOptions | undefined)[] = [];
+      setConditionModifierSource((_conds, _sel, ro) => {
+        seen.push(ro);
+        return [];
+      });
+      const ro = rollOptionsFor({ action: "Strike" });
+      effectiveAC(mkCombatant({ name: "T", kind: "enemy" }), ro);
+      attackStatusPenalty(mkCombatant({ name: "A", kind: "enemy" }), ro);
+      expect(seen).toEqual([ro, ro]);
+    });
+
+    it("sem contexto, a fonte recebe `undefined` — e não um objeto vazio", () => {
+      // A diferença importa: `{}` seria um contexto que não cobre NADA, mas
+      // ainda assim um contexto. `undefined` é o sinal de "sem rolagem".
+      const seen: (RollOptions | undefined)[] = [];
+      setConditionModifierSource((_conds, _sel, ro) => {
+        seen.push(ro);
+        return [];
+      });
+      effectiveAC(mkCombatant({ name: "T", kind: "enemy" }));
+      expect(seen).toEqual([undefined]);
+    });
+
+    it("o seletor continua chegando junto", () => {
+      const seen: string[] = [];
+      setConditionModifierSource((_conds, sel) => {
+        seen.push(sel);
+        return [];
+      });
+      const c = mkCombatant({ name: "T", kind: "enemy" });
+      effectiveAC(c);
+      attackStatusPenalty(c);
+      expect(seen).toEqual(["ac", "attack-roll"]);
+    });
   });
 
   it("tickEndOfRound: off-guard expira, frightened decai, prone fica", () => {
