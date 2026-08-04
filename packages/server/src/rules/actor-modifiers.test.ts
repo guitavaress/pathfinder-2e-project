@@ -13,7 +13,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Character } from "@pf2e/shared";
-import { actorModifiersFor, ENGINE_COMPOSED_SELECTORS } from "./actor-modifiers.js";
+import {
+  actorDefensesFor,
+  actorModifiersFor,
+  ENGINE_COMPOSED_SELECTORS,
+} from "./actor-modifiers.js";
 import { ModifierStack } from "./modifiers.js";
 import { rollOptionsFor } from "./roll-options.js";
 import { rollOptionsForCheck } from "./roll-context.js";
@@ -169,5 +173,63 @@ describe.skipIf(!hasGenerated)("actorModifiersFor — empilhamento", () => {
   it("feat repetido na ficha conta uma vez só", () => {
     const c = mkCharacter({ feats: ["Incredible Initiative", "Incredible Initiative"] });
     expect(actorModifiersFor(c, "initiative").applied).toHaveLength(1);
+  });
+});
+
+describe.skipIf(!hasGenerated)("actorDefensesFor — defesas tipadas do dado (T5.5)", () => {
+  it("resistência de feat entra com tipo e valor reais", () => {
+    const c = mkCharacter({ feats: ["Inured to the Heat"] });
+    expect(actorDefensesFor(c).defenses).toEqual({ resistances: [{ type: "fire", value: 4 }] });
+  });
+
+  it("imunidade e fraqueza — que o Pathbuilder nem exporta", () => {
+    const c = mkCharacter({ feats: ["Basic Undead Benefits", "Fey Skin"] });
+    const { defenses } = actorDefensesFor(c);
+    expect(defenses.immunities).toEqual(["death-effects"]);
+    expect(defenses.weaknesses).toEqual([{ type: "cold-iron", value: 5 }]);
+  });
+
+  it("duas resistências do MESMO tipo não somam: vale a maior", () => {
+    // RAW: resistências do mesmo tipo não empilham.
+    const c = mkCharacter({ feats: ["Inured to the Heat", "Asmodeus - Moderate Boon"] });
+    expect(actorDefensesFor(c).defenses.resistances).toEqual([{ type: "fire", value: 5 }]);
+  });
+
+  it("um mesmo feat pode dar resistência E fraqueza", () => {
+    const c = mkCharacter({ feats: ["Become Thought"] });
+    const { defenses } = actorDefensesFor(c);
+    expect(defenses.resistances).toEqual([{ type: "physical", value: 10 }]);
+    expect(defenses.weaknesses).toEqual([{ type: "mental", value: 5 }]);
+  });
+
+  it("tipo escolhido por ChoiceSet fica DECLARADO, não vira defesa vazia", () => {
+    // Geb's Blessing: `{item|flags.pf2e.rulesSelections.energyOne}` depende de
+    // uma escolha que a ficha do Pathbuilder não exporta.
+    const c = mkCharacter({ feats: ["Geb's Blessing"] });
+    const { defenses, skipped } = actorDefensesFor(c);
+    expect(defenses).toEqual({});
+    expect(skipped.every((s) => s.reason === "value-unresolved")).toBe(true);
+    expect(skipped[0]?.detail).toContain("rulesSelections");
+  });
+
+  it("valor por expressão não vira número chutado", () => {
+    // Advanced Undead Benefits: `floor(@actor.level/2)`.
+    const c = mkCharacter({ feats: ["Advanced Undead Benefits"] });
+    const { defenses, skipped } = actorDefensesFor(c);
+    expect(defenses.resistances).toBeUndefined();
+    expect(skipped.some((s) => s.detail === "floor(@actor.level/2)")).toBe(true);
+  });
+
+  it("predicado indecidível sem contexto não concede defesa", () => {
+    // Os "Gates" do Kineticist exigem `self:effect:kinetic-aura` — efeito ativo,
+    // que a engine não modela.
+    const c = mkCharacter({ feats: ["Fire Gate"] });
+    const { defenses, skipped } = actorDefensesFor(c, rollOptionsFor({}));
+    expect(defenses.immunities).toBeUndefined();
+    expect(skipped.some((s) => s.reason === "predicate-unknown")).toBe(true);
+  });
+
+  it("ficha sem nada não inventa defesa", () => {
+    expect(actorDefensesFor(mkCharacter()).defenses).toEqual({});
   });
 });

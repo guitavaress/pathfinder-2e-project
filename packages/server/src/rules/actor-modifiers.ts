@@ -25,6 +25,7 @@
  */
 import type { Character } from "@pf2e/shared";
 import { categoryRecords, type RuleRecord } from "./dataset.js";
+import { normalizeDamageType, type Defenses } from "./damage.js";
 import { modifierType, type Modifier } from "./modifiers.js";
 import { evaluate } from "./predicate.js";
 import { slug, type RollOptions } from "./roll-options.js";
@@ -229,8 +230,168 @@ export function actorModifiersFor(
   return { applied, skipped };
 }
 
-
 /** Só para teste: força a releitura do índice. */
 export function resetSheetModifierIndex(): void {
   byName = null;
+  defensesByName = null;
+}
+
+// ---------------------------------------------------------------------------
+// Defesas tipadas da ficha (T5.5) — a segunda, terceira e quarta keys de rule
+// element que a engine passa a consumir.
+// ---------------------------------------------------------------------------
+
+/** Um Resistance/Weakness/Immunity de ficha, cru como o dado traz. */
+interface SheetDefense {
+  source: string;
+  kind: "Resistance" | "Weakness" | "Immunity";
+  /** Tipos de dano já normalizados; vazio quando a expressão não resolveu. */
+  types: string[];
+  /** null em Immunity (não tem valor) e quando a expressão não resolveu. */
+  value: number | null;
+  unresolved?: string;
+  predicate?: unknown;
+}
+
+export interface ActorDefenses {
+  defenses: Defenses;
+  skipped: ActorModifierSkip[];
+}
+
+let defensesByName: Map<string, SheetDefense[]> | null = null;
+
+/**
+ * `type` vem como string, lista, ou template do Foundry resolvido por ChoiceSet
+ * (`{item|flags.pf2e.rulesSelections.energyOne}`) — este último depende de uma
+ * escolha do jogador que a ficha do Pathbuilder não exporta. Fica DECLARADO.
+ */
+function defenseTypes(raw: unknown): { types: string[]; unresolved?: string } {
+  const list = Array.isArray(raw) ? raw : [raw];
+  const types: string[] = [];
+  for (const t of list) {
+    if (typeof t !== "string" || !t.trim()) continue;
+    if (t.includes("{")) return { types: [], unresolved: t };
+    types.push(normalizeDamageType(t));
+  }
+  return { types };
+}
+
+function defensesOfRecord(rec: RuleRecord): SheetDefense[] {
+  const out: SheetDefense[] = [];
+  for (const raw of rec.rules ?? []) {
+    const r = raw as Record<string, unknown>;
+    const kind = r.key;
+    if (kind !== "Resistance" && kind !== "Weakness" && kind !== "Immunity") continue;
+    const { types, unresolved } = defenseTypes(r.type);
+    const value =
+      kind === "Immunity"
+        ? null
+        : typeof r.value === "number" && Number.isFinite(r.value)
+          ? r.value
+          : null;
+    out.push({
+      source: rec.name,
+      kind,
+      types,
+      value,
+      ...(unresolved
+        ? { unresolved }
+        : kind !== "Immunity" && value === null && typeof r.value === "string"
+          ? { unresolved: r.value }
+          : {}),
+      ...(r.predicate === undefined ? {} : { predicate: r.predicate }),
+    });
+  }
+  return out;
+}
+
+function defenseIndex(): Map<string, SheetDefense[]> {
+  if (defensesByName) return defensesByName;
+  defensesByName = new Map();
+  for (const category of SHEET_CATEGORIES) {
+    for (const rec of categoryRecords(category)) {
+      const key = normalize(rec.name);
+      if (defensesByName.has(key)) continue;
+      const defs = defensesOfRecord(rec);
+      if (defs.length) defensesByName.set(key, defs);
+    }
+  }
+  return defensesByName;
+}
+
+/** Resistência/fraqueza do mesmo tipo não somam em PF2e: vale a maior. */
+function mergeTyped(
+  into: { type: string; value: number }[],
+  type: string,
+  value: number,
+): void {
+  const cur = into.find((d) => d.type === type);
+  if (!cur) into.push({ type, value });
+  else if (value > cur.value) cur.value = value;
+}
+
+/**
+ * As defesas tipadas que a FICHA concede, lidas do dado.
+ *
+ * Diferente dos FlatModifier, aqui NÃO existe risco de dupla contagem: o
+ * Pathbuilder exporta resistências como texto livre em `character.resistances`
+ * (lido por `parsePlayerResistances`) e nada mais — imunidade e fraqueza ele
+ * simplesmente não exporta. Por isso o incondicional entra.
+ *
+ * `ro` é o contexto da ficha (sem alvo, sem item): decide predicados como
+ * `nor:[feat:sealed-poppet]`, que dependem só do personagem. O que depender de
+ * efeito ativo ou de escolha de ChoiceSet fica em `skipped`.
+ */
+export function actorDefensesFor(c: Character, ro?: RollOptions): ActorDefenses {
+  const idx = defenseIndex();
+  const immunities: string[] = [];
+  const weaknesses: { type: string; value: number }[] = [];
+  const resistances: { type: string; value: number }[] = [];
+  const skipped: ActorModifierSkip[] = [];
+  const seen = new Set<string>();
+
+  for (const name of sheetSources(c)) {
+    const key = normalize(name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    for (const def of idx.get(key) ?? []) {
+      const entry = { source: def.source, slug: slug(def.source) };
+      if (def.predicate !== undefined) {
+        const verdict = ro ? evaluate(def.predicate, ro).value : "unknown";
+        if (verdict !== "true") {
+          skipped.push({
+            ...entry,
+            reason: verdict === "false" ? "predicate-false" : "predicate-unknown",
+          });
+          continue;
+        }
+      }
+      if (def.types.length === 0 || (def.kind !== "Immunity" && def.value === null)) {
+        skipped.push({
+          ...entry,
+          reason: "value-unresolved",
+          ...(def.unresolved ? { detail: def.unresolved } : {}),
+        });
+        continue;
+      }
+      for (const type of def.types) {
+        if (def.kind === "Immunity") {
+          if (!immunities.includes(type)) immunities.push(type);
+        } else if (def.kind === "Resistance") {
+          mergeTyped(resistances, type, def.value!);
+        } else {
+          mergeTyped(weaknesses, type, def.value!);
+        }
+      }
+    }
+  }
+
+  return {
+    defenses: {
+      ...(immunities.length ? { immunities } : {}),
+      ...(weaknesses.length ? { weaknesses } : {}),
+      ...(resistances.length ? { resistances } : {}),
+    },
+    skipped,
+  };
 }

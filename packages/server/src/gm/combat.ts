@@ -255,6 +255,18 @@ export function setActorModifierSource(fn: ActorModifierSource | null): void {
   actorSource = fn;
 }
 
+/**
+ * Fonte das DEFESAS tipadas que a ficha concede (T5.5): `Resistance`,
+ * `Weakness` e `Immunity` do dado. Mesma injeção, mesmo motivo.
+ */
+export type ActorDefenseSource = (character: Character) => Defenses;
+
+let defenseSource: ActorDefenseSource | null = null;
+
+export function setActorDefenseSource(fn: ActorDefenseSource | null): void {
+  defenseSource = fn;
+}
+
 /** Os modificadores da ficha sobre um seletor, empilhados pela regra do PF2e. */
 export function sheetStack(
   character: Character,
@@ -281,9 +293,13 @@ export function playerCombatant(character: Character, currentHp: number): Combat
   // ficha — por isso é um dos seletores em que o modificador incondicional do
   // dado se aplica sem risco de dupla contagem.
   const passive = sheetStack(character, "initiative").total();
-  // Pathbuilder manda resistências como texto livre; o que não tiver valor
-  // numérico fica de fora (declarado em `unparsed`), nunca vira 0 silencioso.
+  // Duas fontes de defesa, e nenhuma cobre a outra: o Pathbuilder manda
+  // resistências como texto livre (`character.resistances`) e não exporta
+  // imunidade nem fraqueza; o dado tem as três, vindas de feats/herança/deidade.
+  // O que não tiver valor numérico fica de fora, nunca vira 0 silencioso.
   const { resistances } = parsePlayerResistances(character.resistances);
+  const fromData = defenseSource ? defenseSource(character) : {};
+  const merged = mergeDefenses({ ...(resistances.length ? { resistances } : {}) }, fromData);
   return newCombatant({
     name: character.name,
     kind: "player",
@@ -292,8 +308,32 @@ export function playerCombatant(character: Character, currentHp: number): Combat
     maxHp: character.maxHp,
     currentHp,
     level: character.level,
-    ...(resistances.length ? { resistances } : {}),
+    ...merged,
   });
+}
+
+/** Une duas listas de defesa; do mesmo tipo vale a MAIOR (RAW: não somam). */
+function mergeDefenses(a: Defenses, b: Defenses): Defenses {
+  const immunities = [...new Set([...(a.immunities ?? []), ...(b.immunities ?? [])])];
+  const pick = (
+    xs: { type: string; value: number }[] = [],
+    ys: { type: string; value: number }[] = [],
+  ): { type: string; value: number }[] => {
+    const out: { type: string; value: number }[] = [];
+    for (const d of [...xs, ...ys]) {
+      const cur = out.find((o) => o.type === d.type);
+      if (!cur) out.push({ ...d });
+      else if (d.value > cur.value) cur.value = d.value;
+    }
+    return out;
+  };
+  const weaknesses = pick(a.weaknesses, b.weaknesses);
+  const resistances = pick(a.resistances, b.resistances);
+  return {
+    ...(immunities.length ? { immunities } : {}),
+    ...(weaknesses.length ? { weaknesses } : {}),
+    ...(resistances.length ? { resistances } : {}),
+  };
 }
 
 /**

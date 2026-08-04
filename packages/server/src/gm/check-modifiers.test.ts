@@ -129,3 +129,29 @@ describe.skipIf(!hasGenerated)("feats situacionais da ficha entram na rolagem", 
     expect((await check(s, "athletics")).modifier).toBe(13);
   });
 });
+
+describe.skipIf(!hasGenerated)("defesas tipadas da ficha chegam ao combate (T5.5)", () => {
+  it("resistência de feat entra no combatente do jogador", async () => {
+    const s = mkSession({ feats: ["Inured to the Heat"] });
+    await executeTool(s, "start_combat", { enemies: [{ name: "Bandit", level: 1 }] }, noop);
+    const you = s.state.combat!.combatants.find((c) => c.kind === "player")!;
+    expect(you.resistances).toEqual([{ type: "fire", value: 4 }]);
+  });
+
+  it("imunidade e fraqueza também — o Pathbuilder não exporta nenhuma das duas", async () => {
+    const s = mkSession({ feats: ["Basic Undead Benefits", "Fey Skin"] });
+    await executeTool(s, "start_combat", { enemies: [{ name: "Bandit", level: 1 }] }, noop);
+    const you = s.state.combat!.combatants.find((c) => c.kind === "player")!;
+    expect(you.immunities).toEqual(["death-effects"]);
+    expect(you.weaknesses).toEqual([{ type: "cold-iron", value: 5 }]);
+  });
+
+  it("sem feat de defesa, nada é inventado", async () => {
+    const s = mkSession();
+    await executeTool(s, "start_combat", { enemies: [{ name: "Bandit", level: 1 }] }, noop);
+    const you = s.state.combat!.combatants.find((c) => c.kind === "player")!;
+    expect(you.resistances).toBeUndefined();
+    expect(you.immunities).toBeUndefined();
+    expect(you.weaknesses).toBeUndefined();
+  });
+});

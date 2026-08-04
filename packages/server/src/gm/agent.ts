@@ -28,7 +28,7 @@ import {
 import { lookupWebRule } from "../rules/web.js";
 import { scaleParcels, type DamageParcel } from "../rules/damage.js";
 import { conditionModifiersFor } from "../rules/condition-modifiers.js";
-import { actorModifiersFor } from "../rules/actor-modifiers.js";
+import { actorDefensesFor, actorModifiersFor } from "../rules/actor-modifiers.js";
 import { ModifierStack } from "../rules/modifiers.js";
 import { rollOptionsForCheck } from "../rules/roll-context.js";
 import type { RollOptions } from "../rules/roll-options.js";
@@ -59,6 +59,7 @@ import {
   newCompanion,
   PLAYER_STRIKE_REACTIONS,
   normalizeName,
+  setActorDefenseSource,
   setActorModifierSource,
   sheetStack,
   planEncounter,
@@ -105,6 +106,12 @@ setConditionModifierSource(conditionModifiersFor);
 // iniciativa é rolada antes de existir contexto de rolagem, e nesse ponto só
 // entram os incondicionais em seletor composto pela engine.
 setActorModifierSource((character, selector) => actorModifiersFor(character, selector).applied);
+// Defesas tipadas da ficha (T5.5). O contexto é o da FICHA — sem alvo e sem
+// item —, que é o que existe quando o combate começa; predicados que dependem
+// de efeito ativo ficam de fora, declarados.
+setActorDefenseSource(
+  (character) => actorDefensesFor(character, rollOptionsForCheck({ character })).defenses,
+);
 
 /**
  * As roll options DO PONTO DE VISTA de `self` (Fase 2.5 / T5.2).
