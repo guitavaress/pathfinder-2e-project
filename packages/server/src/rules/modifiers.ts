@@ -11,8 +11,21 @@
  * (mesmo contrato de `damage.ts`). Quem lê o dado é `condition-modifiers.ts`.
  */
 
-/** Tipos de modificador que empilham por categoria; `untyped` sempre soma. */
-export const MODIFIER_TYPES = ["circumstance", "status", "item", "untyped"] as const;
+/**
+ * Tipos de modificador que empilham por categoria; `untyped` sempre soma.
+ *
+ * `ability` e `proficiency` são poucos no dado (12 rule elements), mas entram
+ * como tipos PRÓPRIOS de propósito: dobrados em `untyped` eles passariam a
+ * somar entre si, que é justamente o erro que esta pilha existe para evitar.
+ */
+export const MODIFIER_TYPES = [
+  "circumstance",
+  "status",
+  "item",
+  "ability",
+  "proficiency",
+  "untyped",
+] as const;
 export type ModifierType = (typeof MODIFIER_TYPES)[number];
 
 export interface Modifier {

@@ -749,6 +749,17 @@ export function conditionRecords(): RuleRecord[] {
   return load().filter((r) => r.category === "conditions");
 }
 
+/**
+ * Os registros de UMA categoria, sem fuzzy e sem a precedência do índice por
+ * nome. Quem consome rule element precisa disso: "Shield Block" existe em
+ * `actions` E em `feats`, e o índice global entrega o de `actions` (política
+ * declarada em `NAME_INDEX_ORDER`). Para saber o que o FEAT da ficha faz, é
+ * preciso olhar a categoria certa.
+ */
+export function categoryRecords(category: string): RuleRecord[] {
+  return load().filter((r) => r.category === category);
+}
+
 let conditionNames: Set<string> | null = null;
 
 /**

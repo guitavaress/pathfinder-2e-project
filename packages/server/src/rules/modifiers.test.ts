@@ -81,9 +81,20 @@ describe("modifierType", () => {
     expect(modifierType("circumstance")).toBe("circumstance");
     expect(modifierType("STATUS")).toBe("status");
     expect(modifierType("item")).toBe("item");
+    // `ability` e `proficiency` passaram a ser tipos PRÓPRIOS na T5.3: os feats
+    // da ficha os usam, e dobrá-los em untyped os faria somar entre si.
+    expect(modifierType("ability")).toBe("ability");
+    expect(modifierType("proficiency")).toBe("proficiency");
     // Encumbered vem do dado SEM type — untyped soma, e é isso mesmo.
     expect(modifierType(undefined)).toBe("untyped");
-    expect(modifierType("ability")).toBe("untyped");
+    expect(modifierType("inventado")).toBe("untyped");
+  });
+
+  it("dois bônus de `ability` não somam entre si", () => {
+    const s = new ModifierStack()
+      .add({ slug: "a", type: "ability", value: 2 })
+      .add({ slug: "b", type: "ability", value: 3 });
+    expect(s.total()).toBe(3);
   });
 });
 
