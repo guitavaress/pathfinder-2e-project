@@ -18,6 +18,7 @@ import {
   lookupLocalRule,
   multiActionCost,
   namedActivity,
+  mentionedAction,
   officialConditions,
   spellRecord,
   type CostProfile,
@@ -27,6 +28,8 @@ import {
 import { lookupWebRule } from "../rules/web.js";
 import { scaleParcels, type DamageParcel } from "../rules/damage.js";
 import { conditionModifiersFor } from "../rules/condition-modifiers.js";
+import { actorModifiersFor } from "../rules/actor-modifiers.js";
+import { ModifierStack } from "../rules/modifiers.js";
 import { rollOptionsForCheck } from "../rules/roll-context.js";
 import type { RollOptions } from "../rules/roll-options.js";
 import { buildTools } from "./tool-schemas.js";
@@ -56,7 +59,8 @@ import {
   newCompanion,
   PLAYER_STRIKE_REACTIONS,
   normalizeName,
-  passiveFeatBonus,
+  setActorModifierSource,
+  sheetStack,
   planEncounter,
   playerCombatant,
   playerOf,
@@ -96,6 +100,11 @@ import type { Session } from "./sessions.js";
  * sem `generated/`.
  */
 setConditionModifierSource(conditionModifiersFor);
+// Mesmo contrato para os modificadores da FICHA (T5.4): quem carrega o dataset
+// é `agent.ts`, `combat.ts` segue puro. Sem `ro` aqui de propósito — a
+// iniciativa é rolada antes de existir contexto de rolagem, e nesse ponto só
+// entram os incondicionais em seletor composto pela engine.
+setActorModifierSource((character, selector) => actorModifiersFor(character, selector).applied);
 
 /**
  * As roll options DO PONTO DE VISTA de `self` (Fase 2.5 / T5.2).
@@ -468,6 +477,29 @@ function resolveModifier(session: Session, skillRaw: string): number | null {
     return c.weapons[0].attack;
   }
   return null;
+}
+
+/**
+ * Os seletores do DADO para uma rolagem nomeada na ficha (Fase 2.5 / T5.4).
+ *
+ * O pf2e nomeia a mesma rolagem em dois níveis: um save de Vontade é
+ * `saving-throw` E `will`, uma perícia é `skill-check` E `stealth`. Rule
+ * elements usam os dois — pedir só um perderia metade.
+ */
+function checkSelectors(session: Session, skillRaw: string): string[] {
+  const key = skillRaw.toLowerCase().trim();
+  const c = session.character;
+  if (key === "perception") return ["perception"];
+  if (key === "fortitude" || key === "fort") return ["saving-throw", "fortitude"];
+  if (key === "reflex" || key === "ref") return ["saving-throw", "reflex"];
+  if (key === "will") return ["saving-throw", "will"];
+  if (c.skills[key]) return ["skill-check", key];
+  if (c.lores.some((l) => l.name.toLowerCase() === key || key.includes(l.name.toLowerCase()))) {
+    // Lore tem nome livre; o dado não tem seletor por lore específica.
+    return ["skill-check"];
+  }
+  if (findSheetWeapon(c, key)) return ["attack", "attack-roll"];
+  return [];
 }
 
 interface ToolOutcome {
@@ -1029,7 +1061,37 @@ export async function executeTool(
         }
       }
       if (skillFreqCounts) commitFrequency(session, `${reason} ${skill}`);
-      const result = rollCheck(`${reason} (${skill} vs DC ${dc})`, modifier, dc);
+      // Modificadores vindos do DADO (T5.4): condições do jogador (frightened
+      // penaliza TODA checagem, não só ataque — a engine ignorava isso fora do
+      // combate) e os FlatModifier situacionais dos feats da ficha.
+      const selectors = checkSelectors(session, skill);
+      const you = combat?.active ? playerOf(combat) : undefined;
+      const checkRo = rollOptionsForCheck({
+        character: session.character,
+        ...(you ? { self: you } : {}),
+        selfConditions: session.state.conditions,
+        ...(() => {
+          const named = mentionedAction(`${reason} ${skill}`);
+          return named ? { action: named } : {};
+        })(),
+      });
+      const conditions = you?.conditions ?? session.state.conditions;
+      const stack = new ModifierStack()
+        .addAll(selectors.length ? conditionModifiersFor(conditions, selectors, checkRo) : [])
+        .addAll(
+          selectors.length
+            ? actorModifiersFor(session.character, selectors, checkRo).applied
+            : [],
+        );
+      // O "porquê" acompanha o número: `checkReason` corta no primeiro " (",
+      // então isto enriquece a UI sem mexer no resumo mecânico nem nas linhas
+      // que a bateria raspa.
+      const why = stack.total() ? ` [${stack.breakdown()}]` : "";
+      const result = rollCheck(
+        `${reason} (${skill} vs DC ${dc})${why}`,
+        modifier + stack.total(),
+        dc,
+      );
       emit({ type: "check", result });
       return {
         content: JSON.stringify(result),
@@ -1521,10 +1583,15 @@ export async function executeTool(
       const order = combat.combatants
         .map((c) => `${c.name} (init ${c.initiative}, AC ${c.ac}, ${c.currentHp} HP)`)
         .join("; ");
-      // Passivos aplicados pela engine ficam visíveis no resumo (auditoria).
-      const passive = passiveFeatBonus(session.character, "initiative");
-      const passiveNote = passive.total
-        ? ` [+${passive.total} initiative from ${passive.sources.join(", ")}]`
+      // Passivos aplicados pela engine ficam visíveis no resumo (auditoria) —
+      // agora com o nome do feat vindo do próprio dado, não de tabela local.
+      const passiveStack = sheetStack(session.character, "initiative");
+      const passiveTotal = passiveStack.total();
+      const passiveNote = passiveTotal
+        ? ` [${passiveTotal > 0 ? "+" : ""}${passiveTotal} initiative from ${passiveStack
+            .applied()
+            .map((m) => m.source ?? m.slug)
+            .join(", ")}]`
         : "";
       const note = specs.length
         ? ` Encounter: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`

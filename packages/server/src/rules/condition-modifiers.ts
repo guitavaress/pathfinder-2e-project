@@ -115,15 +115,16 @@ export function splitConditionName(raw: string): { name: string; value: number }
  */
 export function conditionModifiersFor(
   conditions: string[],
-  selector: string,
+  selector: string | string[],
   ro?: RollOptions,
 ): Modifier[] {
+  const wanted = new Set(typeof selector === "string" ? [selector] : selector);
   const out: Modifier[] = [];
   for (const raw of conditions) {
     const { name, value } = splitConditionName(raw);
     if (!name) continue;
     for (const mod of conditionModifiers(name)) {
-      if (!mod.selectors.includes(selector) && !mod.selectors.includes("all")) continue;
+      if (!mod.selectors.some((s) => wanted.has(s) || s === "all")) continue;
       if (mod.predicate !== undefined) {
         if (!ro || evaluate(mod.predicate, ro).value !== "true") continue;
       }

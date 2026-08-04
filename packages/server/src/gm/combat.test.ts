@@ -25,7 +25,7 @@ import {
   livingEnemy,
   mapPenalty,
   partySizeOf,
-  passiveFeatBonus,
+  setActorModifierSource,
   planEncounter,
   playerCombatant,
   setValuedCondition,
@@ -637,7 +637,16 @@ describe("orçamento de encontro (GM Core, party de 1)", () => {
   });
 });
 
-describe("passiveFeatBonus / playerCombatant (passivos da engine)", () => {
+/**
+ * Os passivos da ficha deixaram de morar numa tabela escrita à mão
+ * (`PASSIVE_FEAT_EFFECTS`, uma entrada) e passaram a vir do dado via fonte
+ * injetada (T5.4). O que se testa AQUI é o contrato da injeção — que o número
+ * do dado é o número que a iniciativa usa. Que o dado realmente diz "+2 para
+ * Incredible Initiative" é asserção de `rules/actor-modifiers.test.ts`.
+ */
+describe("playerCombatant — passivos vindos da fonte injetada", () => {
+  afterEach(() => setActorModifierSource(null));
+
   const sheet = (feats: string[]): Character =>
     ({
       name: "Hero",
@@ -648,22 +657,44 @@ describe("passiveFeatBonus / playerCombatant (passivos da engine)", () => {
       feats,
     }) as unknown as Character;
 
-  it("Incredible Initiative soma +2 na iniciativa", () => {
-    const bonus = passiveFeatBonus(sheet(["Incredible Initiative", "Toughness"]), "initiative");
-    expect(bonus).toEqual({ total: 2, sources: ["Incredible Initiative"] });
+  it("a fonte recebe o seletor `initiative` e a ficha inteira", () => {
+    const seen: { selector: string | string[]; feats: string[] }[] = [];
+    setActorModifierSource((character, selector) => {
+      seen.push({ selector, feats: character.feats });
+      return [];
+    });
+    playerCombatant(sheet(["Incredible Initiative"]), 50);
+    expect(seen).toEqual([{ selector: "initiative", feats: ["Incredible Initiative"] }]);
   });
 
-  it("sem o feat, bônus zero", () => {
-    expect(passiveFeatBonus(sheet(["Toughness"]), "initiative").total).toBe(0);
-  });
-
-  it("playerCombatant aplica o passivo: iniciativa mínima = 1 + perception + 2", () => {
-    // d20 mínimo 1: com o feat, init ≥ 13; sem, pode ser 11. Roda várias vezes
-    // e checa o PISO (determinístico o suficiente sem mockar RNG).
+  it("o bônus da fonte entra na iniciativa (piso = 1 + perception + bônus)", () => {
+    setActorModifierSource(() => [
+      { slug: "incredible-initiative", type: "circumstance", value: 2 },
+    ]);
     for (let i = 0; i < 50; i++) {
-      const withFeat = playerCombatant(sheet(["Incredible Initiative"]), 50);
-      expect(withFeat.initiative).toBeGreaterThanOrEqual(13);
-      expect(withFeat.initiative).toBeLessThanOrEqual(32);
+      const c = playerCombatant(sheet(["Incredible Initiative"]), 50);
+      expect(c.initiative).toBeGreaterThanOrEqual(13);
+      expect(c.initiative).toBeLessThanOrEqual(32);
+    }
+  });
+
+  it("dois bônus do MESMO tipo não somam nem aqui", () => {
+    setActorModifierSource(() => [
+      { slug: "a", type: "circumstance", value: 2 },
+      { slug: "b", type: "circumstance", value: 1 },
+    ]);
+    for (let i = 0; i < 20; i++) {
+      const c = playerCombatant(sheet([]), 50);
+      expect(c.initiative).toBeGreaterThanOrEqual(13);
+      expect(c.initiative).toBeLessThanOrEqual(32);
+    }
+  });
+
+  it("sem fonte registrada, a ficha não contribui — e não quebra", () => {
+    for (let i = 0; i < 20; i++) {
+      const c = playerCombatant(sheet(["Incredible Initiative"]), 50);
+      expect(c.initiative).toBeGreaterThanOrEqual(11);
+      expect(c.initiative).toBeLessThanOrEqual(30);
     }
   });
 });

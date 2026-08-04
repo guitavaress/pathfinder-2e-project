@@ -233,30 +233,34 @@ function newCombatant(partial: Partial<Combatant> & Pick<Combatant, "name" | "ki
 }
 
 /**
- * Passivos de feats que a ENGINE aplica (regras-como-dados): o modelo nunca
- * lembrava deles. Tabela pequena e explícita — cresce conforme a auditoria
- * apontar. (Toughness NÃO entra: o Pathbuilder já soma o HP no export.)
+ * Fonte dos modificadores que a FICHA aplica, lida do dado (Fase 2.5 / T5.4).
+ *
+ * Injetada pelo mesmo motivo de `ConditionModifierSource`: `combat.ts` é puro e
+ * nunca carrega o dataset. Sem registro (teste unitário sem `generated/`), a
+ * ficha simplesmente não contribui — e é o comportamento honesto, porque a
+ * alternativa seria uma tabela escrita à mão fingindo cobrir 7.039 feats.
+ *
+ * Foi o que substituiu `PASSIVE_FEAT_EFFECTS`, que tinha UMA entrada
+ * ("incredible initiative": +2 iniciativa) — hoje esse mesmo +2 vem do
+ * `FlatModifier` do próprio feat no dataset.
  */
-const PASSIVE_FEAT_EFFECTS: Record<string, { initiative?: number }> = {
-  "incredible initiative": { initiative: 2 },
-};
-
-/** Soma dos bônus passivos de um tipo dado pelos feats da ficha. */
-export function passiveFeatBonus(
+export type ActorModifierSource = (
   character: Character,
-  kind: "initiative",
-): { total: number; sources: string[] } {
-  let total = 0;
-  const sources: string[] = [];
-  for (const feat of character.feats) {
-    const effect = PASSIVE_FEAT_EFFECTS[feat.toLowerCase().trim()];
-    const value = effect?.[kind];
-    if (value) {
-      total += value;
-      sources.push(feat);
-    }
-  }
-  return { total, sources };
+  selector: string | string[],
+) => Modifier[];
+
+let actorSource: ActorModifierSource | null = null;
+
+export function setActorModifierSource(fn: ActorModifierSource | null): void {
+  actorSource = fn;
+}
+
+/** Os modificadores da ficha sobre um seletor, empilhados pela regra do PF2e. */
+export function sheetStack(
+  character: Character,
+  selector: string | string[],
+): ModifierStack {
+  return new ModifierStack().addAll(actorSource ? actorSource(character, selector) : []);
 }
 
 /** Builds the player's combatant from the sheet + current HP. */
@@ -273,14 +277,17 @@ function statblockDefenses(sb: CreatureStatblock): Defenses {
 }
 
 export function playerCombatant(character: Character, currentHp: number): Combatant {
-  const passive = passiveFeatBonus(character, "initiative");
+  // Iniciativa é COMPOSTA pela engine (d20 + percepção), não vem pronta da
+  // ficha — por isso é um dos seletores em que o modificador incondicional do
+  // dado se aplica sem risco de dupla contagem.
+  const passive = sheetStack(character, "initiative").total();
   // Pathbuilder manda resistências como texto livre; o que não tiver valor
   // numérico fica de fora (declarado em `unparsed`), nunca vira 0 silencioso.
   const { resistances } = parsePlayerResistances(character.resistances);
   return newCombatant({
     name: character.name,
     kind: "player",
-    initiative: d20() + character.perception + passive.total,
+    initiative: d20() + character.perception + passive,
     ac: character.ac,
     maxHp: character.maxHp,
     currentHp,

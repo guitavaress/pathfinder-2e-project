@@ -493,6 +493,37 @@ export function namedActivity(text: string): string | null {
   return null;
 }
 
+let basicActionNames: string[] | null = null;
+
+/**
+ * A AÇÃO básica citada em prosa livre ("Climb the wall" → "Climb"), para o
+ * vocabulário `action:*` das roll options (Fase 2.5 / T5.4).
+ *
+ * Existe separado de `namedActivity` porque aquele serve a outro propósito —
+ * cobrar o custo de atividades de várias ações — e por isso exige nome com 6+
+ * caracteres, o que exclui justamente as ações básicas que os rule elements
+ * mais testam (`Climb`, `Trip`, `Shove`, `Hide`, `Seek`).
+ *
+ * Só a categoria `actions` entra, e só com nome de 4+ letras casado por palavra
+ * inteira, preferindo o mais longo. Um falso positivo aqui não fabrica número
+ * nenhum sozinho: ele apenas TORNA DECIDÍVEL um predicado que sem isso ficaria
+ * indecidível — e indecidível já não aplica.
+ */
+export function mentionedAction(text: string): string | null {
+  if (!basicActionNames) {
+    basicActionNames = load()
+      .filter((r) => r.category === "actions" && r.name.length >= 4 && /^[A-Za-z' -]+$/.test(r.name))
+      .map((r) => r.name)
+      .sort((a, b) => b.length - a.length);
+  }
+  const t = text.toLowerCase();
+  for (const name of basicActionNames) {
+    const escaped = name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`).test(t)) return name;
+  }
+  return null;
+}
+
 let requirementTexts: Map<string, string> | null = null;
 
 /**

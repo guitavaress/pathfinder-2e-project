@@ -177,15 +177,20 @@ export function sheetModifiers(c: Character): SheetModifier[] {
  */
 export function actorModifiersFor(
   c: Character,
-  selector: string,
+  selector: string | string[],
   ro?: RollOptions,
 ): ActorModifiers {
   const applied: Modifier[] = [];
   const skipped: ActorModifierSkip[] = [];
-  const composed = ENGINE_COMPOSED_SELECTORS.has(selector);
+  // Uma rolagem casa com VÁRIOS seletores do dado (um save de Vontade é
+  // `saving-throw` e `will`), e um modificador que atende a dois deles ainda
+  // conta uma vez só — por isso a iteração é pelos modificadores, não pelos
+  // seletores.
+  const wanted = new Set(typeof selector === "string" ? [selector] : selector);
+  const composed = [...wanted].some((s) => ENGINE_COMPOSED_SELECTORS.has(s));
 
   for (const mod of sheetModifiers(c)) {
-    if (!mod.selectors.includes(selector) && !mod.selectors.includes("all")) continue;
+    if (!mod.selectors.some((s) => wanted.has(s) || s === "all")) continue;
 
     if (!mod.hasPredicate && !composed) {
       // Incondicional num número que a ficha já traz pronto: o Pathbuilder já
