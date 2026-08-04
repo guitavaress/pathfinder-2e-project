@@ -9,9 +9,12 @@
  * segundos.
  *
  * A classe de bug que motivou isto: "Shake it Off" existe como REAÇÃO em
- * `actions.json` e como feat de 1 AÇÃO em `feats.json`; o índice é primeiro-ganha
- * por ordem alfabética de arquivo, então a engine servia a reação e cobrava zero
- * pelo feat. Só apareceu porque caiu na amostra da bateria.
+ * `actions.json` e como feat de 1 AÇÃO em `feats.json`; o índice por nome é
+ * primeiro-ganha, então a engine servia a reação e cobrava zero pelo feat. Só
+ * apareceu porque caiu na amostra da bateria. Hoje a precedência é declarada em
+ * código (`NAME_INDEX_ORDER`) e quem precisa da categoria certa usa
+ * `categoryRecords` — mas o homônimo continua existindo, e a decisão sobre
+ * expô-lo em `lookupLocalRule` segue em aberto.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -26,6 +29,7 @@ import {
   rollOptionsFor,
 } from "./roll-options.js";
 import { evaluate } from "./predicate.js";
+import { ENGINE_COMPOSED_SELECTORS } from "./actor-modifiers.js";
 
 /**
  * Um prefixo de roll option com este número de ocorrências ou mais é DOMÍNIO
@@ -80,6 +84,8 @@ function raw(file: string): RuleRecord[] {
   const path = join(generatedDir, file);
   if (!existsSync(path)) return [];
   const arr = JSON.parse(readFileSync(path, "utf8")) as RuleRecord[];
+  // `manifest.json`/`uuid-index.json` são objetos, não listas de registro.
+  if (!Array.isArray(arr)) return [];
   return arr.filter((r) => r && typeof r.name === "string" && r.category && r.text);
 }
 
@@ -691,5 +697,129 @@ describe.skipIf(!hasGenerated)("import total (Fase 1.5): zero perda e grafo", ()
     };
     expect(hidden?.statblock).toMatchObject({ ac: 10, hp: 12 });
     expect(hidden?.hazard).toMatchObject({ stealth: 8, isComplex: false });
+  });
+});
+
+/**
+ * Cobertura de RULE ELEMENTS (Fase 2.5 / T5.6).
+ *
+ * A métrica que a fase existe para mover. Antes da T5 a engine lia UMA key
+ * (`FlatModifier`) de UMA categoria (`conditions`); o resto do dado era prosa.
+ * Este bloco mede o que efetivamente vira comportamento — e, mais importante, o
+ * que fica declarado como dívida, para a próxima fase medir contra um número e
+ * não contra uma impressão.
+ */
+describe.skipIf(!hasGenerated)("cobertura de rule elements (T5)", () => {
+  /** As keys que a engine consome hoje. Crescer esta lista é o trabalho. */
+  const CONSUMED_KEYS = ["FlatModifier", "Resistance", "Weakness", "Immunity"];
+  /** E as categorias de onde ela as lê — key sozinha superestimaria. */
+  const READ_CATEGORIES: Record<string, string[]> = {
+    FlatModifier: ["conditions", "feats", "classes", "heritages", "ancestries", "backgrounds"],
+    Resistance: ["feats", "classes", "heritages", "ancestries", "backgrounds"],
+    Weakness: ["feats", "classes", "heritages", "ancestries", "backgrounds"],
+    Immunity: ["feats", "classes", "heritages", "ancestries", "backgrounds"],
+  };
+
+  it("mede quanto do dado a engine ALCANÇA, por key e categoria", () => {
+    // Contar por key sozinha mentiria: `FlatModifier` também vive em
+    // equipment/effects/bestiary, que nenhum leitor da engine abre. O número
+    // honesto é o par (key, categoria) que tem leitor.
+    const byKey = new Map<string, number>();
+    let reachable = 0;
+    for (const file of readdirSync(generatedDir).filter((f) => f.endsWith(".json"))) {
+      const category = file.replace(/\.json$/, "");
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as { key?: string }[]) {
+          const k = re?.key ?? "(none)";
+          byKey.set(k, (byKey.get(k) ?? 0) + 1);
+          if (READ_CATEGORIES[k]?.includes(category)) reachable++;
+        }
+      }
+    }
+    const total = [...byKey.values()].reduce((s, v) => s + v, 0);
+    const topUnconsumed = [...byKey.entries()]
+      .filter(([k]) => !CONSUMED_KEYS.includes(k))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([k, v]) => `${k}(${v})`);
+    console.log(
+      `[T5] rule elements: ${total} em ${byKey.size} keys | keys com leitor ${CONSUMED_KEYS.length}/${byKey.size} | REs ALCANÇÁVEIS ${reachable} (${Math.round((reachable / total) * 100)}%) | maiores sem leitor: ${topUnconsumed.join(" ")}`,
+    );
+    for (const k of CONSUMED_KEYS) expect(byKey.has(k)).toBe(true);
+    // Piso da fase: antes da T5 a engine alcançava os 16 FlatModifier de
+    // `conditions.json` e nada mais.
+    expect(reachable).toBeGreaterThan(1000);
+  });
+
+  it("mede o destino dos FlatModifier das categorias de ficha", () => {
+    // Simula cada documento como se estivesse na ficha e classifica cada
+    // FlatModifier pelo portão que o barra (ou não), contra UM contexto
+    // concreto (o guerreiro de espada longa atacando um morto-vivo).
+    //
+    // `falso` e `indecidível` NÃO são a mesma coisa e por isso não somam no
+    // mesmo balde: falso é a engine funcionando (o feat não se aplica àquela
+    // cena); indecidível é dívida — vocabulário que a engine ainda não fala.
+    const buckets = { aplicavel: 0, falso: 0, indecidivel: 0, presumido: 0, semValor: 0 };
+    const full = maximalRollOptions();
+    for (const file of ["feats.json", "classes.json", "heritages.json", "ancestries.json", "backgrounds.json"]) {
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as Record<string, unknown>[]) {
+          if (re?.key !== "FlatModifier") continue;
+          const composed = (Array.isArray(re.selector) ? re.selector : [re.selector]).some(
+            (s) => typeof s === "string" && ENGINE_COMPOSED_SELECTORS.has(s),
+          );
+          if (re.predicate === undefined && !composed) {
+            buckets.presumido++;
+            continue;
+          }
+          if (re.predicate !== undefined) {
+            const verdict = evaluate(re.predicate, full).value;
+            if (verdict === "false") {
+              buckets.falso++;
+              continue;
+            }
+            if (verdict === "unknown") {
+              buckets.indecidivel++;
+              continue;
+            }
+          }
+          if (typeof re.value !== "number") buckets.semValor++;
+          else buckets.aplicavel++;
+        }
+      }
+    }
+    const total = Object.values(buckets).reduce((s, v) => s + v, 0);
+    console.log(
+      `[T5] FlatModifier de ficha: ${total} | aplicável nesta cena ${buckets.aplicavel} | não se aplica (predicado falso) ${buckets.falso} | INDECIDÍVEL ${buckets.indecidivel} | presumido na ficha ${buckets.presumido} | valor não resolvido ${buckets.semValor}`,
+    );
+    expect(total).toBeGreaterThan(700);
+    // Nenhum bucket pode engolir tudo em silêncio: se um dia `aplicável` for 0,
+    // a leitura quebrou e ninguém notaria pelo veredito da bateria.
+    expect(buckets.aplicavel).toBeGreaterThan(0);
+  });
+
+  it("mede quantas defesas tipadas da ficha são resolvíveis", () => {
+    let resolvidas = 0;
+    let declaradas = 0;
+    for (const file of ["feats.json", "classes.json", "heritages.json", "ancestries.json", "backgrounds.json"]) {
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as Record<string, unknown>[]) {
+          const k = re?.key;
+          if (k !== "Resistance" && k !== "Weakness" && k !== "Immunity") continue;
+          const types = Array.isArray(re.type) ? re.type : [re.type];
+          const typeOk = types.every((t) => typeof t === "string" && !t.includes("{"));
+          const valueOk = k === "Immunity" || typeof re.value === "number";
+          if (typeOk && valueOk) resolvidas++;
+          else declaradas++;
+        }
+      }
+    }
+    console.log(
+      `[T5] defesas de ficha: ${resolvidas + declaradas} | resolvíveis ${resolvidas} | declaradas ${declaradas}`,
+    );
+    // 44 de 260. O grosso das declaradas depende de ChoiceSet (o tipo é uma
+    // escolha do jogador, `{item|flags.pf2e.rulesSelections...}`) ou de
+    // expressão de nível — as duas dívidas nomeadas da T5.5.
+    expect(resolvidas).toBeGreaterThan(40);
   });
 });

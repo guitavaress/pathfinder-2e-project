@@ -222,6 +222,46 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
 - **Revisitar quando:** bump de ref (7.12.2+) — a conformidade audita o diff; e
   a cada consumidor novo de rule element (fila no ROADMAP).
 
+### ADR-008 — Rule element só vira número quando o contexto DECIDE
+- **Status:** Aceito (2026-08-03). Implementado na Fase 2.5.
+- **Contexto:** A auditoria de 2026-08-03 mediu a distância entre a doutrina 3 e
+  o código e achou um vão grande. O import era total (ADR-007), mas a engine
+  consumia **1 key de 38** — `FlatModifier`, e só da categoria `conditions` (16
+  rule elements). Os passivos de feat moravam numa tabela escrita à mão,
+  `PASSIVE_FEAT_EFFECTS`, com **uma entrada** para os 4.925 feats passivos do
+  dado. E as duas peças construídas para resolver isso — `roll-options.ts` (T2)
+  e `predicate.ts` (T3) — **não eram importadas por nenhum módulo fora de
+  `rules/`**: o parâmetro `ro` de `conditionModifiersFor` nunca chegava, então
+  todo `FlatModifier` com predicado era descartado. Infraestrutura testada e
+  desligada.
+- **Decisão:** Três invariantes, nesta ordem de precedência:
+  1. **Indecidível não aplica.** Predicado que o contexto não decide não vira
+     bônus. Vale para condições, feats e defesas. O que não se aplica sai num
+     diagnóstico (`skipped`, com motivo), nunca em silêncio.
+  2. **Não-duplo-cômputo.** O Pathbuilder exporta valores FINAIS (`ac`,
+     `perception`, `saves`, `skills[].modifier`, `weapons[].attack`). Em seletor
+     que vem pronto da ficha, só se aplica `FlatModifier` COM predicado — um
+     modificador situacional não pode estar embutido num número estático. Em
+     seletor que a ENGINE compõe (`initiative`, dano), aplica-se também o
+     incondicional. Seletor desconhecido cai no lado conservador (presumido na
+     ficha).
+  3. **O rule element é avaliado do ponto de vista de quem o carrega.** `self:`
+     dentro do predicado é o dono da condição/feat, então a CA do defensor e a
+     rolagem do atacante pedem contextos DIFERENTES (`rollOptionsOf` monta os
+     dois). Um contexto só inverteria calado todo predicado sobre alvo.
+- **Consequências:** consumo sobe de 1 para **4 keys** (`FlatModifier`,
+  `Resistance`, `Weakness`, `Immunity`) e de 16 para **1.057 rule elements
+  alcançáveis**; `PASSIVE_FEAT_EFFECTS` deixa de existir; condições passam a
+  pesar em perícia e save (antes só em ataque); `ability` e `proficiency` viram
+  tipos próprios na pilha de modificadores. A ponte é `rules/roll-context.ts`,
+  e o dado entra em `combat.ts` por injeção (`setActorModifierSource`,
+  `setActorDefenseSource`) — o núcleo segue puro.
+- **Revisitar quando:** houver registro de efeitos ativos. É o teto atual: dos
+  781 `FlatModifier` das categorias de ficha, 133 ficam INDECIDÍVEIS, travados
+  em `self:effect:*` e nos slugs que `RollOption` (1.334 REs, sem leitor)
+  deveria acender. Sem esse registro, `GrantItem`/`ChoiceSet`/`ActiveEffectLike`
+  também não têm como entrar.
+
 ### Bifurcações consideradas e adiadas (não fazer sem reabrir a decisão)
 - **Modo dois-modelos** (`RULES_MODEL`/`NARRATIVE_MODEL`): exige segundo
   `llama-server`; limitado pela VRAM. Adiado.

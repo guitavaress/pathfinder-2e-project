@@ -221,6 +221,75 @@ companheiro caído.
 
 ---
 
+## Fase 2.5 — Regras como DADOS (consumo de rule elements)
+
+### ✅ CONCLUÍDA em 2026-08-03 (ver ADR-008)
+
+Fase não planejada no ADR-003: nasceu de uma auditoria de profundidade que mediu
+quanto de PF2e a engine realmente implementava. O achado que a justificou: o
+import era total desde a Fase 1.5, mas a engine consumia **1 rule element key de
+38** — `FlatModifier`, e só de `conditions.json` (16 REs). O resto dos 16.671
+rule elements era prosa. Os passivos de feat viviam numa tabela escrita à mão com
+UMA entrada.
+
+Entregue, uma tarefa por vez:
+
+- **T0** — `@Localize` expandido no importador: 81% do texto que era descartado
+  volta (7.596 expansões, 0 perdas no manifesto).
+- **T1** — dano tipado: imunidade, fraqueza e resistência com parcelas
+  (`rules/damage.ts`), e o ponto cego DECLARADO (defesas que a engine não
+  suporta: `cold-iron`, `area-damage`, `critical-hits`…).
+- **T2** — `rules/roll-options.ts`: o estado do turno no vocabulário do dado,
+  com `covered` separando "falso" de "não sei".
+- **T3** — `rules/predicate.ts`: avaliador de três valores, TOTAL sobre a
+  gramática real dos 7.948 predicados do dataset.
+- **T4** — pilha de modificadores do PF2e (`rules/modifiers.ts`) e as condições
+  lidas do dado em vez de constantes.
+- **T5** — **ligar T2·T3 ao turno e ampliar as keys consumidas.** Até aqui T2 e
+  T3 estavam DESLIGADOS: nenhum módulo fora de `rules/` os importava, e
+  `conditionModifiersFor` recebia `ro` indefinido, descartando todo predicado.
+  - `rules/roll-context.ts` — a ponte estado→roll options que faltava;
+  - `ro` chega a `effectiveAC`/`attackStatusPenalty`, com contexto SEPARADO por
+    ator (o rule element é avaliado do ponto de vista de quem o carrega);
+  - `rules/actor-modifiers.ts` — os `FlatModifier` dos feats/features/herança/
+    ancestralidade/antecedente da ficha, com a regra de não-duplo-cômputo;
+  - `PASSIVE_FEAT_EFFECTS` **removido** (o +2 de Incredible Initiative agora vem
+    do dado); condições passam a pesar em **perícia e save**, não só em ataque;
+  - `Resistance`/`Weakness`/`Immunity` da ficha — imunidade e fraqueza, que o
+    Pathbuilder nem exporta, passam a existir.
+
+**Gate da fase: 525 testes unitários (32 arquivos), sem GPU.**
+
+**Métrica que a fase existe para mover** (linha `[T5]` em
+`rules/dataset-conformance.test.ts` — mede a cada `npm test`, não a cada
+impressão):
+
+| | antes | depois |
+|---|---|---|
+| keys de rule element com leitor | 1 / 38 | **4 / 38** |
+| rule elements alcançáveis pela engine | 16 | **1.057** (6% dos 16.671) |
+| condições com efeito mecânico | 2 / 44 | todas as que têm `FlatModifier` |
+| tabela de passivos escrita à mão | 1 entrada | **não existe mais** |
+
+**A dívida, nomeada e medida** (é o que a próxima fase tem de mover):
+dos 781 `FlatModifier` das categorias de ficha, 574 avaliam corretamente como
+FALSO na cena de teste (a engine funcionando), 60 são presumidos já embutidos no
+export do Pathbuilder, 3 têm valor por expressão — e **133 são INDECIDÍVEIS**.
+Travam em `self:effect:*` e nos slugs que `RollOption` acenderia. Nas defesas,
+216 das 260 ficam declaradas (tipo escolhido por `ChoiceSet`, valor por
+expressão de nível).
+
+**Teto atual, e o que o destrava:** um **registro de efeitos ativos**. Sem ele
+não entram `RollOption` (1.334), `GrantItem` (1.510), `ChoiceSet` (1.245) nem
+`ActiveEffectLike` (1.461) — as quatro maiores keys sem leitor. É o candidato
+natural a T6.
+
+**Fora de escopo, registrado:** as reações que a bateria acusa (`Shield Block`
+precisa de hardness estruturado, `Clever Gambit`); a família posicional
+(`target:distance`, `self:flanking`, cobertura), que é Fase 3.
+
+---
+
 ## Fase 3 — Combate posicional + geração procedural
 
 - **Objetivo:** sair do combate abstrato para o tático (posição importa) e gerar
