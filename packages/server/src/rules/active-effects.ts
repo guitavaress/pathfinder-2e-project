@@ -26,7 +26,7 @@
  * inventar é rejeitado de forma auditável — doutrina 4: o estado nunca mente.
  */
 import type { ActiveEffect } from "@pf2e/shared";
-import { effectRecord, type RuleRecord } from "./dataset.js";
+import { categoryRecords, effectRecord, type RuleRecord } from "./dataset.js";
 import { slug } from "./roll-options.js";
 
 /** Unidades de duração do dado, como o schema do estado as guarda. */
@@ -232,6 +232,130 @@ export function anchorToRound(current: readonly ActiveEffect[], round: number): 
       ? { ...e, expiresOnRound: expiryRound(e.unit, e.value, round) }
       : e,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Como o efeito ENTRA (T6.3): que documento, ao ser usado, põe o quê no próprio
+// personagem. Duas pontes, ambas medidas no dado — nenhuma suposta.
+// ---------------------------------------------------------------------------
+
+let homonyms: Map<string, RuleRecord> | null = null;
+
+/** Effects indexados pelo nome SEM prefixo — "heroism" → "Spell Effect: Heroism". */
+function homonymIndex(): Map<string, RuleRecord> {
+  if (homonyms) return homonyms;
+  homonyms = new Map();
+  for (const rec of categoryRecords("effects")) {
+    const key = rec.name.replace(NAME_PREFIX, "").toLowerCase().trim();
+    // Primeiro-ganha: "Effect: Panache" antes de "Effect: Panache (Temporary)"
+    // não é garantido pela ordem do arquivo, então o desempate é o nome mais
+    // curto — o efeito base, não a variante.
+    const cur = homonyms.get(key);
+    if (!cur || rec.name.length < cur.name.length) homonyms.set(key, rec);
+  }
+  return homonyms;
+}
+
+/** Magia hostil: o efeito homônimo vai no ALVO, nunca em quem conjura. */
+function isHostileSpell(rec: RuleRecord): boolean {
+  return rec.spell?.attack === true || rec.spell?.defense !== undefined;
+}
+
+/**
+ * O efeito que USAR este documento põe no PRÓPRIO personagem, ou `null`.
+ *
+ * Três regras, em ordem de confiança, todas aferidas no dataset:
+ *
+ * 1. **`selfEffect` explícito** (242 feats, 242/242 resolvendo para um effect).
+ *    O nome do campo já diz em quem cai — zero ambiguidade.
+ * 2. **Stance homônima** (78 dos 86 docs `Stance:` têm ação/feat de mesmo nome).
+ *    Postura é auto-dirigida por definição, e é onde vivem justamente os slugs
+ *    que a Fase 2.5 mediu como indecidíveis (`arcane-cascade` e família).
+ * 3. **Magia benigna homônima** (318 das 381 magias com effect homônimo; as 63
+ *    com ataque ou save ficam FORA — o efeito delas incide em quem foi
+ *    atingido, e pôr um `Spell Effect: Ill Omen` no conjurador inventaria uma
+ *    penalidade contra ele).
+ *
+ * Ação/feat não-stance com effect homônimo fica de FORA de propósito: o import
+ * não carrega em quem o efeito incide, e "Hunt Prey" marca a PRESA, não o
+ * caçador. Presumir self ali fabricaria bônus — dívida declarada no ADR-009.
+ */
+export function selfEffectOf(rec: RuleRecord): ResolvedEffect | null {
+  if (rec.selfEffect) {
+    const explicit = resolveEffect(rec.selfEffect);
+    if (explicit) return explicit;
+  }
+  const hit = homonymIndex().get(rec.name.toLowerCase().trim());
+  if (!hit) return null;
+  const isStance = /^stance:\s/i.test(hit.name);
+  if (rec.category === "spells") return isHostileSpell(rec) ? null : toResolved(hit);
+  return isStance ? toResolved(hit) : null;
+}
+
+function toResolved(rec: RuleRecord): ResolvedEffect {
+  return {
+    name: rec.name,
+    slug: effectSlugOf(rec.name),
+    ...durationOf(rec.effectDuration),
+    record: rec,
+  };
+}
+
+let triggers: { name: string; rec: RuleRecord }[] | null = null;
+
+/**
+ * As ações e feats cujo uso põe um efeito no próprio personagem — o índice de
+ * GATILHO, para reconhecer "entra em Arcane Cascade" na prosa da tool.
+ *
+ * Nome com menos de 6 letras fica fora: o corpus de `reason` reais é prosa
+ * livre, e casar "Rage" ou "Aid" dentro de uma frase qualquer concederia efeito
+ * por acidente. Aqui, diferente de um predicado, o falso positivo CUSTA — ele
+ * fabrica um bônus em vez de apenas deixar de decidir.
+ */
+function triggerIndex(): { name: string; rec: RuleRecord }[] {
+  if (triggers) return triggers;
+  const out: { name: string; rec: RuleRecord }[] = [];
+  for (const category of ["actions", "feats"] as const) {
+    for (const rec of categoryRecords(category)) {
+      if (rec.name.length < 6 || !/^[A-Za-z' -]+$/.test(rec.name)) continue;
+      if (!selfEffectOf(rec)) continue;
+      out.push({ name: rec.name, rec });
+    }
+  }
+  // Mais longo primeiro: "Cobra Stance" antes de "Cobra".
+  triggers = out.sort((a, b) => b.name.length - a.name.length);
+  return triggers;
+}
+
+/**
+ * O efeito auto-dirigido citado em prosa livre, ou `null`. Casa por palavra
+ * inteira, preferindo o nome mais longo — mesma técnica de `mentionedAction`.
+ *
+ * `owned` é o portão que importa: só dispara o que a FICHA tem. É a mesma regra
+ * que já rejeita cura e item sem fonte (doutrina 4), e é ela que torna seguro
+ * ter "Flight" e "Passion" no índice — palavras comuns em prosa, mas inertes
+ * para quem não tem o feat. Sem o portão, "he fights with passion" viraria
+ * bônus.
+ */
+export function mentionedSelfEffect(
+  text: string,
+  owned: Iterable<string>,
+): ResolvedEffect | null {
+  const have = new Set([...owned].map((n) => n.toLowerCase().trim()));
+  if (have.size === 0) return null;
+  const t = text.toLowerCase();
+  for (const { name, rec } of triggerIndex()) {
+    if (!have.has(name.toLowerCase())) continue;
+    const escaped = name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`).test(t)) return selfEffectOf(rec);
+  }
+  return null;
+}
+
+/** Só para teste: força a releitura dos índices. */
+export function resetEffectIndex(): void {
+  homonyms = null;
+  triggers = null;
 }
 
 /** Como o efeito aparece no resumo mecânico: "Heroism (10 minutes)". */

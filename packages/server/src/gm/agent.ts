@@ -35,6 +35,9 @@ import {
   anchorToRound,
   effectLabel,
   expireEffects,
+  grantEffect,
+  mentionedSelfEffect,
+  selfEffectOf,
   type ExpiryEvent,
 } from "../rules/active-effects.js";
 import type { RollOptions } from "../rules/roll-options.js";
@@ -689,6 +692,32 @@ function companionsOf(session: Session): Companion[] {
   return (session.state.companions ??= []);
 }
 
+/** Tudo que a ficha nomeia e pode disparar um efeito auto-dirigido. */
+function ownedAbilities(session: Session): string[] {
+  const c = session.character;
+  return [...(c.feats ?? []), ...(c.classFeatures ?? [])];
+}
+
+/**
+ * Põe no registro o efeito que a ficha autoriza, devolvendo a linha do resumo.
+ *
+ * O efeito precisa existir no dado E estar na ficha: nome inventado não entra,
+ * e ability que o personagem não tem não concede nada. Reaplicar repõe a
+ * duração em vez de empilhar.
+ */
+function grantPlayerEffect(session: Session, ref: string, source: string): string | null {
+  const round = session.state.combat?.active ? session.state.combat.round : null;
+  const { effects, granted, refreshed } = grantEffect(
+    session.state.effects ?? [],
+    ref,
+    source,
+    round,
+  );
+  if (!granted) return null;
+  session.state.effects = effects;
+  return `- ${refreshed ? "Renewed" : "Now in effect"}: ${effectLabel(granted)}.`;
+}
+
 /**
  * Expira os efeitos vencidos num dos três limites de tempo da engine e devolve
  * as linhas do resumo mecânico.
@@ -1336,12 +1365,27 @@ export async function executeTool(
 
       const castLabel = `${sheetName}${castRank > baseRank || isCantrip ? ` (rank ${castRank})` : ""}`;
 
+      // Magia BENIGNA com effect homônimo põe o efeito em quem conjurou, com a
+      // duração do dado (Fase 2.6). `selfEffectOf` já barra as 63 hostis — o
+      // efeito de Ill Omen incide em quem foi atingido, nunca no conjurador —,
+      // e um alvo inimigo explícito barra o resto.
+      const castRec = spellRecord(sheetName);
+      const spellTargetRef = String(input.target ?? "").trim();
+      const spellTargetFoe =
+        session.state.combat?.active && spellTargetRef
+          ? findCombatant(session.state.combat, spellTargetRef)?.kind === "enemy"
+          : false;
+      const castSelfEffect = castRec && !spellTargetFoe ? selfEffectOf(castRec) : null;
+      const castEffLine = castSelfEffect
+        ? grantPlayerEffect(session, castSelfEffect.name, sheetName)
+        : null;
+
       // Sem mecânica estruturada: gasto real + efeito narrado (utility spells).
       if (!mech || (mech.damage.length === 0 && !mech.attack && !mech.defense)) {
         emit({ type: "state", state: session.state });
         return {
           content: `${sheetName} is cast${resourceNote}. No structured combat effect — narrate its utility effect faithfully (text: ${spellRecord(sheetName)?.text.slice(0, 300) ?? "see rules"}).`,
-          summaryLine: `- Casts ${castLabel}${resourceNote}.`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}.${castEffLine ? `\n${castEffLine}` : ""}`,
         };
       }
 
@@ -1360,7 +1404,7 @@ export async function executeTool(
         emit({ type: "state", state: session.state });
         return {
           content: `${sheetName} heals ${amount.total} HP${resourceNote}: ${before}→${session.state.currentHp}/${c.maxHp}.`,
-          summaryLine: `- Casts ${castLabel}${resourceNote}: heals ${amount.total} (${before}→${session.state.currentHp} HP).`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}: heals ${amount.total} (${before}→${session.state.currentHp} HP).${castEffLine ? `\n${castEffLine}` : ""}`,
         };
       }
 
@@ -1368,7 +1412,7 @@ export async function executeTool(
         emit({ type: "state", state: session.state });
         return {
           content: `${sheetName} is cast${resourceNote} (no combat active — narrate the effect).`,
-          summaryLine: `- Casts ${castLabel}${resourceNote}.`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}.${castEffLine ? `\n${castEffLine}` : ""}`,
         };
       }
 
@@ -1795,10 +1839,14 @@ export async function executeTool(
       if (spendActivity) spendCharged?.add(spendActivity.name);
       you.actionsRemaining -= cost;
       commitFrequency(session, reason);
+      // Postura/habilidade auto-dirigida da FICHA entra no registro de efeitos
+      // com a duração do dado (Fase 2.6) — o bônus dela deixa de ser prosa.
+      const selfEff = mentionedSelfEffect(reason, ownedAbilities(session));
+      const effLine = selfEff ? grantPlayerEffect(session, selfEff.name, selfEff.name) : null;
       emit({ type: "state", state: session.state });
       return {
-        content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.`,
-        summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).`,
+        content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.${effLine ? ` ${effLine.replace(/^- /, "")}` : ""}`,
+        summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).${effLine ? `\n${effLine}` : ""}`,
       };
     }
     case "use_item": {
