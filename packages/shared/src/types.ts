@@ -313,6 +313,36 @@ export const CombatSchema = z.object({
 });
 export type Combat = z.infer<typeof CombatSchema>;
 
+/**
+ * Um efeito ativo no personagem (Fase 2.6).
+ *
+ * O `effects.json` do dado tem 2.815 docs, 2.674 deles carregando rule elements
+ * — 1.949 `FlatModifier`, 378 `Resistance`, 308 `DamageDice` — e **todos** com
+ * duração estruturada. É por aqui que `self:effect:<slug>` passa a ser
+ * decidível e que bônus temporários entram na conta sem risco de duplo-cômputo:
+ * um efeito é temporário, então nunca está embutido no export do Pathbuilder.
+ *
+ * O registro guarda a duração em vez de um prazo já calculado porque a engine
+ * só sabe converter em rodadas quando há combate — fora dele o prazo é o
+ * próximo descanso, e isso é decidido na expiração, não na concessão.
+ */
+export const ActiveEffectSchema = z.object({
+  /** Slug do doc sem o prefixo "Effect: " — o que `self:effect:<slug>` casa. */
+  slug: z.string(),
+  /** Nome exato do doc no dataset ("Effect: Rage"): a chave para reler os REs. */
+  name: z.string(),
+  /** Ação, feat ou magia que concedeu — auditoria e voz do narrador. */
+  source: z.string(),
+  /** Unidade de duração, verbatim do dado. */
+  unit: z.enum(["rounds", "minutes", "hours", "days", "encounter", "unlimited"]),
+  /** Valor da duração; -1 quando o dado não dá prazo (`unlimited`/`encounter`). */
+  value: z.number().int(),
+  /** Rodada de combate em que expira — só quando a engine SABE decidir (null
+   *  fora de combate: aí o prazo é o descanso). */
+  expiresOnRound: z.number().int().nullable(),
+});
+export type ActiveEffect = z.infer<typeof ActiveEffectSchema>;
+
 /** Mutable state of a game session. */
 export const GameStateSchema = z.object({
   sessionId: z.string(),
@@ -329,5 +359,9 @@ export const GameStateSchema = z.object({
   /** NPC allies traveling with the player. Optional for save compat (v1 saves
    *  predate companions); absent means none. */
   companions: z.array(CompanionSchema).optional(),
+  /** Efeitos ativos no JOGADOR. Opcional para compat de save (saves anteriores
+   *  à Fase 2.6 não têm o campo); ausente significa nenhum. Efeitos em
+   *  inimigos/aliados são dívida declarada — ver ADR-009. */
+  effects: z.array(ActiveEffectSchema).optional(),
 });
 export type GameState = z.infer<typeof GameStateSchema>;

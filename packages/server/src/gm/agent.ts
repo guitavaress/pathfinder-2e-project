@@ -31,6 +31,12 @@ import { conditionModifiersFor } from "../rules/condition-modifiers.js";
 import { actorDefensesFor, actorModifiersFor } from "../rules/actor-modifiers.js";
 import { ModifierStack } from "../rules/modifiers.js";
 import { rollOptionsForCheck } from "../rules/roll-context.js";
+import {
+  anchorToRound,
+  effectLabel,
+  expireEffects,
+  type ExpiryEvent,
+} from "../rules/active-effects.js";
 import type { RollOptions } from "../rules/roll-options.js";
 import { buildTools } from "./tool-schemas.js";
 import {
@@ -683,6 +689,23 @@ function companionsOf(session: Session): Companion[] {
   return (session.state.companions ??= []);
 }
 
+/**
+ * Expira os efeitos vencidos num dos três limites de tempo da engine e devolve
+ * as linhas do resumo mecânico.
+ *
+ * Efeito que não expira é pior do que efeito que não existe: vira bônus
+ * permanente inventado, e o narrador passa a descrever um personagem enfurecido
+ * três cenas depois. Por isso o tick é da engine, nunca do modelo.
+ */
+function expirePlayerEffects(session: Session, event: ExpiryEvent): string[] {
+  const list = session.state.effects;
+  if (!list?.length) return [];
+  const { effects, expired } = expireEffects(list, event, session.state.combat?.round ?? null);
+  if (expired.length === 0) return [];
+  session.state.effects = effects;
+  return expired.map((e) => `- Effect ends: ${effectLabel(e)}.`);
+}
+
 /** Companheiro do roster cujo nome bate (fuzzy, mesmos dois sentidos do combate). */
 function findCompanion(session: Session, ref: string): Companion | undefined {
   const key = normalizeName(ref);
@@ -1132,12 +1155,14 @@ export async function executeTool(
         const doomed = conditionValueIn(conds, "doomed");
         if (doomed > 0) conds = setValuedCondition(conds, "doomed", doomed - 1);
         session.state.conditions = conds;
+        // Oito horas passam: só efeito SEM prazo atravessa a noite.
+        const ended = expirePlayerEffects(session, "rest");
         emit({ type: "state", state: session.state });
         const gained = session.state.currentHp - before;
         const slotsNote = c.spellcasting.length ? " Spell slots and focus points restored." : "";
         return {
           content: `Overnight rest (8h): healed ${gained} HP (CON ${conMod >= 0 ? "+" : ""}${conMod} × level ${c.level}): ${before}→${session.state.currentHp}/${c.maxHp}.${slotsNote} Fatigued removed; drained/doomed reduced by 1. A full night passes in the story.`,
-          summaryLine: `- A full night's rest: ${session.character.name} recovers ${gained} HP (${before}→${session.state.currentHp}) and wakes with renewed strength. The night passes.`,
+          summaryLine: `- A full night's rest: ${session.character.name} recovers ${gained} HP (${before}→${session.state.currentHp}) and wakes with renewed strength. The night passes.${ended.length ? ` ${ended.length} effect(s) wear off overnight.` : ""}`,
         };
       }
 
@@ -2737,6 +2762,10 @@ export async function runRulesStage(
   // the narrator dramatize old wounds out of nowhere).
   const hpBefore = session.state.currentHp;
   const condsBefore = session.state.conditions.join("|");
+  // A luta termina em NOVE pontos diferentes (end_combat, vitória, derrota,
+  // tick persistente que decide, dying...). Detectar a TRANSIÇÃO aqui pega
+  // todos com uma linha, em vez de nove remendos que a próxima saída esquece.
+  const inCombatBefore = session.state.combat?.active === true;
 
   // Morto é morto: sem mecânica a resolver — o narrador conduz o epílogo.
   if (session.state.conditions.some((c) => /^dead$/i.test(c))) {
@@ -2808,8 +2837,14 @@ export async function runRulesStage(
       if (dyingCombat.active) dyingExtra.push(...applyPersistentTicks(session, emit));
       if (dyingCombat.active) {
         tickEndOfRound(dyingCombat);
+        dyingExtra.push(...expirePlayerEffects(session, "round"));
         emit({ type: "state", state: session.state });
       }
+    }
+    // Caído não congela o relógio dos efeitos: este ramo retorna aqui, então a
+    // expiração de fim de luta precisa acontecer nele também.
+    if (inCombatBefore && session.state.combat?.active !== true) {
+      dyingExtra.push(...expirePlayerEffects(session, "combat-end"));
     }
     return [
       `1. ${line}`,
@@ -3032,11 +3067,24 @@ export async function runRulesStage(
     if (combat.active) {
       summaryLines.push(...applyPersistentTicks(session, emit));
     }
-    // End-of-round upkeep: off-guard expires, frightened N decrements.
+    // End-of-round upkeep: off-guard expires, frightened N decrements, e os
+    // efeitos com prazo em rodadas vencem (Fase 2.6).
     if (combat.active) {
       tickEndOfRound(combat);
+      summaryLines.push(...expirePlayerEffects(session, "round"));
       emit({ type: "state", state: session.state });
     }
+  }
+
+  // Saiu da luta: o que durava "este encontro" ou tinha prazo em rodadas acaba
+  // aqui — inclusive quando a luta fechou por vitória/derrota, sem end_combat.
+  if (inCombatBefore && session.state.combat?.active !== true) {
+    summaryLines.push(...expirePlayerEffects(session, "combat-end"));
+  }
+  // Entrou na luta: quem foi concedido na exploração ganha prazo em rodadas
+  // agora que existe relógio (sem isso duraria a luta inteira).
+  if (!inCombatBefore && session.state.combat?.active === true && session.state.effects?.length) {
+    session.state.effects = anchorToRound(session.state.effects, session.state.combat.round);
   }
 
   const stateChanged =
