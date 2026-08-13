@@ -30,9 +30,14 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
    aplicam. Duas invariantes do ADR-008 mandam aqui: **indecidível não aplica**
    (predicado que o contexto não decide não vira bônus, e sai declarado em
    `skipped`) e **não-duplo-cômputo** (o Pathbuilder já exporta AC/saves/perícias
-   finais; em seletor da ficha só entra `FlatModifier` COM predicado). Cobertura
-   medida a cada `npm test` na linha `[T5]` de `rules/dataset-conformance.test.ts`:
-   hoje **4 keys de 38, 1.057 rule elements alcançáveis**.
+   finais; em seletor da ficha só entra `FlatModifier` COM predicado). A exceção,
+   do ADR-009, é o **efeito ativo** (`rules/active-effects.ts` +
+   `GameState.effects`): temporário, logo nunca embutido no export, logo o
+   incondicional dele entra. Efeito só existe se o dado o conhece E a ficha o
+   autoriza, e **expira em código** — efeito que não expira é bônus permanente
+   inventado. Cobertura medida a cada `npm test` nas linhas `[T5]`/`[T6]` de
+   `rules/dataset-conformance.test.ts`: hoje **4 keys de 38, 3.548 rule elements
+   alcançáveis (21%)** e 567 efeitos concedíveis.
 4. **Estado nunca mente.** O narrador recebe os resultados mecânicos numerados como
    última mensagem e é proibido de inventar/inverter; o que não está nas linhas
    não aconteceu. Cura/dano/itens sem fonte na ficha são rejeitados pela engine.
@@ -151,7 +156,9 @@ mora em código determinístico e testado. O modelo só chama tools e narra.
 Regras de trabalho:
 - Uma fase / uma tarefa por vez. Nada de frentes paralelas.
 - Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
-  O piso vigente é **525 testes unitários** e, na bateria, **70 PASS · 2 FLAKY ·
+  O piso vigente é **614 testes do servidor** (+31 do brain) e, na bateria, **70 PASS · 2 FLAKY ·
   1 SUSPECT · 2 FAIL com cobertura de asserção 40/75** (gate de 26/07, juiz
   honesto — NÃO comparável com os 75/75 antigos). Piso, não meta.
+  A bateria **não roda desde o gate de 26/07**: as Fases 2.5 e 2.6 mudaram
+  números de rolagem sem medição contra ela.
 - Se uma tarefa contradisser uma decisão registrada nos ADRs, PARE e sinalize.

@@ -261,6 +261,68 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   em `self:effect:*` e nos slugs que `RollOption` (1.334 REs, sem leitor)
   deveria acender. Sem esse registro, `GrantItem`/`ChoiceSet`/`ActiveEffectLike`
   também não têm como entrar.
+- **Revisado em 2026-08-12 (ADR-009):** o registro foi construído, e a medição
+  desmentiu parte da justificativa acima. Correções, para que ninguém volte a
+  planejar por elas: dos 133 indecidíveis, só **30** travavam em `self:effect:*`
+  (o resto era `origin:trait` 16, `check:statistic` 10, `item:tag` 9 e uma cauda
+  de vocabulário barato); e `ActiveEffectLike` **não** era prêmio nenhum — 1.259
+  dos 1.461 estão nas categorias de ficha e são `system.skills.X.rank`, que o
+  Pathbuilder já exporta somado. Seria duplo-cômputo puro. O prêmio real estava
+  em `effects.json`, que o ADR-008 não mencionava.
+
+### ADR-009 — O efeito ativo é estado da engine, com prazo do dado
+- **Status:** Aceito (2026-08-12). Implementado na Fase 2.6.
+- **Contexto:** O ADR-008 nomeou o teto certo — sem saber que efeitos estão
+  ativos, `self:effect:*` é indecidível — mas errou onde estava o valor. Medindo
+  antes de construir: `effects.json` tem **2.815 docs, 2.674 com rule elements**
+  (1.949 `FlatModifier`, 378 `Resistance`, 308 `DamageDice`, 221 `TempHP`, 138
+  `Weakness`) e **todos** com `effectDuration` estruturado. É o dobro de rule
+  elements das cinco categorias de ficha somadas, e sem nenhum risco de dupla
+  contagem: efeito é temporário, então nunca esteve no export do Pathbuilder.
+- **Decisão:** `GameState.effects` guarda os efeitos ativos no JOGADOR, e quatro
+  invariantes mandam:
+  1. **Prazo é do dado, não do modelo.** O registro guarda a DURAÇÃO crua
+     (`rounds`/`minutes`/`hours`/`days`/`encounter`/`unlimited`), não um prazo
+     calculado: rodada só existe em combate, e fora dele o prazo é o próximo
+     descanso. `minutes` vira rodada por conversão RAW (1 min = 10 rodadas),
+     nunca por chute; `hours`/`days` não têm relógio nesta engine e expiram no
+     descanso — dívida declarada. **Efeito que não expira é pior que efeito que
+     não existe:** vira bônus permanente inventado.
+  2. **O efeito precisa existir no dado E na ficha.** Nome que o modelo invente
+     é rejeitado de forma auditável (doutrina 4), e a prosa só dispara efeito de
+     ability que o personagem tem — é isso que torna seguro reconhecer "Flight"
+     e "Passion" no texto, palavras corriqueiras que sem o portão viravam bônus.
+  3. **Quem recebe o efeito sai do dado, não de suposição.** Três pontes
+     medidas: `selfEffect` explícito (242 feats, 242/242 resolvendo), stance
+     homônima (+7 além das que já vêm por `selfEffect`) e magia BENIGNA homônima
+     (318; as 63 com ataque ou save ficam fora, porque o efeito delas incide em
+     quem foi atingido — pôr `Spell Effect: Ill Omen` no conjurador inventaria
+     penalidade contra o jogador). Ação/feat não-stance com effect homônimo fica
+     FORA: "Hunt Prey" marca a presa, não o caçador.
+  4. **Cobertura pode ser PARCIAL, e isso é declarado.** `self:effect:rage` a
+     engine decide; `self:effect:overdrive-success:2` fala do *badge* (o contador
+     do Foundry), que o registro não guarda — 53 statements do dataset. Daí
+     `PARTIAL_COVERAGE`: o domínio é coberto até 3 segmentos e mais fundo segue
+     dívida. Cobrir o prefixo inteiro os faria avaliar FALSO, e um `not:` em cima
+     viraria bônus onde a verdade é "não sei".
+- **Consequências:** REs alcançáveis pela engine sobem de **1.057 (6%) para
+  3.548 (21%)**; predicados decididos de 64% para **68%**; os `FlatModifier` de
+  ficha INDECIDÍVEIS caem de 133 para **90**. `effectiveAC` passa a aceitar os
+  modificadores do próprio defensor, e as defesas tipadas do combatente do
+  jogador são RECOMPOSTAS (ficha + efeitos) em vez de acumuladas — somar
+  resistência na entrada e esquecer de tirar na saída deixaria o personagem
+  imune a frio três cenas depois. Corrigido de passagem um bug que fazia
+  `GrantItem` falhar inteiro em silêncio: as referências do dado vêm por NOME
+  (o fonte do pf2e só as converte em id no build do compêndio), e `byUuid` só
+  tentava id — 1.247 de 1.248 não resolviam.
+- **Fora de escopo, declarado:** efeito em INIMIGO/ALIADO (o registro só cobre o
+  jogador, e por isso `target:effect` segue em `DECLARED_UNCOVERED` — afirmar
+  lista vazia por terceiros inverteria calado todo predicado sobre efeito
+  alheio); o badge/contador; `DamageDice` e `TempHP` dos efeitos (308 e 221 REs,
+  sem leitor ainda); e `ItemAlteration`, agora a maior key sem leitor (1.714).
+- **Revisitar quando:** a Fase 3 trouxer posição — `self:flanking`,
+  `target:distance` e cobertura são a próxima maior família indecidível depois
+  de `spellcasting` (544).
 
 ### Bifurcações consideradas e adiadas (não fazer sem reabrir a decisão)
 - **Modo dois-modelos** (`RULES_MODEL`/`NARRATIVE_MODEL`): exige segundo

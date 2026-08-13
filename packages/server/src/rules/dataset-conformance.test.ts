@@ -20,7 +20,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { costProfileOf, type RuleRecord } from "./dataset.js";
+import { categoryRecords, costProfileOf, type RuleRecord } from "./dataset.js";
+import { selfEffectOf } from "./active-effects.js";
 import { classifyDefense, normalizeDamageType } from "./damage.js";
 import {
   coversStatement,
@@ -89,6 +90,9 @@ import { enemyCombatant } from "../gm/combat.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const generatedDir = join(here, "../../data/pf2e/generated");
 const hasGenerated = existsSync(generatedDir);
+
+/** Os prefixos de nome de `effects.json`, como `active-effects.ts` os remove. */
+const NAME_PREFIX_RE = /^(spell effects?|mixed drink|effect|stance|aura):\s*/i;
 
 /** Lê uma categoria crua do disco (o índice da engine filtra e dedupe; aqui não). */
 function raw(file: string): RuleRecord[] {
@@ -841,5 +845,102 @@ describe.skipIf(!hasGenerated)("cobertura de rule elements (T5)", () => {
     // escolha do jogador, `{item|flags.pf2e.rulesSelections...}`) ou de
     // expressão de nível — as duas dívidas nomeadas da T5.5.
     expect(resolvidas).toBeGreaterThan(40);
+  });
+});
+
+/**
+ * O registro de efeitos ativos (Fase 2.6 / T6.5).
+ *
+ * A métrica que ESTA fase existe para mover. A T5 abriu as categorias de ficha;
+ * a T6 abriu `effects.json`, que é onde vive o dobro de rule elements — e, mais
+ * importante, mediu quantos deles a engine consegue de fato CONCEDER, porque um
+ * efeito que nenhuma ação põe em jogo é tão inerte quanto prosa.
+ */
+describe.skipIf(!hasGenerated)("registro de efeitos ativos (T6)", () => {
+  it("mede quanto de effects.json a engine lê e quanto sabe conceder", () => {
+    const effects = raw("effects.json");
+    const LIDAS = ["FlatModifier", "Resistance", "Weakness", "Immunity"];
+    let comRE = 0;
+    let lidos = 0;
+    let total = 0;
+    let comPrazo = 0;
+    for (const e of effects) {
+      const rules = (e.rules ?? []) as { key?: string }[];
+      if (rules.length) comRE++;
+      for (const re of rules) {
+        total++;
+        if (LIDAS.includes(re?.key ?? "")) lidos++;
+      }
+      const d = e.effectDuration as { unit?: string } | undefined;
+      if (d?.unit && d.unit !== "unlimited") comPrazo++;
+    }
+    console.log(
+      `[T6] effects: ${effects.length} docs | com rule element ${comRE} | REs ${total}, com leitor ${lidos} (${Math.round((lidos / total) * 100)}%) | com PRAZO estruturado ${comPrazo}`,
+    );
+    // Piso: a categoria existe, tem duração estruturada e os quatro leitores
+    // alcançam a maior parte. Se um dia `lidos` cair a zero, a leitura quebrou.
+    expect(effects.length).toBeGreaterThan(2500);
+    expect(lidos).toBeGreaterThan(2000);
+    expect(comPrazo).toBeGreaterThan(1500);
+  });
+
+  it("mede quantos efeitos a engine sabe CONCEDER, pelas três pontes", () => {
+    // Efeito que nenhuma ação põe em jogo é inerte, por mais rule element que
+    // carregue. Este número é o que separa "lemos o dado" de "o dado joga".
+    //
+    // Chama a função REAL em vez de reimplementar a regra, e usa o índice da
+    // engine (`categoryRecords`) em vez do arquivo cru. A primeira versão deste
+    // teste reimplementou a busca sobre `raw()` e mediu 7 stances onde a engine
+    // concede 74: `loadGenerated` descarta doc sem `text`, então os homônimos
+    // "Effect: X" vazios que venciam o desempate no arquivo nem existem para
+    // ela. Métrica que não passa pelo código medido mede outra coisa.
+    let viaSelfEffect = 0;
+    let viaStance = 0;
+    let viaMagiaBenigna = 0;
+    let hostilBarrada = 0;
+    for (const category of ["feats", "actions", "spells"] as const) {
+      for (const rec of categoryRecords(category)) {
+        const got = selfEffectOf(rec);
+        if (category === "spells") {
+          const hostil = rec.spell?.attack === true || rec.spell?.defense !== undefined;
+          if (got) viaMagiaBenigna++;
+          else if (hostil && new RegExp(`^(spell )?effect: ${rec.name}$`, "i").test(rec.name)) {
+            hostilBarrada++;
+          }
+          continue;
+        }
+        if (!got) continue;
+        if (rec.selfEffect) viaSelfEffect++;
+        else if (/^stance:\s/i.test(got.name)) viaStance++;
+      }
+    }
+    // As hostis barradas contam-se pelo dado: magia com ataque/save que TEM
+    // effect homônimo e mesmo assim não é concedida ao conjurador.
+    hostilBarrada = 0;
+    for (const rec of categoryRecords("spells")) {
+      const hostil = rec.spell?.attack === true || rec.spell?.defense !== undefined;
+      if (!hostil) continue;
+      const temHomonimo = categoryRecords("effects").some(
+        (e) => e.name.replace(NAME_PREFIX_RE, "").toLowerCase().trim() === rec.name.toLowerCase().trim(),
+      );
+      if (temHomonimo && !selfEffectOf(rec)) hostilBarrada++;
+    }
+    const concedíveis = viaSelfEffect + viaStance + viaMagiaBenigna;
+    console.log(
+      `[T6] efeitos CONCEDÍVEIS: ${concedíveis} | selfEffect ${viaSelfEffect} | stance ${viaStance} | magia benigna ${viaMagiaBenigna} | magia hostil barrada ${hostilBarrada}`,
+    );
+    // As três pontes da T6.3, com os números REAIS — não os do dataset.
+    //
+    // 78 dos 86 docs `Stance:` têm ação/feat homônimo, mas a maioria desses
+    // donos JÁ traz `selfEffect` explícito e entra pela primeira ponte. O que a
+    // regra do homônimo acrescenta são os 7 restantes (o Arcane Cascade entre
+    // eles, cuja ação não tem `selfEffect`). Sobreposição medida, não estimada:
+    // contar 78 aqui atribuiria à segunda ponte um trabalho que é da primeira.
+    expect(viaSelfEffect).toBe(242);
+    expect(viaStance).toBeGreaterThan(5);
+    expect(viaMagiaBenigna).toBeGreaterThan(300);
+    // A barreira das hostis é o ponto: sem ela a engine poria `Spell Effect:
+    // Ill Omen` em quem conjurou, inventando penalidade contra o jogador.
+    expect(hostilBarrada).toBeGreaterThan(50);
   });
 });

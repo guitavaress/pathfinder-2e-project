@@ -11,7 +11,7 @@
 > 3. **A Régua é lei:** mecânica em código, voz no LLM. PR que mova estado para o
 >    modelo é rejeitado por princípio.
 > 4. **Todo comportamento mecânico novo nasce com teste** e estende a bateria
->    feat-audit. O gate vigente da bateria e os **393 testes** (362 server + 31
+>    feat-audit. O gate vigente da bateria e os **645 testes** (614 server + 31
 >    brain) são piso, não meta. Ao mexer no JUIZ da bateria, rode
 >    `replay-judge.ts` antes de gastar GPU — ele re-julga transcripts gravados e
 >    separa "o juiz mudou de opinião" de "o jogo mudou".
@@ -114,12 +114,14 @@ e o consumidor piloto `condition-modifiers.ts` — a conformidade compara as
 constantes da engine com o dado oficial das condições.
 
 **Fila de consumidores de rule element** (um por vez, cada um com teste):
-1. `FlatModifier` de condições → engine (substituir as constantes pelo dado);
+1. ~~`FlatModifier` de condições → engine (substituir as constantes pelo dado);~~
+   **FEITO na Fase 2.5** (T4, ADR-008).
 2. `MultipleAttackPenalty` (Agile Grace etc.) no cálculo de MAP;
 3. `DamageDice`/`FlatModifier` de feats de dano (selector strike-damage);
 4. `Strike` de ancestry (ataques naturais concedidos);
 5. hazards no GM (gerar cena de armadilha com statblock + stealth DC + desarme);
-6. `selfEffect`/effects: aplicar o effect do feat como condição com duração.
+6. ~~`selfEffect`/effects: aplicar o effect do feat como condição com duração.~~
+   **FEITO na Fase 2.6** (ADR-009) — registro de efeitos ativos com prazo do dado.
 
 Também na fila: bump do ref 7.8.0 → 7.12.2 auditado pela conformidade; corrigir
 `Purging Toxins` (`@item.rank`); redesenho da bateria sobre a taxonomia nativa
@@ -287,6 +289,60 @@ natural a T6.
 **Fora de escopo, registrado:** as reações que a bateria acusa (`Shield Block`
 precisa de hardness estruturado, `Clever Gambit`); a família posicional
 (`target:distance`, `self:flanking`, cobertura), que é Fase 3.
+
+---
+
+## Fase 2.6 — Registro de efeitos ativos
+
+### ✅ CONCLUÍDA em 2026-08-12 (ver ADR-009)
+
+O teto que a Fase 2.5 nomeou. Nasceu de medir antes de construir — e a medição
+**corrigiu duas coisas que o ADR-008 tinha registrado errado**:
+
+- dos 133 `FlatModifier` indecidíveis, só **30** travavam em `self:effect:*`; o
+  resto era `origin:trait` (16), `check:statistic` (10), `item:tag` (9) e uma
+  cauda de vocabulário que a ficha já respondia;
+- `ActiveEffectLike` (1.461 REs) **não** era prêmio: 1.259 estão nas categorias
+  de ficha e são `system.skills.X.rank`, que o Pathbuilder já entrega somado.
+  Duplo-cômputo puro.
+
+O prêmio real, que o ADR-008 não mencionava, era `effects.json`: **2.815 docs,
+2.674 com rule elements** — o dobro das cinco categorias de ficha somadas — e
+**todos** com `effectDuration` estruturado.
+
+Entregue, uma tarefa por vez:
+
+- **T6.1** — `GameState.effects` com prazo do dado. Duração crua em vez de prazo
+  calculado (rodada só existe em combate); `minutes` → rodadas por conversão RAW.
+  Ticks LIGADOS de saída: fim de rodada, fim de luta pela transição
+  `active→inactive` (pega os nove pontos que zeram `active`), descanso, e âncora
+  ao entrar em combate.
+- **T6.3** *(antes da T6.2, de propósito: leitor sem caminho de concessão nasce
+  lendo lista vazia, que é o pecado do ADR-008)* — as três pontes de concessão,
+  e o conserto do `byUuid` que fazia `GrantItem` falhar inteiro em silêncio.
+- **T6.2** — os rule elements do efeito viram número. `self:effect:*` decidível
+  (com `PARTIAL_COVERAGE` para o badge que não modelamos) e os
+  `FlatModifier`/defesas do efeito valendo, SEM o portão de não-duplo-cômputo.
+- **T6.4** — o vocabulário que a ficha já respondia: `check:statistic`,
+  `self:armored`, `armor:category`, `item:magical`, `item:proficiency:rank`,
+  `proficiency:<rank>`.
+- **T6.5** — docs, ADR-009 e a linha `[T6]` de métrica.
+
+**Gate da fase: 614 testes do servidor (37 arquivos) + 31 do brain, sem GPU.**
+
+| | antes (fim da 2.5) | depois |
+|---|---|---|
+| rule elements alcançáveis | 1.057 (6%) | **3.548 (21%)** |
+| predicados decididos | 5.093 (64%) | **5.379 (68%)** |
+| statements decidíveis | 61% | **63%** |
+| `FlatModifier` de ficha INDECIDÍVEL | 133 | **90** |
+| efeitos que a engine sabe conceder | 0 | **567** |
+
+**A dívida, nomeada e medida:** efeito em inimigo/aliado (o registro só cobre o
+jogador); o badge/contador do efeito (53 statements); `DamageDice` (308) e
+`TempHP` (221) dos efeitos, sem leitor; e `ItemAlteration`, agora a maior key sem
+leitor (1.714). A maior família indecidível que sobra é `spellcasting` (544),
+seguida da posicional — que é Fase 3.
 
 ---
 
