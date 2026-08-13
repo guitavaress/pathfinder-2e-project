@@ -297,9 +297,7 @@ export function playerCombatant(character: Character, currentHp: number): Combat
   // resistências como texto livre (`character.resistances`) e não exporta
   // imunidade nem fraqueza; o dado tem as três, vindas de feats/herança/deidade.
   // O que não tiver valor numérico fica de fora, nunca vira 0 silencioso.
-  const { resistances } = parsePlayerResistances(character.resistances);
-  const fromData = defenseSource ? defenseSource(character) : {};
-  const merged = mergeDefenses({ ...(resistances.length ? { resistances } : {}) }, fromData);
+  const merged = playerDefenses(character);
   return newCombatant({
     name: character.name,
     kind: "player",
@@ -310,6 +308,22 @@ export function playerCombatant(character: Character, currentHp: number): Combat
     level: character.level,
     ...merged,
   });
+}
+
+/**
+ * As defesas tipadas do jogador: ficha + dado + o que os efeitos ATIVOS dão.
+ *
+ * É recomposta do zero, nunca acumulada, porque efeito expira: somar resistência
+ * na entrada e esquecer de tirar na saída deixaria o personagem imune a frio
+ * três cenas depois de a magia acabar.
+ */
+export function playerDefenses(character: Character, fromEffects: Defenses = {}): Defenses {
+  const { resistances } = parsePlayerResistances(character.resistances);
+  const fromData = defenseSource ? defenseSource(character) : {};
+  return mergeDefenses(
+    mergeDefenses({ ...(resistances.length ? { resistances } : {}) }, fromData),
+    fromEffects,
+  );
 }
 
 /** Une duas listas de defesa; do mesmo tipo vale a MAIOR (RAW: não somam). */
@@ -781,8 +795,15 @@ export function conditionStack(
  * empilham por tipo (PF2e): off-guard é circunstância e frightened é status,
  * então somam entre si — mas dois status não somam entre eles.
  */
-export function effectiveAC(target: Combatant, ro?: RollOptions): number {
-  return target.ac + conditionStack(target, "ac", ro).total();
+export function effectiveAC(
+  target: Combatant,
+  ro?: RollOptions,
+  extra: readonly Modifier[] = [],
+): number {
+  // `extra` são os modificadores de CA do próprio defensor vindos da ficha e
+  // dos efeitos ativos (Fase 2.6). Chegam de fora porque só `agent.ts` conhece a
+  // sessão; o núcleo segue puro e, sem eles, se comporta como antes.
+  return target.ac + conditionStack(target, "ac", ro).addAll(extra).total();
 }
 
 /** Penalidade das condições do atacante sobre a rolagem de ataque. */

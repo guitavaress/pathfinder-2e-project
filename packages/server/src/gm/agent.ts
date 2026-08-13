@@ -29,7 +29,7 @@ import { lookupWebRule } from "../rules/web.js";
 import { scaleParcels, type DamageParcel } from "../rules/damage.js";
 import { conditionModifiersFor } from "../rules/condition-modifiers.js";
 import { actorDefensesFor, actorModifiersFor } from "../rules/actor-modifiers.js";
-import { ModifierStack } from "../rules/modifiers.js";
+import { ModifierStack, type Modifier } from "../rules/modifiers.js";
 import { rollOptionsForCheck } from "../rules/roll-context.js";
 import {
   anchorToRound,
@@ -73,6 +73,7 @@ import {
   sheetStack,
   planEncounter,
   playerCombatant,
+  playerDefenses,
   playerOf,
   partySizeOf,
   rollDice,
@@ -141,6 +142,9 @@ function rollOptionsOf(
     ...(self.kind === "player" ? { character: session.character } : {}),
     self,
     ...(target ? { target } : {}),
+    // O registro de efeitos só cobre o JOGADOR: para inimigo/aliado a lista fica
+    // ausente, e `self:effect:*` segue indecidível em vez de virar falso.
+    ...(self.kind === "player" ? { effects: session.state.effects ?? [] } : {}),
     ...opts,
   });
 }
@@ -692,6 +696,43 @@ function companionsOf(session: Session): Companion[] {
   return (session.state.companions ??= []);
 }
 
+/**
+ * Os modificadores de CA que o DEFENSOR carrega na própria ficha e nos efeitos
+ * ativos (Fase 2.6). Vazio para quem não é o jogador: inimigo não tem ficha, e
+ * o registro de efeitos não cobre terceiros.
+ */
+function defenseModifiers(session: Session, target: Combatant, ro: RollOptions): Modifier[] {
+  if (target.kind !== "player") return [];
+  const effects = session.state.effects ?? [];
+  return actorModifiersFor(session.character, "ac", ro, effects).applied;
+}
+
+/**
+ * Reescreve as defesas tipadas do combatente do jogador a partir da ficha MAIS
+ * os efeitos ativos (Fase 2.6 / T6.2).
+ *
+ * `defensesOf` lê os campos congelados do combatente, então sem isto a
+ * resistência que um Fire Shield concede no meio da luta nunca chegaria ao
+ * cálculo de dano — e, pior, a que expirou nunca sairia.
+ */
+function syncPlayerDefenses(session: Session): void {
+  const combat = session.state.combat;
+  const you = combat?.combatants.find((c) => c.kind === "player");
+  if (!you) return;
+  const effects = session.state.effects ?? [];
+  const fromEffects = effects.length
+    ? actorDefensesFor(
+        session.character,
+        rollOptionsForCheck({ character: session.character, effects }),
+        effects,
+      ).defenses
+    : {};
+  const { immunities, weaknesses, resistances } = playerDefenses(session.character, fromEffects);
+  you.immunities = immunities;
+  you.weaknesses = weaknesses;
+  you.resistances = resistances;
+}
+
 /** Tudo que a ficha nomeia e pode disparar um efeito auto-dirigido. */
 function ownedAbilities(session: Session): string[] {
   const c = session.character;
@@ -715,6 +756,7 @@ function grantPlayerEffect(session: Session, ref: string, source: string): strin
   );
   if (!granted) return null;
   session.state.effects = effects;
+  syncPlayerDefenses(session);
   return `- ${refreshed ? "Renewed" : "Now in effect"}: ${effectLabel(granted)}.`;
 }
 
@@ -732,6 +774,7 @@ function expirePlayerEffects(session: Session, event: ExpiryEvent): string[] {
   const { effects, expired } = expireEffects(list, event, session.state.combat?.round ?? null);
   if (expired.length === 0) return [];
   session.state.effects = effects;
+  syncPlayerDefenses(session);
   return expired.map((e) => `- Effect ends: ${effectLabel(e)}.`);
 }
 
@@ -1125,10 +1168,13 @@ export async function executeTool(
       // combate) e os FlatModifier situacionais dos feats da ficha.
       const selectors = checkSelectors(session, skill);
       const you = combat?.active ? playerOf(combat) : undefined;
+      const activeEffects = session.state.effects ?? [];
       const checkRo = rollOptionsForCheck({
         character: session.character,
         ...(you ? { self: you } : {}),
         selfConditions: session.state.conditions,
+        // Passar a lista (mesmo vazia) é o que torna `self:effect:*` decidível.
+        effects: activeEffects,
         ...(() => {
           const named = mentionedAction(`${reason} ${skill}`);
           return named ? { action: named } : {};
@@ -1139,7 +1185,7 @@ export async function executeTool(
         .addAll(selectors.length ? conditionModifiersFor(conditions, selectors, checkRo) : [])
         .addAll(
           selectors.length
-            ? actorModifiersFor(session.character, selectors, checkRo).applied
+            ? actorModifiersFor(session.character, selectors, checkRo, activeEffects).applied
             : [],
         );
       // O "porquê" acompanha o número: `checkReason` corta no primeiro " (",
@@ -2439,8 +2485,10 @@ function strikeAt(
   const strikeName = profile.label === "Strike" ? "Strike" : `${profile.label} Strike`;
   const map = mapPenalty(attacker.mapProgress, profile.agile);
   const mapTag = map ? ` [MAP ${map}${profile.agile ? " agile" : ""}]` : "";
-  // Same condition math as player Strikes (off-guard/frightened both ways).
-  const ac = effectiveAC(target, rollOptionsOf(session, target, attacker, { action: "Strike" }));
+  // Same condition math as player Strikes (off-guard/frightened both ways) —
+  // mais a CA que a ficha/os efeitos do DEFENSOR dão, quando ele é o jogador.
+  const defRo = rollOptionsOf(session, target, attacker, { action: "Strike" });
+  const ac = effectiveAC(target, defRo, defenseModifiers(session, target, defRo));
   const reactionTag = opts.reactionName ? `Reaction (${opts.reactionName}): ` : "";
   const label = `${reactionTag}${attacker.name} ${strikeName} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
   const attackRo = rollOptionsOf(session, attacker, target, { action: "Strike" });
@@ -2905,6 +2953,10 @@ export async function runRulesStage(
   turnStruck.set(session, new Set());
   turnActivityCharged.set(session, new Set());
   turnFrequencyUsed.set(session, new Map());
+  // Uma vez por turno, as defesas do combatente do jogador são recompostas a
+  // partir da ficha + efeitos ativos. É idempotente, e cobre o caso que a
+  // concessão não cobre: sessão RESTAURADA de save com efeitos já em pé.
+  syncPlayerDefenses(session);
   if (session.state.combat?.active) {
     beginPlayerRound(session.state.combat);
     emit({ type: "state", state: session.state });
@@ -3133,6 +3185,9 @@ export async function runRulesStage(
   // agora que existe relógio (sem isso duraria a luta inteira).
   if (!inCombatBefore && session.state.combat?.active === true && session.state.effects?.length) {
     session.state.effects = anchorToRound(session.state.effects, session.state.combat.round);
+    // O combatente do jogador acabou de ser criado: as defesas dos efeitos que
+    // já estavam em pé precisam entrar nele.
+    syncPlayerDefenses(session);
   }
 
   const stateChanged =

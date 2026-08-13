@@ -29,6 +29,13 @@ export interface RollOptionActor {
   feats?: string[];
   classFeatures?: string[];
   skills?: Record<string, { rank: number }>;
+  /**
+   * Slugs dos efeitos ATIVOS neste ator (Fase 2.6). Presente — mesmo vazio —
+   * significa "sei quais são"; ausente significa "não sei", e aí
+   * `self:effect:*` continua indecidível. É a diferença entre a engine afirmar
+   * que o personagem não está enfurecido e a engine não ter ideia.
+   */
+  effects?: string[];
 }
 
 /** A arma/magia/item em uso, com os traços JÁ resolvidos do dataset. */
@@ -77,6 +84,7 @@ export const COVERABLE_PREFIXES = [
   "self:level",
   "self:trait",
   "self:condition",
+  "self:effect",
   "class",
   "ancestry",
   "heritage",
@@ -110,14 +118,15 @@ export const COVERABLE_PREFIXES = [
  * conformidade garante é o que importa: nenhum domínio de peso fica de fora
  * desta lista sem ninguém perceber.
  *
- * Os maiores: `self:effect:*` (efeitos ativos como rage/panache) e
- * `target:mark:*` (Hunt Prey e afins) dependem de um registro de efeitos que
- * não existe; a família posicional (`target:distance`, `*:cover-level`,
- * `self:flanking`) é Fase 3.
+ * `self:effect:*` saiu desta lista na Fase 2.6 (o registro de efeitos existe);
+ * `target:effect` e `target:mark:*` (Hunt Prey e afins) seguem aqui — efeito em
+ * inimigo é dívida declarada. A família posicional (`target:distance`,
+ * `*:cover-level`, `self:flanking`) é Fase 3.
  */
 export const DECLARED_UNCOVERED = [
-  // Efeitos ativos e marcações — exigem registro de efeitos (não existe).
-  "self:effect",
+  // Marcações e efeitos de TERCEIROS — o registro só cobre o jogador.
+  "target:effect",
+  "origin:effect",
   "self:mode",
   "self:signature",
   "self:caster",
@@ -207,6 +216,7 @@ function actorOptions(actor: RollOptionActor, prefix: "self" | "target", out: Se
   }
   if (typeof actor.level === "number") out.add(`${prefix}:level:${actor.level}`);
   for (const t of actor.traits ?? []) out.add(`${prefix}:trait:${slug(t)}`);
+  for (const e of actor.effects ?? []) out.add(`${prefix}:effect:${slug(e)}`);
   for (const c of actor.conditions ?? []) {
     const { name, value } = splitCondition(c);
     if (!name) continue;
@@ -231,6 +241,8 @@ export function rollOptionsFor(ctx: RollOptionContext): RollOptions {
     covered.add("self:trait");
     covered.add("self:condition");
     if (typeof ctx.self.level === "number") covered.add("self:level");
+    // Lista de efeitos presente (mesmo vazia) = a engine sabe quais são.
+    if (ctx.self.effects) covered.add("self:effect");
     // Ficha do jogador: classe, feats e features viram domínio próprio (é
     // assim que o dado escreve — `class:barbarian`, não `self:class:...`).
     if (ctx.self.className) {
@@ -351,12 +363,28 @@ export function prefixOf(statement: string): string {
 }
 
 /**
+ * Domínios cobertos só até uma PROFUNDIDADE de segmentos — mais fundo que isso
+ * segue sendo dívida declarada, como se o prefixo inteiro estivesse em
+ * `DECLARED_UNCOVERED`.
+ *
+ * `self:effect:rage` a engine decide (o registro lista os efeitos ativos);
+ * `self:effect:overdrive-success:2` fala do *badge* — o contador do efeito no
+ * Foundry —, que o registro não guarda. São 53 statements no dataset. Tratá-los
+ * como cobertos os faria avaliar FALSO, e um `not:` em cima passaria a conceder
+ * bônus onde a verdade é "não sei".
+ */
+export const PARTIAL_COVERAGE: Record<string, number> = { "self:effect": 3 };
+
+/**
  * Este contexto consegue DECIDIR o statement? `false` significa "não sei" — o
  * avaliador (T3) tem de tratar como indecidível, nunca como falso.
  */
 export function coversStatement(ro: RollOptions, statement: string): boolean {
-  const prefix = prefixOf(statement);
+  const s = statement.trim();
+  const prefix = prefixOf(s);
   // Já afirmado: decidível por construção, seja qual for o prefixo.
-  if (ro.options.has(statement.trim())) return true;
+  if (ro.options.has(s)) return true;
+  const depth = PARTIAL_COVERAGE[prefix];
+  if (depth !== undefined && s.split(":").length !== depth) return false;
   return ro.covered.has(prefix);
 }

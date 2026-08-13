@@ -46,6 +46,13 @@ export interface CheckContextInput {
   ranged?: boolean;
   /** Rank de conjuração, para magias. */
   rank?: number;
+  /**
+   * Efeitos ativos no JOGADOR (`GameState.effects`). Passar a lista — mesmo
+   * vazia — afirma que a engine sabe quais são, e só então `self:effect:*` vira
+   * decidível. Omitir mantém indecidível, que é o certo para inimigo e aliado:
+   * o registro da Fase 2.6 só cobre o jogador.
+   */
+  effects?: readonly { slug: string }[];
 }
 
 /**
@@ -54,7 +61,12 @@ export interface CheckContextInput {
  * Sem ele, `self:trait` ficaria coberto com conjunto vazio — e um elfo
  * responderia FALSO a "é elfo", que é pior que não saber.
  */
-function playerActor(c: Character, combatant?: Combatant, conditions?: string[]): RollOptionActor {
+function playerActor(
+  c: Character,
+  combatant?: Combatant,
+  conditions?: string[],
+  effects?: readonly { slug: string }[],
+): RollOptionActor {
   const traits = new Set<string>(combatant?.traits ?? []);
   if (c.ancestry) traits.add(slug(c.ancestry));
 
@@ -81,6 +93,7 @@ function playerActor(c: Character, combatant?: Combatant, conditions?: string[])
     ...(c.feats ? { feats: c.feats } : {}),
     ...(c.classFeatures ? { classFeatures: c.classFeatures } : {}),
     ...(skills ? { skills } : {}),
+    ...(effects ? { effects: effects.map((e) => e.slug) } : {}),
   };
 }
 
@@ -140,7 +153,7 @@ function itemOptions(input: CheckContextInput): RollOptionItem | undefined {
  */
 export function rollOptionsForCheck(input: CheckContextInput): RollOptions {
   const self = input.character
-    ? playerActor(input.character, input.self, input.selfConditions)
+    ? playerActor(input.character, input.self, input.selfConditions, input.effects)
     : input.self
       ? combatantActor(input.self)
       : undefined;

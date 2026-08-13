@@ -142,6 +142,42 @@ function index(): Map<string, SheetModifier[]> {
   return byName;
 }
 
+/**
+ * Um efeito ativo, do ponto de vista deste módulo: basta o nome do doc para
+ * reler seus rule elements no dado (`ActiveEffect` do estado serve direto).
+ */
+export interface ActiveEffectRef {
+  name: string;
+}
+
+let effectModsByName: Map<string, SheetModifier[]> | null = null;
+
+/** Índice de `FlatModifier` da categoria `effects` — 1.949 no dado. */
+function effectModifierIndex(): Map<string, SheetModifier[]> {
+  if (effectModsByName) return effectModsByName;
+  effectModsByName = new Map();
+  for (const rec of categoryRecords("effects")) {
+    const mods = flatModifiersOf(rec);
+    if (mods.length) effectModsByName.set(normalize(rec.name), mods);
+  }
+  return effectModsByName;
+}
+
+/**
+ * Os `FlatModifier` dos efeitos ATIVOS (Fase 2.6 / T6.2).
+ *
+ * Aqui **não existe** o portão de não-duplo-cômputo, e a razão é estrutural: um
+ * efeito é temporário e entrou no registro durante o jogo, então não há como
+ * estar embutido no export do Pathbuilder. Por isso o incondicional entra —
+ * diferente do que vale para feat de ficha.
+ */
+function effectModifiers(effects: readonly ActiveEffectRef[]): SheetModifier[] {
+  const idx = effectModifierIndex();
+  const out: SheetModifier[] = [];
+  for (const e of effects) out.push(...(idx.get(normalize(e.name)) ?? []));
+  return out;
+}
+
 /** Os nomes de documento que a ficha aponta, na ordem em que aparecem nela. */
 function sheetSources(c: Character): string[] {
   return [
@@ -180,6 +216,7 @@ export function actorModifiersFor(
   c: Character,
   selector: string | string[],
   ro?: RollOptions,
+  effects: readonly ActiveEffectRef[] = [],
 ): ActorModifiers {
   const applied: Modifier[] = [];
   const skipped: ActorModifierSkip[] = [];
@@ -189,11 +226,16 @@ export function actorModifiersFor(
   // seletores.
   const wanted = new Set(typeof selector === "string" ? [selector] : selector);
   const composed = [...wanted].some((s) => ENGINE_COMPOSED_SELECTORS.has(s));
+  const fromEffects = effectModifiers(effects);
+  const temporary = new Set(fromEffects);
 
-  for (const mod of sheetModifiers(c)) {
+  for (const mod of [...sheetModifiers(c), ...fromEffects]) {
     if (!mod.selectors.some((s) => wanted.has(s) || s === "all")) continue;
 
-    if (!mod.hasPredicate && !composed) {
+    // Efeito ativo não pode estar embutido num número estático da ficha: ele
+    // não existia quando o Pathbuilder exportou. Só o da FICHA passa pelo
+    // portão de duplo-cômputo.
+    if (!mod.hasPredicate && !composed && !temporary.has(mod)) {
       // Incondicional num número que a ficha já traz pronto: o Pathbuilder já
       // somou. Declarado, não aplicado.
       skipped.push({ source: mod.source, slug: mod.slug, reason: "assumed-in-sheet" });
@@ -234,6 +276,8 @@ export function actorModifiersFor(
 export function resetSheetModifierIndex(): void {
   byName = null;
   defensesByName = null;
+  effectModsByName = null;
+  effectDefsByName = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +363,19 @@ function defenseIndex(): Map<string, SheetDefense[]> {
   return defensesByName;
 }
 
+let effectDefsByName: Map<string, SheetDefense[]> | null = null;
+
+/** Índice de Resistance/Weakness/Immunity da categoria `effects`. */
+function effectDefenseIndex(): Map<string, SheetDefense[]> {
+  if (effectDefsByName) return effectDefsByName;
+  effectDefsByName = new Map();
+  for (const rec of categoryRecords("effects")) {
+    const defs = defensesOfRecord(rec);
+    if (defs.length) effectDefsByName.set(normalize(rec.name), defs);
+  }
+  return effectDefsByName;
+}
+
 /** Resistência/fraqueza do mesmo tipo não somam em PF2e: vale a maior. */
 function mergeTyped(
   into: { type: string; value: number }[],
@@ -342,7 +399,11 @@ function mergeTyped(
  * `nor:[feat:sealed-poppet]`, que dependem só do personagem. O que depender de
  * efeito ativo ou de escolha de ChoiceSet fica em `skipped`.
  */
-export function actorDefensesFor(c: Character, ro?: RollOptions): ActorDefenses {
+export function actorDefensesFor(
+  c: Character,
+  ro?: RollOptions,
+  effects: readonly ActiveEffectRef[] = [],
+): ActorDefenses {
   const idx = defenseIndex();
   const immunities: string[] = [];
   const weaknesses: { type: string; value: number }[] = [];
@@ -350,11 +411,19 @@ export function actorDefensesFor(c: Character, ro?: RollOptions): ActorDefenses 
   const skipped: ActorModifierSkip[] = [];
   const seen = new Set<string>();
 
-  for (const name of sheetSources(c)) {
-    const key = normalize(name);
+  // As defesas dos efeitos ATIVOS entram junto: 378 `Resistance` e 138
+  // `Weakness` vivem em `effects.json` (Fire Shield, Invigorating Spores...).
+  // Mesma pilha, mesma regra de "maior vence" — resistência não empilha em PF2e.
+  const effectDefs = effectDefenseIndex();
+  const sources = [
+    ...sheetSources(c).map((name) => ({ key: normalize(name), from: idx })),
+    ...effects.map((e) => ({ key: normalize(e.name), from: effectDefs })),
+  ];
+
+  for (const { key, from } of sources) {
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    for (const def of idx.get(key) ?? []) {
+    for (const def of from.get(key) ?? []) {
       const entry = { source: def.source, slug: slug(def.source) };
       if (def.predicate !== undefined) {
         const verdict = ro ? evaluate(def.predicate, ro).value : "unknown";

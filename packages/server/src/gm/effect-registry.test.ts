@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { ActiveEffect, Character, Combatant, GameState } from "@pf2e/shared";
-import { executeTool, runRulesStage } from "./agent.js";
+import { executeTool, resolveEnemyTurns, runRulesStage } from "./agent.js";
 import { buildCombat } from "./combat.js";
 import type { Session } from "./sessions.js";
 
@@ -82,6 +82,66 @@ function sessionWith(effects: ActiveEffect[], ...combatants: Combatant[]): Sessi
     messages: [],
   } as unknown as Session;
 }
+
+describe("o efeito ativo mexe no NÚMERO, pelo caminho real (T6.2)", () => {
+  /** Uma sessão em combate com a ficha dada e um inimigo que erra sempre. */
+  function stanceSession(feats: string[]): Session {
+    const player = mk({ name: "Jão", kind: "player", ac: 20, initiative: 20 });
+    const foe = mk({ name: "Foe", kind: "enemy", initiative: 5 });
+    const s = sessionWith([], player, foe);
+    s.character = mkCharacter({ feats, ac: 20 });
+    return s;
+  }
+
+  /**
+   * A CA usada na rolagem vive no LABEL do check, não na linha player-safe.
+   * Uma diferença de 1 ponto não é observável pelo resultado (só viraria um
+   * único valor de d20), então o label é o único jeito honesto de afirmar que a
+   * engine usou o número certo — sem inventar um proxy estatístico.
+   */
+  function acLabels(s: Session): string[] {
+    const labels: string[] = [];
+    resolveEnemyTurns(s, (e) => {
+      if (e.type === "check") labels.push(e.result.label);
+    });
+    return labels;
+  }
+
+  it("entrar em Crane Stance dá +1 de CA que a ENGINE usa no ataque inimigo", async () => {
+    // Crane Stance: `Stance: Crane Stance` carrega FlatModifier ac circumstance
+    // +1, sem predicado. A CA da ficha é final, mas um efeito não pode estar
+    // embutido nela — é a exceção ao não-duplo-cômputo, provada de ponta a ponta.
+    const s = stanceSession(["Crane Stance"]);
+    await executeTool(s, "spend_actions", { actions: 1, reason: "Jão enters Crane Stance" }, noop);
+    expect(s.state.effects?.map((e) => e.slug)).toEqual(["crane-stance"]);
+    expect(acLabels(s)[0]).toContain("vs Jão (AC 21");
+  });
+
+  it("sem a postura, a MESMA cena usa a CA da ficha", async () => {
+    const s = stanceSession([]);
+    await executeTool(s, "spend_actions", { actions: 1, reason: "Jão enters Crane Stance" }, noop);
+    expect(s.state.effects ?? []).toEqual([]);
+    expect(acLabels(s)[0]).toContain("vs Jão (AC 20");
+  });
+
+  it("a resistência do efeito entra no combatente do jogador", async () => {
+    const s = stanceSession(["Crane Stance"]);
+    s.state.effects = [
+      {
+        slug: "cloak-in-embers",
+        name: "Effect: Cloak in Embers",
+        source: "teste",
+        unit: "encounter",
+        value: -1,
+        expiresOnRound: null,
+      },
+    ];
+    // A concessão dispara o sync das defesas tipadas do combatente.
+    await executeTool(s, "spend_actions", { actions: 1, reason: "Jão enters Crane Stance" }, noop);
+    const you = s.state.combat!.combatants.find((x) => x.kind === "player")!;
+    expect(you.resistances).toEqual([{ type: "fire", value: 10 }]);
+  });
+});
 
 describe("expiração no descanso noturno", () => {
   it("o que tem prazo acaba na noite; o sem prazo atravessa", async () => {

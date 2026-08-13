@@ -25,6 +25,7 @@ import { classifyDefense, normalizeDamageType } from "./damage.js";
 import {
   coversStatement,
   DECLARED_UNCOVERED,
+  PARTIAL_COVERAGE,
   prefixOf,
   rollOptionsFor,
 } from "./roll-options.js";
@@ -56,6 +57,10 @@ function maximalRollOptions(): ReturnType<typeof rollOptionsFor> {
       feats: [],
       classFeatures: [],
       skills: {},
+      // A engine passou a modelar efeitos ativos (Fase 2.6): o contexto máximo
+      // SABE quais são. Lista vazia é conhecimento — "não está enfurecido" —,
+      // diferente de omitir o campo, que seria "não sei".
+      effects: [],
     },
     target: { kind: "enemy", level: 3, traits: ["undead"], conditions: ["frightened 1"] },
     action: "Strike",
@@ -318,8 +323,14 @@ describe.skipIf(!hasGenerated)("conformidade do dataset (requer generated/)", ()
     const orphans = new Map<string, number>();
     for (const [stmt, n] of counts) {
       if (coversStatement(full, stmt)) decidable += n;
-      else if ((DECLARED_UNCOVERED as readonly string[]).includes(prefixOf(stmt))) declared += n;
-      else orphans.set(prefixOf(stmt), (orphans.get(prefixOf(stmt)) ?? 0) + n);
+      else if (
+        (DECLARED_UNCOVERED as readonly string[]).includes(prefixOf(stmt)) ||
+        // Domínio coberto só até certa profundidade: o que passa dela é dívida
+        // declarada igual (o badge de efeito, que o registro não guarda).
+        prefixOf(stmt) in PARTIAL_COVERAGE
+      ) {
+        declared += n;
+      } else orphans.set(prefixOf(stmt), (orphans.get(prefixOf(stmt)) ?? 0) + n);
     }
     const orphanTotal = [...orphans.values()].reduce((s, v) => s + v, 0);
     const total = decidable + declared + orphanTotal;
@@ -713,11 +724,14 @@ describe.skipIf(!hasGenerated)("cobertura de rule elements (T5)", () => {
   /** As keys que a engine consome hoje. Crescer esta lista é o trabalho. */
   const CONSUMED_KEYS = ["FlatModifier", "Resistance", "Weakness", "Immunity"];
   /** E as categorias de onde ela as lê — key sozinha superestimaria. */
+  // `effects` entrou na Fase 2.6: o registro de efeitos ativos abriu a categoria
+  // inteira para os mesmos quatro leitores (`actor-modifiers.ts`).
+  const SHEET = ["feats", "classes", "heritages", "ancestries", "backgrounds"];
   const READ_CATEGORIES: Record<string, string[]> = {
-    FlatModifier: ["conditions", "feats", "classes", "heritages", "ancestries", "backgrounds"],
-    Resistance: ["feats", "classes", "heritages", "ancestries", "backgrounds"],
-    Weakness: ["feats", "classes", "heritages", "ancestries", "backgrounds"],
-    Immunity: ["feats", "classes", "heritages", "ancestries", "backgrounds"],
+    FlatModifier: ["conditions", ...SHEET, "effects"],
+    Resistance: [...SHEET, "effects"],
+    Weakness: [...SHEET, "effects"],
+    Immunity: [...SHEET, "effects"],
   };
 
   it("mede quanto do dado a engine ALCANÇA, por key e categoria", () => {
