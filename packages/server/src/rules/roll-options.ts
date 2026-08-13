@@ -54,6 +54,26 @@ export interface RollOptionItem {
   damageType?: string;
   /** Rank de conjuração, para magias. */
   rank?: number;
+  /** Item mágico (runa de potência/impacto, ou traço `magical`). */
+  magical?: boolean;
+  /** Rank de proficiência do personagem NA CATEGORIA da arma (0..4). */
+  proficiencyRank?: number;
+}
+
+/** A armadura VESTIDA, como a ficha do Pathbuilder a traz. */
+export interface RollOptionArmor {
+  /** "light" | "medium" | "heavy" | "unarmored". */
+  category?: string;
+  /** Alguma armadura vestida de fato? (`unarmored` conta como não vestida.) */
+  worn: boolean;
+}
+
+/** A rolagem em si: qual estatística e com que proficiência. */
+export interface RollOptionCheck {
+  /** Nome da estatística rolada: "perception", "will", "stealth"… */
+  statistic?: string;
+  /** Rank de proficiência da estatística (0..4), quando a ficha o traz. */
+  rank?: number;
 }
 
 export interface RollOptionContext {
@@ -62,6 +82,8 @@ export interface RollOptionContext {
   /** Ação/atividade sendo resolvida, como o nome do dado ("Trip", "Strike"). */
   action?: string;
   item?: RollOptionItem;
+  armor?: RollOptionArmor;
+  check?: RollOptionCheck;
 }
 
 export interface RollOptions {
@@ -105,7 +127,14 @@ export const COVERABLE_PREFIXES = [
   "item:rank",
   "item:melee",
   "item:ranged",
+  "item:magical",
+  "item:proficiency",
   "trait",
+  // Fase 2.6 / T6.4 — o que a ficha já respondia e ninguém perguntava.
+  "self:armored",
+  "armor:category",
+  "check:statistic",
+  "proficiency",
 ] as const;
 
 /**
@@ -142,7 +171,6 @@ export const DECLARED_UNCOVERED = [
   "target:tag",
   // Posicionamento e percepção — Fase 3.
   "self:shield",
-  "self:armored",
   "self:flanking",
   "self:cover-level",
   "target:distance",
@@ -156,9 +184,7 @@ export const DECLARED_UNCOVERED = [
   "item:id",
   "item:area",
   "item:equipped",
-  "item:magical",
   "item:tag",
-  "item:proficiency",
   "item:group",
   "item:duration",
   "item:hands-held",
@@ -167,13 +193,15 @@ export const DECLARED_UNCOVERED = [
   "armor",
   "weapon",
   "defense",
-  "proficiency",
   // Subsistemas inteiros que a engine não modela.
   "spellcasting",
   "spellshape",
   "origin",
   "parent",
   "inflicts",
+  // Só `check:statistic` é modelado (T6.4); o resto da família segue declarado.
+  // `prefixOf` resolve do mais específico para o mais geral, então as duas
+  // entradas convivem sem ambiguidade.
   "check",
   "terrain",
   "kinetic-gate",
@@ -191,6 +219,13 @@ export const DECLARED_UNCOVERED = [
   "bonus",
   "dice",
 ] as const;
+
+/**
+ * Os cinco nomes de rank de proficiência, na ordem em que o PF2e os numera. É
+ * exatamente o conjunto que o dado usa em `proficiency:*` (medido: untrained 13,
+ * legendary 8, master 6, expert 2, trained 1).
+ */
+const PROFICIENCY_NAMES = ["untrained", "trained", "expert", "master", "legendary"] as const;
 
 /** kebab-case sem acento: o formato em que o dado escreve tudo. */
 export function slug(s: string): string {
@@ -330,6 +365,39 @@ export function rollOptionsFor(ctx: RollOptionContext): RollOptions {
       if (it.ranged) options.add("item:ranged");
       covered.add("item:ranged");
     }
+    if (typeof it.magical === "boolean") {
+      if (it.magical) options.add("item:magical");
+      covered.add("item:magical");
+    }
+    if (typeof it.proficiencyRank === "number") {
+      // O dado compara com `gte`, então a chave carrega o valor (convenção do
+      // pf2e: `item:proficiency:rank:2` afirma que a chave vale 2).
+      options.add(`item:proficiency:rank:${it.proficiencyRank}`);
+      covered.add("item:proficiency");
+    }
+  }
+
+  if (ctx.armor) {
+    if (ctx.armor.worn) options.add("self:armored");
+    covered.add("self:armored");
+    if (ctx.armor.category) {
+      options.add(`armor:category:${slug(ctx.armor.category)}`);
+      covered.add("armor:category");
+    }
+  }
+
+  if (ctx.check) {
+    if (ctx.check.statistic) {
+      options.add(`check:statistic:${slug(ctx.check.statistic)}`);
+      covered.add("check:statistic");
+    }
+    if (typeof ctx.check.rank === "number") {
+      const name = PROFICIENCY_NAMES[ctx.check.rank];
+      if (name) {
+        options.add(`proficiency:${name}`);
+        covered.add("proficiency");
+      }
+    }
   }
 
   return { options, covered };
@@ -373,7 +441,12 @@ export function prefixOf(statement: string): string {
  * como cobertos os faria avaliar FALSO, e um `not:` em cima passaria a conceder
  * bônus onde a verdade é "não sei".
  */
-export const PARTIAL_COVERAGE: Record<string, number> = { "self:effect": 3 };
+export const PARTIAL_COVERAGE: Record<string, number> = {
+  "self:effect": 3,
+  // `check:statistic:stealth` a engine decide; `check:statistic:base:stealth`
+  // pergunta pela estatística DERIVADA de outra, que ela não modela.
+  "check:statistic": 3,
+};
 
 /**
  * Este contexto consegue DECIDIR o statement? `false` significa "não sei" — o

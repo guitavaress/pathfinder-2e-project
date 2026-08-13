@@ -40,7 +40,7 @@ import {
   selfEffectOf,
   type ExpiryEvent,
 } from "../rules/active-effects.js";
-import type { RollOptions } from "../rules/roll-options.js";
+import { slug, type RollOptions } from "../rules/roll-options.js";
 import { buildTools } from "./tool-schemas.js";
 import {
   allyCombatant,
@@ -520,6 +520,33 @@ function checkSelectors(session: Session, skillRaw: string): string[] {
   }
   if (findSheetWeapon(c, key)) return ["attack", "attack-roll"];
   return [];
+}
+
+/**
+ * A estatística que está sendo rolada, no vocabulário do dado, e o rank de
+ * proficiência dela quando a ficha o traz (Fase 2.6 / T6.4).
+ *
+ * Só perícia e lore têm rank no export do Pathbuilder. Percepção e saves vêm
+ * como bônus final, sem o rank — então ali `proficiency:*` fica indecidível em
+ * vez de responder "destreinado" por não saber.
+ */
+function checkStatistic(
+  session: Session,
+  skillRaw: string,
+): { statistic?: string; statisticRank?: number } {
+  const key = skillRaw.toLowerCase().trim();
+  const c = session.character;
+  if (key === "perception") return { statistic: "perception" };
+  if (key === "fortitude" || key === "fort") return { statistic: "fortitude" };
+  if (key === "reflex" || key === "ref") return { statistic: "reflex" };
+  if (key === "will") return { statistic: "will" };
+  const skill = c.skills[key];
+  if (skill) return { statistic: key, statisticRank: skill.rank };
+  const lore = c.lores.find(
+    (l) => l.name.toLowerCase() === key || key.includes(l.name.toLowerCase()),
+  );
+  if (lore) return { statistic: `${slug(lore.name)}-lore`, statisticRank: lore.rank };
+  return {};
 }
 
 interface ToolOutcome {
@@ -1175,6 +1202,7 @@ export async function executeTool(
         selfConditions: session.state.conditions,
         // Passar a lista (mesmo vazia) é o que torna `self:effect:*` decidível.
         effects: activeEffects,
+        ...checkStatistic(session, skill),
         ...(() => {
           const named = mentionedAction(`${reason} ${skill}`);
           return named ? { action: named } : {};

@@ -74,7 +74,13 @@ function maximalRollOptions(): ReturnType<typeof rollOptionsFor> {
       ranged: false,
       damageType: "slashing",
       rank: 1,
+      magical: true,
+      proficiencyRank: 2,
     },
+    // Fase 2.6 / T6.4: armadura vestida e a estatística da rolagem passaram a
+    // ser vocabulário da engine.
+    armor: { worn: true, category: "light" },
+    check: { statistic: "athletics", rank: 2 },
   });
 }
 import { isOfficialCondition, parseDie, rollFormula } from "../gm/agent.js";

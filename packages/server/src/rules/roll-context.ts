@@ -23,6 +23,7 @@ import {
   rollOptionsFor,
   slug,
   type RollOptionActor,
+  type RollOptionArmor,
   type RollOptionItem,
   type RollOptions,
 } from "./roll-options.js";
@@ -53,6 +54,10 @@ export interface CheckContextInput {
    * o registro da Fase 2.6 só cobre o jogador.
    */
   effects?: readonly { slug: string }[];
+  /** Estatística rolada ("perception", "will", "stealth") — Fase 2.6 / T6.4. */
+  statistic?: string;
+  /** Rank de proficiência da estatística (0..4), quando a ficha o traz. */
+  statisticRank?: number;
 }
 
 /**
@@ -108,6 +113,38 @@ function combatantActor(c: Combatant): RollOptionActor {
 }
 
 /**
+ * A armadura vestida (Fase 2.6 / T6.4). O Pathbuilder já traz o que o dado
+ * pergunta: `prof` é a categoria e `worn` diz se está no corpo. `unarmored`
+ * conta como NÃO armado — é o que `self:armored` quer saber.
+ *
+ * Ficha sem o campo `armor` devolve `undefined`, não `{worn:false}`: dizer
+ * "não veste armadura" por ausência de dado é o erro que a T2 existe para
+ * evitar.
+ */
+function armorOptions(c: Character): RollOptionArmor | undefined {
+  if (!c.armor) return undefined;
+  const worn = c.armor.find((a) => a.worn);
+  const category = worn?.proficiency ? slug(worn.proficiency) : undefined;
+  return {
+    worn: !!worn && category !== "unarmored",
+    ...(category ? { category } : {}),
+  };
+}
+
+/**
+ * Item mágico: runa de potência/impacto no nome da ficha, ou o traço `magical`
+ * no dado.
+ *
+ * O nome cru é a única fonte aqui porque `itemRecord` desmonta as runas para
+ * achar o item BASE — e é justamente a runa que torna a arma mágica (RAW: uma
+ * arma +1 é um item mágico).
+ */
+function magicalItem(rawName: string, traits: string[]): boolean {
+  if (traits.some((t) => slug(t) === "magical")) return true;
+  return /(^|\s)\+\d/.test(rawName) || /\b(striking|potency|greater|major)\b/i.test(rawName);
+}
+
+/**
  * Traços da arma/item pelo dataset. Melee/ranged só são afirmados quando o
  * dado decide sozinho: arma COM alcance e SEM traço de arremesso é à distância;
  * arma SEM alcance e sem arremesso é corpo a corpo. Arremessável fica em
@@ -143,6 +180,15 @@ function itemOptions(input: CheckContextInput): RollOptionItem | undefined {
   if (typeof melee === "boolean") item.melee = melee;
   if (typeof ranged === "boolean") item.ranged = ranged;
 
+  if (name) item.magical = magicalItem(name, traits);
+  // Proficiência na CATEGORIA da arma: o Pathbuilder exporta simple/martial, e
+  // é a isso que os 22 `gte` de `item:proficiency:rank` do dado se referem.
+  const category = rec?.weaponCategory;
+  const ranks = input.character?.weaponProficiencies;
+  if (ranks && (category === "simple" || category === "martial")) {
+    item.proficiencyRank = ranks[category];
+  }
+
   return Object.keys(item).length ? item : undefined;
 }
 
@@ -158,6 +204,11 @@ export function rollOptionsForCheck(input: CheckContextInput): RollOptions {
       ? combatantActor(input.self)
       : undefined;
 
+  const check: { statistic?: string; rank?: number } = {
+    ...(input.statistic ? { statistic: input.statistic } : {}),
+    ...(typeof input.statisticRank === "number" ? { rank: input.statisticRank } : {}),
+  };
+
   return rollOptionsFor({
     ...(self ? { self } : {}),
     ...(input.target ? { target: combatantActor(input.target) } : {}),
@@ -166,5 +217,11 @@ export function rollOptionsForCheck(input: CheckContextInput): RollOptions {
       const item = itemOptions(input);
       return item ? { item } : {};
     })(),
+    // Armadura só quando existe FICHA: o statblock de inimigo não a traz.
+    ...(() => {
+      const armor = input.character ? armorOptions(input.character) : undefined;
+      return armor ? { armor } : {};
+    })(),
+    ...(Object.keys(check).length ? { check } : {}),
   });
 }
