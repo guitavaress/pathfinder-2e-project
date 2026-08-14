@@ -140,9 +140,18 @@ function armorOptions(c: Character): RollOptionArmor | undefined {
  * arma +1 é um item mágico).
  */
 function magicalItem(rawName: string, traits: string[]): boolean {
-  if (traits.some((t) => slug(t) === "magical")) return true;
-  return /(^|\s)\+\d/.test(rawName) || /\b(striking|potency|greater|major)\b/i.test(rawName);
+  const t = traits.map(slug);
+  if (t.includes("magical") || t.some((x) => TRADITIONS.has(x))) return true;
+  // Alquímico NÃO é mágico em PF2e, e é aí que mora a armadilha: "Greater" e
+  // "Major" são GRAU, não marca de magia — 277 itens do dado (Acid Flask
+  // (Greater), gadgets, elixires) seriam marcados por engano se essas palavras
+  // entrassem. Só runa conta: potência (`+N`), striking e resilient.
+  if (t.includes("alchemical")) return false;
+  return /(^|\s)\+\d/.test(rawName) || /\b(striking|resilient|potency)\b/i.test(rawName);
 }
+
+/** As quatro tradições — um item que tem uma delas é mágico por definição. */
+const TRADITIONS = new Set(["arcane", "divine", "occult", "primal"]);
 
 /**
  * Traços da arma/item pelo dataset. Melee/ranged só são afirmados quando o

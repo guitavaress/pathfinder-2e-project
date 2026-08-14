@@ -119,6 +119,14 @@ describe.skipIf(!hasGenerated)("item mágico e proficiência da arma", () => {
     expect(truth("item:magical", c(), { item: "Longsword" })).toBe("false");
   });
 
+  it("item ALQUÍMICO não é mágico, por mais 'Greater' que tenha no nome", () => {
+    // "Greater"/"Major" são GRAU, não marca de magia. Sem esta distinção, 277
+    // itens do dado (frascos, elixires, gadgets) virariam mágicos por engano —
+    // e um predicado que exige item mágico concederia bônus com uma bomba.
+    expect(truth("item:magical", c(), { item: "Acid Flask (Greater)" })).toBe("false");
+    expect(truth("item:magical", c(), { item: "Alchemist's Fire (Major)" })).toBe("false");
+  });
+
   it("proficiência sai da CATEGORIA da arma, não do nome", () => {
     // Dagger é simple (rank 4 nesta ficha); Longsword é martial (rank 2).
     const opts = rollOptionsForCheck({ character: c(), item: "Dagger" });
