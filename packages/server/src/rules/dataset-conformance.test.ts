@@ -915,15 +915,19 @@ describe.skipIf(!hasGenerated)("registro de efeitos ativos (T6)", () => {
       }
     }
     // As hostis barradas contam-se pelo dado: magia com ataque/save que TEM
-    // effect homônimo e mesmo assim não é concedida ao conjurador.
+    // effect homônimo e mesmo assim não é concedida ao conjurador. O índice sai
+    // do loop de propósito — dentro dele seriam 1.795 varreduras de 27 mil
+    // registros cada, num teste que roda a cada `npm test`.
+    const nomesDeEfeito = new Set(
+      categoryRecords("effects").map((e) =>
+        e.name.replace(NAME_PREFIX_RE, "").toLowerCase().trim(),
+      ),
+    );
     hostilBarrada = 0;
     for (const rec of categoryRecords("spells")) {
       const hostil = rec.spell?.attack === true || rec.spell?.defense !== undefined;
       if (!hostil) continue;
-      const temHomonimo = categoryRecords("effects").some(
-        (e) => e.name.replace(NAME_PREFIX_RE, "").toLowerCase().trim() === rec.name.toLowerCase().trim(),
-      );
-      if (temHomonimo && !selfEffectOf(rec)) hostilBarrada++;
+      if (nomesDeEfeito.has(rec.name.toLowerCase().trim()) && !selfEffectOf(rec)) hostilBarrada++;
     }
     const concedíveis = viaSelfEffect + viaStance + viaMagiaBenigna;
     console.log(
