@@ -2890,6 +2890,11 @@ export async function runRulesStage(
   // tick persistente que decide, dying...). Detectar a TRANSIÇÃO aqui pega
   // todos com uma linha, em vez de nove remendos que a próxima saída esquece.
   const inCombatBefore = session.state.combat?.active === true;
+  // Defesas do combatente recompostas (ficha + efeitos ativos) ANTES de
+  // qualquer ramo: o de dying retorna cedo e sofre dano persistente, e sem isto
+  // a resistência que um efeito concede não valeria justamente no turno em que
+  // o jogador está sangrando no chão.
+  syncPlayerDefenses(session);
 
   // Morto é morto: sem mecânica a resolver — o narrador conduz o epílogo.
   if (session.state.conditions.some((c) => /^dead$/i.test(c))) {
@@ -2981,10 +2986,6 @@ export async function runRulesStage(
   turnStruck.set(session, new Set());
   turnActivityCharged.set(session, new Set());
   turnFrequencyUsed.set(session, new Map());
-  // Uma vez por turno, as defesas do combatente do jogador são recompostas a
-  // partir da ficha + efeitos ativos. É idempotente, e cobre o caso que a
-  // concessão não cobre: sessão RESTAURADA de save com efeitos já em pé.
-  syncPlayerDefenses(session);
   if (session.state.combat?.active) {
     beginPlayerRound(session.state.combat);
     emit({ type: "state", state: session.state });
