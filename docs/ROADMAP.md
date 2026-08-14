@@ -328,7 +328,24 @@ Entregue, uma tarefa por vez:
   `proficiency:<rank>`.
 - **T6.5** — docs, ADR-009 e a linha `[T6]` de métrica.
 
-**Gate da fase: 614 testes do servidor (37 arquivos) + 31 do brain, sem GPU.**
+**Gate da fase: 620 testes do servidor (37 arquivos) + 31 do brain, sem GPU.**
+
+**Gate da BATERIA (2026-08-14, `--repeat=3` contra o commit 8dafee6, ~2h de
+GPU):** 69 PASS · 3 FLAKY · 2 FAIL · 1 SUSPECT, **cobertura 40/75**. Primeira
+medição contra o modelo desde 26/07.
+
+Contra o piso (70 · 2 · 2 · 1, cobertura 40/75): um PASS virou FLAKY e a
+**cobertura não mudou**. Ela NÃO subiu, contra o que se esperava da fase — e o
+motivo é o conteúdo da bateria, não a fase: os 35 cenários sem asserção são
+passivos sem doc de efeito (Toughness, Diehard, Bravery…) e reações bloqueadas
+em posição. O que a Fase 2.6 acende — postura, buff conjurado — não está entre
+eles. **Para a bateria medir a Fase 2.6 é preciso ADICIONAR cenários** (entrar em
+stance, conjurar buff e ver o bônus incidir, efeito expirando no fim da luta).
+
+Os dois FLAKY novos (`Double Shot`, `Furious Finish`) têm causa idêntica e é
+[MODELO]: numa das três rodadas o modelo resolveu a atividade por `roll_check`
+com o combate inativo, e fora de combate a engine deliberadamente não cobra
+ações. `Shackles of Law`, FLAKY no piso anterior, agora passa 3/3.
 
 | | antes (fim da 2.5) | depois |
 |---|---|---|

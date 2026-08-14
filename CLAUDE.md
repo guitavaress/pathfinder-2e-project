@@ -156,9 +156,12 @@ mora em código determinístico e testado. O modelo só chama tools e narra.
 Regras de trabalho:
 - Uma fase / uma tarefa por vez. Nada de frentes paralelas.
 - Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
-  O piso vigente é **614 testes do servidor** (+31 do brain) e, na bateria, **70 PASS · 2 FLAKY ·
-  1 SUSPECT · 2 FAIL com cobertura de asserção 40/75** (gate de 26/07, juiz
-  honesto — NÃO comparável com os 75/75 antigos). Piso, não meta.
-  A bateria **não roda desde o gate de 26/07**: as Fases 2.5 e 2.6 mudaram
-  números de rolagem sem medição contra ela.
+  O piso vigente é **620 testes do servidor** (+31 do brain) e, na bateria, **69 PASS · 3 FLAKY ·
+  1 SUSPECT · 2 FAIL com cobertura de asserção 40/75** (gate de **2026-08-14**,
+  pós-Fases 2.5/2.6, `--repeat=3` contra o commit 8dafee6; juiz honesto — NÃO
+  comparável com os 75/75 antigos). Piso, não meta.
+  Os 2 FAIL são as reações não implementadas (`Shield Block` precisa de hardness
+  estruturado, `Clever Gambit`) e o SUSPECT é `Exotic Edge` — dívida declarada.
+  Os FLAKY são [MODELO]: o modelo resolve a atividade por `roll_check` com o
+  combate inativo, e fora de combate a engine não cobra ações.
 - Se uma tarefa contradisser uma decisão registrada nos ADRs, PARE e sinalize.
