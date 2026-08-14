@@ -66,6 +66,50 @@ describe("save-game round-trip", () => {
     });
   });
 
+  it("efeitos ativos atravessam o save, com prazo e tudo (Fase 2.6)", () => {
+    // "Continue campaign" é o caminho que o jogador usa toda sessão. Um efeito
+    // que se perde no save some sem aviso; um que volta sem prazo vira bônus
+    // permanente. Os dois erros são invisíveis sem este teste.
+    const session = playedSession();
+    session.state.effects = [
+      {
+        slug: "arcane-cascade",
+        name: "Stance: Arcane Cascade",
+        source: "Arcane Cascade",
+        unit: "encounter",
+        value: -1,
+        expiresOnRound: null,
+      },
+      {
+        slug: "heroism",
+        name: "Spell Effect: Heroism",
+        source: "Heroism",
+        unit: "minutes",
+        value: 10,
+        expiresOnRound: 100,
+      },
+    ];
+    saveSession(session, dir);
+
+    const restored = createSession(parsePathbuilder(example));
+    restoreIntoSession(restored, loadSave(dir)!);
+    expect(restored.state.effects).toEqual(session.state.effects);
+  });
+
+  it("save ANTERIOR à Fase 2.6 (sem o campo effects) continua carregando", () => {
+    // Compat: o campo é opcional de propósito. Save antigo não pode virar
+    // "campanha corrompida" só porque a engine ganhou um registro novo.
+    const session = playedSession();
+    saveSession(session, dir);
+    const raw = JSON.parse(readFileSync(savePath(dir), "utf8"));
+    delete raw.state.effects;
+    writeFileSync(savePath(dir), JSON.stringify(raw));
+
+    const save = loadSave(dir);
+    expect(save).not.toBeNull();
+    expect(save!.state.effects).toBeUndefined();
+  });
+
   it("save ausente ou corrompido vira null, nunca exceção", () => {
     expect(loadSave(dir)).toBeNull();
     writeFileSync(savePath(dir), "{ not json");
