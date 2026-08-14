@@ -3260,8 +3260,12 @@ export function buildMechanicalSummary(
   stateChanged: boolean,
 ): string {
   const combat = session.state.combat;
+  // Uma tool pode devolver DOIS fatos numa linha só (conjurar + o efeito que
+  // ficou em pé). O achatamento vem antes de tudo para que a contagem de "nada
+  // aconteceu" e a numeração enxerguem os mesmos fatos.
+  const flat = summaryLines.flatMap((l) => l.split("\n").filter((x) => x.trim()));
   if (
-    summaryLines.length === 0 &&
+    flat.length === 0 &&
     consulted.length === 0 &&
     !anyTool &&
     !combat?.active
@@ -3270,14 +3274,17 @@ export function buildMechanicalSummary(
   }
   // Number multi-event turns (and all combat turns) — a numbered list is much
   // harder for the narrator to skip or merge than a wall of dashes.
+  //
+  // Sem o achatamento acima, o segundo fato sairia SEM número — exatamente o
+  // que a numeração existe para evitar.
   const lines: string[] =
-    combat?.active || summaryLines.length >= 2
-      ? summaryLines.map((l, i) => `${i + 1}. ${l.replace(/^- /, "")}`)
-      : [...summaryLines];
+    combat?.active || flat.length >= 2
+      ? flat.map((l, i) => `${i + 1}. ${l.replace(/^- /, "")}`)
+      : [...flat];
   // In combat, an empty turn is a fact the narrator MUST respect: without this
   // line it "helpfully" invents blows that never happened (and the state
   // contradicts the story). Happens when every tool call errored out.
-  if (combat?.active && summaryLines.length === 0) {
+  if (combat?.active && flat.length === 0) {
     lines.unshift(
       "NOTHING was resolved this turn: no attack happened, nobody was hit, no damage was dealt. Narrate only hesitation or repositioning — do NOT invent any blow, wound, or damage.",
     );
@@ -3285,7 +3292,7 @@ export function buildMechanicalSummary(
   // Fora de combate o vazio era silencioso: o modelo consultava a regra, não
   // resolvia nada, e o narrador ficava livre para dizer que a atividade deu
   // certo. Doutrina 4 — o que não está nas linhas não aconteceu.
-  if (!combat?.active && summaryLines.length === 0 && anyTool) {
+  if (!combat?.active && flat.length === 0 && anyTool) {
     lines.unshift(
       "NOTHING was resolved mechanically this turn: the rules were consulted but no check was rolled, no cost was paid and no effect was applied. Narrate only the attempt and the atmosphere — do NOT state that it worked, that anything changed, or that any rule took effect.",
     );
