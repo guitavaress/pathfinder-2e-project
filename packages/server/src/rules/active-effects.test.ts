@@ -109,7 +109,10 @@ describe("expireEffects — os três limites de tempo que a engine tem", () => {
     expect(expireEffects(list, "round", 99).expired).toEqual([]);
   });
 
-  it("fim de combate: sai encounter, rodadas e minutos", () => {
+  it("fim de combate: sai o que não sobrevive à luta por definição", () => {
+    // `encounter` dura o encontro; `rounds` tem prazo menor que qualquer luta.
+    // O resto atravessa — o relógio de minutos/horas é o descanso, porque fora
+    // de combate esta engine não tem relógio nenhum.
     const list = [
       entry({ slug: "enc", unit: "encounter", value: -1 }),
       entry({ slug: "rnd", unit: "rounds", value: 1 }),
@@ -118,8 +121,30 @@ describe("expireEffects — os três limites de tempo que a engine tem", () => {
       entry({ slug: "perm", unit: "unlimited", value: -1 }),
     ];
     const { effects, expired } = expireEffects(list, "combat-end");
-    expect(expired.map((e) => e.slug).sort()).toEqual(["enc", "min", "rnd"]);
-    expect(effects.map((e) => e.slug).sort()).toEqual(["hr", "perm"]);
+    expect(expired.map((e) => e.slug).sort()).toEqual(["enc", "rnd"]);
+    expect(effects.map((e) => e.slug).sort()).toEqual(["hr", "min", "perm"]);
+  });
+
+  it("buff de MINUTOS sobrevive à luta — a luta dura ~1 minuto", () => {
+    // Heroism são 10 minutos e custa um slot de círculo 3. Uma luta típica dura
+    // ~10 rodadas = 1 minuto. Matar o efeito no fim do combate destrói um
+    // recurso que o jogador pagou, e é o pior dos dois erros possíveis aqui:
+    // expirar cedo demais tira algo comprado; expirar tarde demais é limitado
+    // pelo descanso.
+    const list = [entry({ slug: "hero", unit: "minutes", value: 10, expiresOnRound: 100 })];
+    expect(expireEffects(list, "combat-end").expired).toEqual([]);
+  });
+
+  it("o prazo em rodadas NÃO atravessa para a próxima luta", () => {
+    // A numeração de rodadas recomeça em 1 a cada combate. Um prazo calculado na
+    // luta A (rodada 100) comparado contra a rodada 3 da luta B nunca vence — o
+    // efeito viveria para sempre. Quem sobrevive à luta perde o relógio e é
+    // reancorado na próxima.
+    const list = [entry({ slug: "hero", unit: "minutes", value: 10, expiresOnRound: 100 })];
+    const { effects } = expireEffects(list, "combat-end");
+    expect(effects[0]!.expiresOnRound).toBeNull();
+    // E aí a próxima luta lhe dá prazo de novo.
+    expect(anchorToRound(effects, 1)[0]!.expiresOnRound).toBe(100);
   });
 
   it("descanso: só o sem-prazo atravessa a noite", () => {

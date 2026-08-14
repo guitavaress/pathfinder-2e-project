@@ -204,7 +204,12 @@ export function expireEffects(
   const kept: ActiveEffect[] = [];
   for (const e of current) {
     if (isExpired(e, event, round)) expired.push(e);
-    else kept.push(e);
+    // Quem sobrevive ao fim da luta PERDE o relógio: a numeração de rodadas
+    // recomeça em 1 no próximo combate, e um prazo calculado na luta anterior
+    // comparado contra ela nunca venceria. `anchorToRound` reancora na entrada.
+    else if (event === "combat-end" && e.expiresOnRound !== null) {
+      kept.push({ ...e, expiresOnRound: null });
+    } else kept.push(e);
   }
   return { effects: kept, expired };
 }
@@ -215,7 +220,13 @@ function isExpired(e: ActiveEffect, event: ExpiryEvent, round: number | null): b
     case "round":
       return e.expiresOnRound !== null && round !== null && round >= e.expiresOnRound;
     case "combat-end":
-      return e.unit === "encounter" || e.unit === "rounds" || e.unit === "minutes";
+      // Só o que não pode sobreviver à luta por definição: `encounter` (dura o
+      // encontro) e `rounds` (uma luta tem mais rodadas que qualquer prazo
+      // desses). `minutes` NÃO entra: uma luta dura ~1 minuto, e matar um
+      // Heroism de 10 minutos aqui destruiria um slot de círculo 3 que o
+      // jogador pagou. Dos dois erros possíveis, expirar cedo é o pior —
+      // expirar tarde é limitado pelo descanso.
+      return e.unit === "encounter" || e.unit === "rounds";
     case "rest":
       return true;
   }
