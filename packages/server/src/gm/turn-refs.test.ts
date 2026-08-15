@@ -12,11 +12,29 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Character, TurnRef } from "@pf2e/shared";
 import { executeTool, runTurn } from "./agent.js";
 import { parsePathbuilder } from "../pathbuilder/parse.js";
 import type { Session } from "./sessions.js";
+
+/**
+ * O cliente do modelo, morto na raiz.
+ *
+ * Sem isto o teste do ciclo de vida dependia do llama-server estar FORA do ar:
+ * passava com `gemma-down` e estourava o timeout com o modelo carregado — um
+ * teste que mede o ambiente, não o código. `agent.ts` constrói o cliente uma
+ * vez, no topo do módulo; o mock precisa vir antes do import (vitest içá-lo).
+ */
+vi.mock("openai", () => ({
+  default: class {
+    chat = {
+      completions: {
+        create: () => Promise.reject(new Error("sem modelo no teste")),
+      },
+    };
+  },
+}));
 
 const here = dirname(fileURLToPath(import.meta.url));
 const hasGenerated = existsSync(join(here, "../../data/pf2e/generated"));
@@ -43,8 +61,6 @@ function mkSession(over: Partial<Character> = {}, refs?: TurnRef[]): Session {
     ...(refs ? { turnRefs: refs } : {}),
   } as unknown as Session;
 }
-
-afterEach(() => vi.unstubAllGlobals());
 
 describe.skipIf(!hasGenerated)("lookup_rule com a referência fixada pelo jogador", () => {
   it("sem referência, a colisão é servida pela precedência e DECLARADA", async () => {
@@ -113,10 +129,9 @@ describe.skipIf(!hasGenerated)("lookup_rule com a referência fixada pelo jogado
 
 describe("ciclo de vida: a referência vale UM turno", () => {
   it("runTurn limpa a referência mesmo quando o turno falha", async () => {
-    // Sem modelo no ar, `runTurn` captura o erro e emite `error`. O que este
-    // teste garante é o `finally`: escolher "Shake It Off" agora não pode
-    // reescrever a consulta do turno seguinte.
-    vi.stubGlobal("fetch", () => Promise.reject(new Error("sem modelo no teste")));
+    // Com o modelo mockado para falhar, `runTurn` captura o erro e emite
+    // `error`. O que este teste garante é o `finally`: escolher "Shake It Off"
+    // agora não pode reescrever a consulta do turno seguinte.
     const s = mkSession({}, [{ name: "Shake It Off", category: "feats" }]);
     expect(s.turnRefs).toHaveLength(1);
     const events: { type: string }[] = [];
@@ -126,7 +141,6 @@ describe("ciclo de vida: a referência vale UM turno", () => {
   });
 
   it("runTurn sem referências não inventa lista vazia no lugar", async () => {
-    vi.stubGlobal("fetch", () => Promise.reject(new Error("sem modelo no teste")));
     const s = mkSession();
     await runTurn(s, "olho em volta", noop);
     expect(s.turnRefs).toBeUndefined();
