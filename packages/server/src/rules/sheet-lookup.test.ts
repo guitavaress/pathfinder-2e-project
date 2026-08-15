@@ -79,7 +79,7 @@ describe("sheetCategoriesOf: o que a ficha sabe nomear", () => {
       weapons: [],
       armor: [],
       deity: null,
-    } as Partial<Character>);
+    } as unknown as Partial<Character>);
     const map = sheetCategoriesOf(c);
     expect(map.get("bon mot")).toEqual(new Set(["feats"]));
     // Traço de classe mora em `feats` no dado (featCategory "classfeature").

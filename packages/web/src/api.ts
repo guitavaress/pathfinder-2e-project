@@ -1,4 +1,4 @@
-import type { Character, CheckResult, GameState } from "@pf2e/shared";
+import type { Character, CheckResult, GameState, TurnRef } from "@pf2e/shared";
 
 export interface ImportResult {
   sessionId: string;
@@ -39,6 +39,33 @@ export async function continueCampaign(): Promise<ImportResult> {
   return (await res.json()) as ImportResult;
 }
 
+/** Espelha o PaletteEntry do server (packages/server/src/gm/palette.ts). */
+export interface PaletteEntry {
+  name: string;
+  category: string;
+  uuid?: string;
+  cost?: string;
+  group: "ability" | "spell" | "item" | "identity";
+}
+
+/**
+ * O que a ficha nomeia, com uuid e custo do dado — alimenta o `@`.
+ *
+ * Falha de rede devolve lista vazia em vez de estourar: sem paleta o jogo
+ * continua exatamente como antes (digitar o nome solto), e uma feature de
+ * conforto não pode derrubar a sessão.
+ */
+export async function fetchPalette(sessionId: string): Promise<PaletteEntry[]> {
+  try {
+    const res = await fetch(`/palette/${encodeURIComponent(sessionId)}`);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { entries?: PaletteEntry[] };
+    return body.entries ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function importCharacter(rawJson: string): Promise<ImportResult> {
   const res = await fetch("/character/import", {
     method: "POST",
@@ -60,11 +87,12 @@ export async function streamTurn(
   sessionId: string,
   text: string,
   onEvent: (e: StreamEvent) => void,
+  refs: TurnRef[] = [],
 ): Promise<void> {
   const res = await fetch("/scene/turn", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId, text }),
+    body: JSON.stringify({ sessionId, text, refs }),
   });
   if (!res.ok || !res.body) {
     throw new Error(`Turn failed (HTTP ${res.status}).`);

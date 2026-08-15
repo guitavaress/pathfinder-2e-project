@@ -1858,3 +1858,63 @@ textarea.json {
 .continue-warn {
   color: var(--muted-2);
 }
+
+/* ---------------------------------------------------------------------------
+   Paleta do `@` (Fase 2.7) — o que a ficha nomeia, aberto sobre o compositor.
+   Ancorada no `.composer` (position: relative) e crescendo para CIMA: o campo
+   de ação mora no rodapé, e uma lista descendo sairia da tela.
+--------------------------------------------------------------------------- */
+.composer {
+  position: relative;
+}
+.palette {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 8px);
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--gold-border);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  z-index: 20;
+}
+.palette-group {
+  padding: 8px 10px 4px;
+  font-family: var(--serif);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faintest);
+}
+.palette-row {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--ink-soft);
+  font-family: var(--serif);
+  font-size: 15px;
+}
+.palette-row.on {
+  background: var(--inset);
+  color: var(--ink);
+}
+.palette-cost {
+  flex: none;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gold);
+}

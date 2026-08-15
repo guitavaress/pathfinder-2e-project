@@ -25,6 +25,7 @@ import {
   resetBrainStore,
 } from "../gm/brain.js";
 import { archiveDestination } from "../gm/campaign-archive.js";
+import { buildPalette } from "../gm/palette.js";
 import { buildRecapData, resumeKickoff } from "../gm/recap.js";
 import { loadSave, restoreIntoSession } from "../gm/save.js";
 import { createSession, getSession } from "../gm/sessions.js";
@@ -217,6 +218,19 @@ app.post("/scene/turn", async (req, res) => {
   }
   await runTurn(session, playerText, send, parsedRefs.success ? parsedRefs.data : []);
   res.end();
+});
+
+/**
+ * A paleta do jogador: o que a ficha nomeia, com uuid e custo do dado.
+ * Alimenta o `@` do campo de ação (Fase 2.7).
+ */
+app.get("/palette/:sessionId", (req, res) => {
+  const session = getSession(String(req.params.sessionId ?? ""));
+  if (!session) {
+    res.status(404).json({ error: "Session not found." });
+    return;
+  }
+  res.json({ entries: buildPalette(session.character) });
 });
 
 // ---------------------------------------------------------------------------
