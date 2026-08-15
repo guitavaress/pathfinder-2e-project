@@ -127,6 +127,24 @@ describe("resumo mecânico: o vazio é declarado, nunca silencioso", () => {
     expect(summary).toMatch(/do NOT state that it worked/i);
   });
 
+  it("dois fatos numa linha só saem NUMERADOS separadamente (Fase 2.6)", () => {
+    // Uma tool pode devolver o resultado E o efeito que ficou em pé
+    // ("- Casts Heroism.\n- Now in effect: Heroism (10 minutes)."). Sem achatar
+    // antes de numerar, o segundo fato saía sem número — e numerar existe
+    // justamente para o narrador não pular nem fundir eventos (doutrina 4).
+    const s = mkSession();
+    const summary = buildMechanicalSummary(
+      s,
+      ["- Casts Heroism (rank 3).\n- Now in effect: Heroism (10 minutes)."],
+      [],
+      true,
+      false,
+    );
+    expect(summary).toMatch(/1\. Casts Heroism/);
+    expect(summary).toMatch(/2\. Now in effect: Heroism \(10 minutes\)/);
+    expect(summary).not.toMatch(/NOTHING was resolved/);
+  });
+
   it("turno sem tool nenhuma continua sendo 'nenhuma rolagem necessária'", () => {
     const s = mkSession();
     expect(buildMechanicalSummary(s, [], [], false, false)).toBe(

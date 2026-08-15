@@ -9,15 +9,81 @@
  * segundos.
  *
  * A classe de bug que motivou isto: "Shake it Off" existe como REAÇÃO em
- * `actions.json` e como feat de 1 AÇÃO em `feats.json`; o índice é primeiro-ganha
- * por ordem alfabética de arquivo, então a engine servia a reação e cobrava zero
- * pelo feat. Só apareceu porque caiu na amostra da bateria.
+ * `actions.json` e como feat de 1 AÇÃO em `feats.json`; o índice por nome é
+ * primeiro-ganha, então a engine servia a reação e cobrava zero pelo feat. Só
+ * apareceu porque caiu na amostra da bateria. Hoje a precedência é declarada em
+ * código (`NAME_INDEX_ORDER`) e quem precisa da categoria certa usa
+ * `categoryRecords` — mas o homônimo continua existindo, e a decisão sobre
+ * expô-lo em `lookupLocalRule` segue em aberto.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { costProfileOf, type RuleRecord } from "./dataset.js";
+import { categoryRecords, costProfileOf, type RuleRecord } from "./dataset.js";
+import { selfEffectOf } from "./active-effects.js";
+import { classifyDefense, normalizeDamageType } from "./damage.js";
+import {
+  coversStatement,
+  DECLARED_UNCOVERED,
+  PARTIAL_COVERAGE,
+  prefixOf,
+  rollOptionsFor,
+} from "./roll-options.js";
+import { evaluate } from "./predicate.js";
+import { ENGINE_COMPOSED_SELECTORS } from "./actor-modifiers.js";
+
+/**
+ * Um prefixo de roll option com este número de ocorrências ou mais é DOMÍNIO
+ * DE PESO: tem de estar coberto ou declarado. Abaixo disso é a cauda de
+ * namespaces de um feat só (`chimera-flail:head:lion`), que não se enumera.
+ */
+const HEAVY_DOMAIN = 50;
+
+/**
+ * Contexto MÁXIMO — jogador com ficha atacando um alvo com uma arma. É o teto
+ * do que a engine sabe hoje; medir contra ele diz quanto do dado é alcançável
+ * sem modelar nada de novo.
+ */
+function maximalRollOptions(): ReturnType<typeof rollOptionsFor> {
+  return rollOptionsFor({
+    self: {
+      kind: "player",
+      level: 5,
+      traits: ["human"],
+      conditions: ["off-guard"],
+      className: "Fighter",
+      ancestry: "Human",
+      heritage: "Versatile Heritage",
+      feats: [],
+      classFeatures: [],
+      skills: {},
+      // A engine passou a modelar efeitos ativos (Fase 2.6): o contexto máximo
+      // SABE quais são. Lista vazia é conhecimento — "não está enfurecido" —,
+      // diferente de omitir o campo, que seria "não sei".
+      effects: [],
+    },
+    target: { kind: "enemy", level: 3, traits: ["undead"], conditions: ["frightened 1"] },
+    action: "Strike",
+    item: {
+      name: "Longsword +1 (striking)",
+      base: "Longsword",
+      traits: ["versatile-p"],
+      type: "weapon",
+      category: "martial",
+      melee: true,
+      ranged: false,
+      damageType: "slashing",
+      rank: 1,
+      magical: true,
+      proficiencyRank: 2,
+    },
+    // Fase 2.6 / T6.4: armadura vestida e a estatística da rolagem passaram a
+    // ser vocabulário da engine.
+    armor: { worn: true, category: "light" },
+    check: { statistic: "athletics", rank: 2 },
+  });
+}
 import { isOfficialCondition, parseDie, rollFormula } from "../gm/agent.js";
 import { enemyCombatant } from "../gm/combat.js";
 
@@ -25,11 +91,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const generatedDir = join(here, "../../data/pf2e/generated");
 const hasGenerated = existsSync(generatedDir);
 
+/** Os prefixos de nome de `effects.json`, como `active-effects.ts` os remove. */
+const NAME_PREFIX_RE = /^(spell effects?|mixed drink|effect|stance|aura):\s*/i;
+
 /** Lê uma categoria crua do disco (o índice da engine filtra e dedupe; aqui não). */
 function raw(file: string): RuleRecord[] {
   const path = join(generatedDir, file);
   if (!existsSync(path)) return [];
   const arr = JSON.parse(readFileSync(path, "utf8")) as RuleRecord[];
+  // `manifest.json`/`uuid-index.json` são objetos, não listas de registro.
+  if (!Array.isArray(arr)) return [];
   return arr.filter((r) => r && typeof r.name === "string" && r.category && r.text);
 }
 
@@ -219,6 +290,174 @@ describe.skipIf(!hasGenerated)("conformidade do dataset (requer generated/)", ()
     expect(broken.slice(0, 20)).toEqual([]);
   });
 
+  it("mede a cobertura das roll options sobre os predicados REAIS", () => {
+    // T2 não altera comportamento — instala vocabulário. O que este teste
+    // guarda é a honestidade dele: todo statement do dataset ou é decidível
+    // pelo contexto máximo, ou está DECLARADO como não modelado. Statement que
+    // não caia em nenhum dos dois é ponto cego silencioso — e quebra aqui.
+    const counts = new Map<string, number>();
+    const collect = (p: unknown): void => {
+      if (typeof p === "string") {
+        counts.set(p, (counts.get(p) ?? 0) + 1);
+        return;
+      }
+      if (Array.isArray(p)) {
+        p.forEach(collect);
+        return;
+      }
+      if (p && typeof p === "object") {
+        for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+          if (["or", "and", "not", "nor", "nand", "xor"].includes(k)) collect(v);
+          else if (["gte", "lte", "gt", "lt", "eq"].includes(k)) {
+            if (Array.isArray(v) && typeof v[0] === "string") {
+              counts.set(v[0], (counts.get(v[0]) ?? 0) + 1);
+            }
+          } else collect(v);
+        }
+      }
+    };
+    for (const file of readdirSync(generatedDir).filter((f) => f.endsWith(".json"))) {
+      if (file === "manifest.json" || file === "uuid-index.json") continue;
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as { predicate?: unknown }[]) {
+          if (re?.predicate) collect(re.predicate);
+        }
+      }
+    }
+    expect(counts.size).toBeGreaterThan(1000);
+
+    const full = maximalRollOptions();
+
+    let decidable = 0;
+    let declared = 0;
+    const orphans = new Map<string, number>();
+    for (const [stmt, n] of counts) {
+      if (coversStatement(full, stmt)) decidable += n;
+      else if (
+        (DECLARED_UNCOVERED as readonly string[]).includes(prefixOf(stmt)) ||
+        // Domínio coberto só até certa profundidade: o que passa dela é dívida
+        // declarada igual (o badge de efeito, que o registro não guarda).
+        prefixOf(stmt) in PARTIAL_COVERAGE
+      ) {
+        declared += n;
+      } else orphans.set(prefixOf(stmt), (orphans.get(prefixOf(stmt)) ?? 0) + n);
+    }
+    const orphanTotal = [...orphans.values()].reduce((s, v) => s + v, 0);
+    const total = decidable + declared + orphanTotal;
+    const heavy = [...orphans.entries()]
+      .filter(([, n]) => n >= HEAVY_DOMAIN)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}(${v})`);
+    console.log(
+      `[T2] statements: ${total} | decidíveis ${decidable} (${Math.round((decidable / total) * 100)}%) | declarados ${declared} | cauda não enumerada ${orphanTotal} em ${orphans.size} prefixos`,
+    );
+    // A cauda de namespaces de um feat só é esperada e não se enumera. O que
+    // NÃO se admite é um domínio de peso passando despercebido: ou a engine o
+    // cobre, ou ele está declarado. Import novo com domínio grande falha aqui.
+    expect(heavy).toEqual([]);
+  });
+
+  it("o avaliador de predicados é TOTAL sobre a gramática real do dataset", () => {
+    // A pergunta: existe alguma forma sintática nos 7.948 predicados reais que
+    // o avaliador não reconheça? Forma não reconhecida nunca vira verdadeiro,
+    // mas também não pode passar despercebida — é gramática que falta.
+    const full = maximalRollOptions();
+    let decided = 0;
+    let unknown = 0;
+    let total = 0;
+    const malformed = new Map<string, number>();
+    const undecidedPrefix = new Map<string, number>();
+    for (const file of readdirSync(generatedDir).filter((f) => f.endsWith(".json"))) {
+      if (file === "manifest.json" || file === "uuid-index.json") continue;
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as { predicate?: unknown }[]) {
+          if (!re?.predicate) continue;
+          total += 1;
+          const ev = evaluate(re.predicate, full);
+          if (ev.value === "unknown") unknown += 1;
+          else decided += 1;
+          for (const m of ev.malformed) malformed.set(m, (malformed.get(m) ?? 0) + 1);
+          for (const u of ev.undecided) {
+            const p = prefixOf(u);
+            undecidedPrefix.set(p, (undecidedPrefix.get(p) ?? 0) + 1);
+          }
+        }
+      }
+    }
+    expect(total).toBeGreaterThan(5000);
+    const topUndecided = [...undecidedPrefix.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([k, v]) => `${k}(${v})`);
+    console.log(
+      `[T3] predicados: ${total} | decididos ${decided} (${Math.round((decided / total) * 100)}%) | indecidíveis ${unknown} → ${topUndecided.join(" ")}`,
+    );
+    // Gramática incompleta é bug de código, não dívida de modelagem: zero.
+    expect([...malformed.entries()]).toEqual([]);
+  });
+
+  it("toda entrada de defesa do bestiary cai num balde CONHECIDO", () => {
+    // A pergunta que este teste responde: apareceu algum tipo de defesa que a
+    // T1 não classificou? "unknown" seria ignorado em silêncio no combate —
+    // exatamente o erro que a Fase 2.5 existe para acabar.
+    const unknown = new Map<string, number>();
+    for (const r of raw("bestiary.json")) {
+      const sb = r.statblock as unknown as {
+        immunities?: string[];
+        weaknesses?: { type: string }[];
+        resistances?: { type: string }[];
+      };
+      if (!sb) continue;
+      const entries = [
+        ...(sb.immunities ?? []),
+        ...(sb.weaknesses ?? []).map((w) => w.type),
+        ...(sb.resistances ?? []).map((w) => w.type),
+      ];
+      for (const e of entries) {
+        if (classifyDefense(e) !== "unknown") continue;
+        unknown.set(e, (unknown.get(e) ?? 0) + 1);
+      }
+    }
+    expect([...unknown.keys()].sort()).toEqual([]);
+  });
+
+  it("mede o ponto cego declarado das defesas não suportadas", () => {
+    // Não é asserção de qualidade — é o número da DÍVIDA, visível a cada run.
+    // Sobe quando um import novo traz defesa que exige contexto que não temos.
+    const counts: Record<string, number> = {};
+    let creaturesAffected = 0;
+    for (const r of raw("bestiary.json")) {
+      const sb = r.statblock as unknown as {
+        immunities?: string[];
+        weaknesses?: { type: string }[];
+        resistances?: { type: string }[];
+      };
+      if (!sb) continue;
+      const entries = [
+        ...(sb.immunities ?? []),
+        ...(sb.weaknesses ?? []).map((w) => w.type),
+        ...(sb.resistances ?? []).map((w) => w.type),
+      ];
+      let affected = false;
+      for (const e of entries) {
+        if (classifyDefense(e) !== "unsupported") continue;
+        counts[normalizeDamageType(e)] = (counts[normalizeDamageType(e)] ?? 0) + 1;
+        affected = true;
+      }
+      if (affected) creaturesAffected += 1;
+    }
+    const top = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([k, v]) => `${k}:${v}`);
+    console.log(
+      `[T1] defesas não suportadas — ${creaturesAffected} criaturas afetadas; top: ${top.join(" ")}`,
+    );
+    // Material de arma é a maior fatia e depende de rastrear a arma usada:
+    // fica DECLARADO aqui, não implementado (ver plano da Fase 2.5).
+    expect(creaturesAffected).toBeGreaterThan(0);
+  });
+
   it("toda fórmula de dano de arma/ataque do bestiary é parseável", () => {
     const bestiary = raw("bestiary.json").filter((r) => r.statblock);
     const bad: string[] = [];
@@ -241,6 +480,72 @@ describe.skipIf(!hasGenerated)("conformidade do dataset (requer generated/)", ()
       }
     }
     expect(bad.slice(0, 20)).toEqual([]);
+  });
+
+  /**
+   * Regressão do conserto do @Localize (T0 da Fase 2.5). O importador APAGAVA
+   * `@Localize[...]` sem substituto, e 22% das habilidades de criatura ficavam
+   * sem descrição — o texto de Grab, Ferocity, Void Healing e Constrict sumia.
+   * Se alguém voltar a descartar o marcador (ou o `static/lang/en.json` sair do
+   * sparse-checkout), estes testes caem.
+   */
+  it("habilidades de glossário do bestiary vêm COM texto", () => {
+    const bestiary = raw("bestiary.json").filter((r) => r.statblock);
+    const semTexto: string[] = [];
+    // Amostra das mais comuns, todas vindas do glossário via @Localize.
+    const glossario = new Set([
+      "grab",
+      "ferocity",
+      "void healing",
+      "constrict",
+      "shield block",
+      "reactive strike",
+      "swallow whole",
+    ]);
+    for (const r of bestiary) {
+      const sb = r.statblock as unknown as {
+        abilitiesList?: { name: string; text?: string }[];
+      };
+      for (const a of sb.abilitiesList ?? []) {
+        if (!glossario.has(a.name.toLowerCase().trim())) continue;
+        if (!String(a.text ?? "").trim()) semTexto.push(`${r.name}: ${a.name}`);
+      }
+    }
+    expect(semTexto.slice(0, 20)).toEqual([]);
+  });
+
+  it("o vazio residual é só label numérico (a informação está no nome)", () => {
+    const bestiary = raw("bestiary.json").filter((r) => r.statblock);
+    const inexplicados: string[] = [];
+    for (const r of bestiary) {
+      const sb = r.statblock as unknown as {
+        abilitiesList?: { name: string; text?: string }[];
+      };
+      for (const a of sb.abilitiesList ?? []) {
+        if (String(a.text ?? "").trim()) continue;
+        // "+1 Status to All Saves vs. Magic" não tem texto em lugar nenhum —
+        // é rótulo de rule element, e o nome JÁ carrega a mecânica.
+        if (/^[+-]\s*\d/.test(a.name.trim())) continue;
+        inexplicados.push(`${r.name}: ${a.name}`);
+      }
+    }
+    // Teto folgado sobre os 28 medidos em 2026-07-26: pega regressão grossa
+    // sem quebrar a cada bump de ref do dataset.
+    expect(inexplicados.length).toBeLessThan(120);
+  });
+
+  it("o pack de glossário em actions.json não guarda texto sintético", () => {
+    const glossario = raw("actions.json").filter(
+      (r) => (r as unknown as { pack?: string }).pack === "bestiary-ability-glossary-srd",
+    );
+    expect(glossario.length).toBeGreaterThan(40);
+    // "Level ? common action." era o fallback que entrava quando o @Localize
+    // apagava a descrição inteira. Sobra só o rótulo numérico, que não tem
+    // texto em lugar nenhum — a mecânica dele É o nome.
+    const sinteticos = glossario.filter(
+      (r) => /^Level \? \w+ action\.$/.test(r.text) && !/^[+-]\s*\d/.test(r.name.trim()),
+    );
+    expect(sinteticos.map((r) => r.name).slice(0, 20)).toEqual([]);
   });
 });
 
@@ -413,5 +718,233 @@ describe.skipIf(!hasGenerated)("import total (Fase 1.5): zero perda e grafo", ()
     };
     expect(hidden?.statblock).toMatchObject({ ac: 10, hp: 12 });
     expect(hidden?.hazard).toMatchObject({ stealth: 8, isComplex: false });
+  });
+});
+
+/**
+ * Cobertura de RULE ELEMENTS (Fase 2.5 / T5.6).
+ *
+ * A métrica que a fase existe para mover. Antes da T5 a engine lia UMA key
+ * (`FlatModifier`) de UMA categoria (`conditions`); o resto do dado era prosa.
+ * Este bloco mede o que efetivamente vira comportamento — e, mais importante, o
+ * que fica declarado como dívida, para a próxima fase medir contra um número e
+ * não contra uma impressão.
+ */
+describe.skipIf(!hasGenerated)("cobertura de rule elements (T5)", () => {
+  /** As keys que a engine consome hoje. Crescer esta lista é o trabalho. */
+  const CONSUMED_KEYS = ["FlatModifier", "Resistance", "Weakness", "Immunity"];
+  /** E as categorias de onde ela as lê — key sozinha superestimaria. */
+  // `effects` entrou na Fase 2.6: o registro de efeitos ativos abriu a categoria
+  // inteira para os mesmos quatro leitores (`actor-modifiers.ts`).
+  const SHEET = ["feats", "classes", "heritages", "ancestries", "backgrounds"];
+  const READ_CATEGORIES: Record<string, string[]> = {
+    FlatModifier: ["conditions", ...SHEET, "effects"],
+    Resistance: [...SHEET, "effects"],
+    Weakness: [...SHEET, "effects"],
+    Immunity: [...SHEET, "effects"],
+  };
+
+  it("mede quanto do dado a engine ALCANÇA, por key e categoria", () => {
+    // Contar por key sozinha mentiria: `FlatModifier` também vive em
+    // equipment/effects/bestiary, que nenhum leitor da engine abre. O número
+    // honesto é o par (key, categoria) que tem leitor.
+    const byKey = new Map<string, number>();
+    let reachable = 0;
+    for (const file of readdirSync(generatedDir).filter((f) => f.endsWith(".json"))) {
+      const category = file.replace(/\.json$/, "");
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as { key?: string }[]) {
+          const k = re?.key ?? "(none)";
+          byKey.set(k, (byKey.get(k) ?? 0) + 1);
+          if (READ_CATEGORIES[k]?.includes(category)) reachable++;
+        }
+      }
+    }
+    const total = [...byKey.values()].reduce((s, v) => s + v, 0);
+    const topUnconsumed = [...byKey.entries()]
+      .filter(([k]) => !CONSUMED_KEYS.includes(k))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([k, v]) => `${k}(${v})`);
+    console.log(
+      `[T5] rule elements: ${total} em ${byKey.size} keys | keys com leitor ${CONSUMED_KEYS.length}/${byKey.size} | REs ALCANÇÁVEIS ${reachable} (${Math.round((reachable / total) * 100)}%) | maiores sem leitor: ${topUnconsumed.join(" ")}`,
+    );
+    for (const k of CONSUMED_KEYS) expect(byKey.has(k)).toBe(true);
+    // Piso da fase: antes da T5 a engine alcançava os 16 FlatModifier de
+    // `conditions.json` e nada mais.
+    expect(reachable).toBeGreaterThan(1000);
+  });
+
+  it("mede o destino dos FlatModifier das categorias de ficha", () => {
+    // Simula cada documento como se estivesse na ficha e classifica cada
+    // FlatModifier pelo portão que o barra (ou não), contra UM contexto
+    // concreto (o guerreiro de espada longa atacando um morto-vivo).
+    //
+    // `falso` e `indecidível` NÃO são a mesma coisa e por isso não somam no
+    // mesmo balde: falso é a engine funcionando (o feat não se aplica àquela
+    // cena); indecidível é dívida — vocabulário que a engine ainda não fala.
+    const buckets = { aplicavel: 0, falso: 0, indecidivel: 0, presumido: 0, semValor: 0 };
+    const full = maximalRollOptions();
+    for (const file of ["feats.json", "classes.json", "heritages.json", "ancestries.json", "backgrounds.json"]) {
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as Record<string, unknown>[]) {
+          if (re?.key !== "FlatModifier") continue;
+          const composed = (Array.isArray(re.selector) ? re.selector : [re.selector]).some(
+            (s) => typeof s === "string" && ENGINE_COMPOSED_SELECTORS.has(s),
+          );
+          if (re.predicate === undefined && !composed) {
+            buckets.presumido++;
+            continue;
+          }
+          if (re.predicate !== undefined) {
+            const verdict = evaluate(re.predicate, full).value;
+            if (verdict === "false") {
+              buckets.falso++;
+              continue;
+            }
+            if (verdict === "unknown") {
+              buckets.indecidivel++;
+              continue;
+            }
+          }
+          if (typeof re.value !== "number") buckets.semValor++;
+          else buckets.aplicavel++;
+        }
+      }
+    }
+    const total = Object.values(buckets).reduce((s, v) => s + v, 0);
+    console.log(
+      `[T5] FlatModifier de ficha: ${total} | aplicável nesta cena ${buckets.aplicavel} | não se aplica (predicado falso) ${buckets.falso} | INDECIDÍVEL ${buckets.indecidivel} | presumido na ficha ${buckets.presumido} | valor não resolvido ${buckets.semValor}`,
+    );
+    expect(total).toBeGreaterThan(700);
+    // Nenhum bucket pode engolir tudo em silêncio: se um dia `aplicável` for 0,
+    // a leitura quebrou e ninguém notaria pelo veredito da bateria.
+    expect(buckets.aplicavel).toBeGreaterThan(0);
+  });
+
+  it("mede quantas defesas tipadas da ficha são resolvíveis", () => {
+    let resolvidas = 0;
+    let declaradas = 0;
+    for (const file of ["feats.json", "classes.json", "heritages.json", "ancestries.json", "backgrounds.json"]) {
+      for (const r of raw(file)) {
+        for (const re of (r.rules ?? []) as Record<string, unknown>[]) {
+          const k = re?.key;
+          if (k !== "Resistance" && k !== "Weakness" && k !== "Immunity") continue;
+          const types = Array.isArray(re.type) ? re.type : [re.type];
+          const typeOk = types.every((t) => typeof t === "string" && !t.includes("{"));
+          const valueOk = k === "Immunity" || typeof re.value === "number";
+          if (typeOk && valueOk) resolvidas++;
+          else declaradas++;
+        }
+      }
+    }
+    console.log(
+      `[T5] defesas de ficha: ${resolvidas + declaradas} | resolvíveis ${resolvidas} | declaradas ${declaradas}`,
+    );
+    // 44 de 260. O grosso das declaradas depende de ChoiceSet (o tipo é uma
+    // escolha do jogador, `{item|flags.pf2e.rulesSelections...}`) ou de
+    // expressão de nível — as duas dívidas nomeadas da T5.5.
+    expect(resolvidas).toBeGreaterThan(40);
+  });
+});
+
+/**
+ * O registro de efeitos ativos (Fase 2.6 / T6.5).
+ *
+ * A métrica que ESTA fase existe para mover. A T5 abriu as categorias de ficha;
+ * a T6 abriu `effects.json`, que é onde vive o dobro de rule elements — e, mais
+ * importante, mediu quantos deles a engine consegue de fato CONCEDER, porque um
+ * efeito que nenhuma ação põe em jogo é tão inerte quanto prosa.
+ */
+describe.skipIf(!hasGenerated)("registro de efeitos ativos (T6)", () => {
+  it("mede quanto de effects.json a engine lê e quanto sabe conceder", () => {
+    const effects = raw("effects.json");
+    const LIDAS = ["FlatModifier", "Resistance", "Weakness", "Immunity"];
+    let comRE = 0;
+    let lidos = 0;
+    let total = 0;
+    let comPrazo = 0;
+    for (const e of effects) {
+      const rules = (e.rules ?? []) as { key?: string }[];
+      if (rules.length) comRE++;
+      for (const re of rules) {
+        total++;
+        if (LIDAS.includes(re?.key ?? "")) lidos++;
+      }
+      const d = e.effectDuration as { unit?: string } | undefined;
+      if (d?.unit && d.unit !== "unlimited") comPrazo++;
+    }
+    console.log(
+      `[T6] effects: ${effects.length} docs | com rule element ${comRE} | REs ${total}, com leitor ${lidos} (${Math.round((lidos / total) * 100)}%) | com PRAZO estruturado ${comPrazo}`,
+    );
+    // Piso: a categoria existe, tem duração estruturada e os quatro leitores
+    // alcançam a maior parte. Se um dia `lidos` cair a zero, a leitura quebrou.
+    expect(effects.length).toBeGreaterThan(2500);
+    expect(lidos).toBeGreaterThan(2000);
+    expect(comPrazo).toBeGreaterThan(1500);
+  });
+
+  it("mede quantos efeitos a engine sabe CONCEDER, pelas três pontes", () => {
+    // Efeito que nenhuma ação põe em jogo é inerte, por mais rule element que
+    // carregue. Este número é o que separa "lemos o dado" de "o dado joga".
+    //
+    // Chama a função REAL em vez de reimplementar a regra, e usa o índice da
+    // engine (`categoryRecords`) em vez do arquivo cru. A primeira versão deste
+    // teste reimplementou a busca sobre `raw()` e mediu 7 stances onde a engine
+    // concede 74: `loadGenerated` descarta doc sem `text`, então os homônimos
+    // "Effect: X" vazios que venciam o desempate no arquivo nem existem para
+    // ela. Métrica que não passa pelo código medido mede outra coisa.
+    let viaSelfEffect = 0;
+    let viaStance = 0;
+    let viaMagiaBenigna = 0;
+    let hostilBarrada = 0;
+    for (const category of ["feats", "actions", "spells"] as const) {
+      for (const rec of categoryRecords(category)) {
+        const got = selfEffectOf(rec);
+        if (category === "spells") {
+          const hostil = rec.spell?.attack === true || rec.spell?.defense !== undefined;
+          if (got) viaMagiaBenigna++;
+          else if (hostil && new RegExp(`^(spell )?effect: ${rec.name}$`, "i").test(rec.name)) {
+            hostilBarrada++;
+          }
+          continue;
+        }
+        if (!got) continue;
+        if (rec.selfEffect) viaSelfEffect++;
+        else if (/^stance:\s/i.test(got.name)) viaStance++;
+      }
+    }
+    // As hostis barradas contam-se pelo dado: magia com ataque/save que TEM
+    // effect homônimo e mesmo assim não é concedida ao conjurador. O índice sai
+    // do loop de propósito — dentro dele seriam 1.795 varreduras de 27 mil
+    // registros cada, num teste que roda a cada `npm test`.
+    const nomesDeEfeito = new Set(
+      categoryRecords("effects").map((e) =>
+        e.name.replace(NAME_PREFIX_RE, "").toLowerCase().trim(),
+      ),
+    );
+    hostilBarrada = 0;
+    for (const rec of categoryRecords("spells")) {
+      const hostil = rec.spell?.attack === true || rec.spell?.defense !== undefined;
+      if (!hostil) continue;
+      if (nomesDeEfeito.has(rec.name.toLowerCase().trim()) && !selfEffectOf(rec)) hostilBarrada++;
+    }
+    const concedíveis = viaSelfEffect + viaStance + viaMagiaBenigna;
+    console.log(
+      `[T6] efeitos CONCEDÍVEIS: ${concedíveis} | selfEffect ${viaSelfEffect} | stance ${viaStance} | magia benigna ${viaMagiaBenigna} | magia hostil barrada ${hostilBarrada}`,
+    );
+    // As três pontes da T6.3, com os números REAIS — não os do dataset.
+    //
+    // 78 dos 86 docs `Stance:` têm ação/feat homônimo, mas a maioria desses
+    // donos JÁ traz `selfEffect` explícito e entra pela primeira ponte. O que a
+    // regra do homônimo acrescenta são os 7 restantes (o Arcane Cascade entre
+    // eles, cuja ação não tem `selfEffect`). Sobreposição medida, não estimada:
+    // contar 78 aqui atribuiria à segunda ponte um trabalho que é da primeira.
+    expect(viaSelfEffect).toBe(242);
+    expect(viaStance).toBeGreaterThan(5);
+    expect(viaMagiaBenigna).toBeGreaterThan(300);
+    // A barreira das hostis é o ponto: sem ela a engine poria `Spell Effect:
+    // Ill Omen` em quem conjurou, inventando penalidade contra o jogador.
+    expect(hostilBarrada).toBeGreaterThan(50);
   });
 });

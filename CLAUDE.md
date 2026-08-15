@@ -24,8 +24,20 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
    (rule elements) VERBATIM, taxonomia nativa de feats (`featCategory`), grafo de
    uuids e `manifest.json` como prova de zero perda. A engine lê o dado (ex.:
    `multiActionCost`, `costProfileOf`), não confia no modelo interpretar prosa —
-   e cada consumo novo de rule element nasce como tarefa própria com teste
-   (piloto: `rules/condition-modifiers.ts`).
+   e cada consumo novo de rule element nasce como tarefa própria com teste.
+   **A ponte é `rules/roll-context.ts`** (estado do turno → vocabulário do dado),
+   `rules/predicate.ts` avalia e `rules/actor-modifiers.ts` + `condition-modifiers.ts`
+   aplicam. Duas invariantes do ADR-008 mandam aqui: **indecidível não aplica**
+   (predicado que o contexto não decide não vira bônus, e sai declarado em
+   `skipped`) e **não-duplo-cômputo** (o Pathbuilder já exporta AC/saves/perícias
+   finais; em seletor da ficha só entra `FlatModifier` COM predicado). A exceção,
+   do ADR-009, é o **efeito ativo** (`rules/active-effects.ts` +
+   `GameState.effects`): temporário, logo nunca embutido no export, logo o
+   incondicional dele entra. Efeito só existe se o dado o conhece E a ficha o
+   autoriza, e **expira em código** — efeito que não expira é bônus permanente
+   inventado. Cobertura medida a cada `npm test` nas linhas `[T5]`/`[T6]` de
+   `rules/dataset-conformance.test.ts`: hoje **4 keys de 38, 3.548 rule elements
+   alcançáveis (21%)** e 567 efeitos concedíveis.
 4. **Estado nunca mente.** O narrador recebe os resultados mecânicos numerados como
    última mensagem e é proibido de inventar/inverter; o que não está nas linhas
    não aconteceu. Cura/dano/itens sem fonte na ficha são rejeitados pela engine.
@@ -144,5 +156,12 @@ mora em código determinístico e testado. O modelo só chama tools e narra.
 Regras de trabalho:
 - Uma fase / uma tarefa por vez. Nada de frentes paralelas.
 - Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
-  O 75/75 e os 195 testes unitários são piso, não meta.
+  O piso vigente é **620 testes do servidor** (+31 do brain) e, na bateria, **69 PASS · 3 FLAKY ·
+  1 SUSPECT · 2 FAIL com cobertura de asserção 40/75** (gate de **2026-08-14**,
+  pós-Fases 2.5/2.6, `--repeat=3` contra o commit 8dafee6; juiz honesto — NÃO
+  comparável com os 75/75 antigos). Piso, não meta.
+  Os 2 FAIL são as reações não implementadas (`Shield Block` precisa de hardness
+  estruturado, `Clever Gambit`) e o SUSPECT é `Exotic Edge` — dívida declarada.
+  Os FLAKY são [MODELO]: o modelo resolve a atividade por `roll_check` com o
+  combate inativo, e fora de combate a engine não cobra ações.
 - Se uma tarefa contradisser uma decisão registrada nos ADRs, PARE e sinalize.

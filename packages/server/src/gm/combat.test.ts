@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Combatant } from "@pf2e/shared";
+import { rollOptionsFor, type RollOptions } from "../rules/roll-options.js";
 import {
   advanceTurn,
+  setConditionModifierSource,
   applyDamage,
   applyRecovery,
   attackStatusPenalty,
@@ -23,7 +25,7 @@ import {
   livingEnemy,
   mapPenalty,
   partySizeOf,
-  passiveFeatBonus,
+  setActorModifierSource,
   planEncounter,
   playerCombatant,
   setValuedCondition,
@@ -82,6 +84,92 @@ describe("applyDamage", () => {
     const c = mkCombatant({ name: "Sentinel", kind: "enemy", currentHp: 10 });
     applyDamage(c, -5);
     expect(c.currentHp).toBe(10);
+  });
+});
+
+describe("applyDamage tipado (Fase 2.5 / T1)", () => {
+  it("resistência do alvo reduz o HP perdido e explica na nota", () => {
+    const c = mkCombatant({
+      name: "Skeleton",
+      kind: "enemy",
+      currentHp: 20,
+      resistances: [{ type: "slashing", value: 5 }],
+    });
+    const adj = applyDamage(c, [{ amount: 12, type: "slashing" }]);
+    expect(c.currentHp).toBe(13);
+    expect(adj.raw).toBe(12);
+    expect(adj.applied).toBe(7);
+    expect(adj.note).toContain("resistance slashing -5");
+  });
+
+  it("fraqueza do alvo aumenta o dano — e pode derrubá-lo", () => {
+    const c = mkCombatant({
+      name: "Vampire Spawn",
+      kind: "enemy",
+      currentHp: 8,
+      weaknesses: [{ type: "fire", value: 5 }],
+    });
+    applyDamage(c, [{ amount: 5, type: "fire" }]);
+    expect(c.currentHp).toBe(0);
+    expect(c.defeated).toBe(true);
+  });
+
+  it("imunidade zera o dano: o alvo NÃO perde HP nem é derrotado", () => {
+    const c = mkCombatant({
+      name: "Fire Elemental",
+      kind: "enemy",
+      currentHp: 3,
+      immunities: ["fire"],
+    });
+    const adj = applyDamage(c, [{ amount: 40, type: "fire" }]);
+    expect(c.currentHp).toBe(3);
+    expect(c.defeated).toBe(false);
+    expect(adj.applied).toBe(0);
+  });
+
+  it("golpe multi-tipo mede cada parcela contra a defesa certa", () => {
+    // Statblock com "1d8 piercing + 1d6 fire" contra quem só resiste a fogo.
+    const c = mkCombatant({
+      name: "Salamander",
+      kind: "enemy",
+      currentHp: 30,
+      resistances: [{ type: "fire", value: 10 }],
+    });
+    applyDamage(c, [
+      { amount: 8, type: "piercing" },
+      { amount: 6, type: "fire" },
+    ]);
+    expect(c.currentHp).toBe(22); // 8 passa inteiro, 6 de fogo somem
+  });
+
+  it("dano sem tipo (update_state/hpDelta) ignora defesa tipada", () => {
+    const c = mkCombatant({
+      name: "Golem",
+      kind: "enemy",
+      currentHp: 20,
+      resistances: [{ type: "physical", value: 10 }],
+    });
+    applyDamage(c, 12);
+    expect(c.currentHp).toBe(8);
+  });
+
+  it("resistência incide DEPOIS do dobro do crítico", () => {
+    const c = mkCombatant({
+      name: "Guard",
+      kind: "enemy",
+      currentHp: 40,
+      resistances: [{ type: "piercing", value: 5 }],
+    });
+    // O call site dobra a parcela antes de aplicar: (6×2) − 5 = 7, não (6−5)×2.
+    applyDamage(c, [{ amount: 6 * 2, type: "piercing" }]);
+    expect(c.currentHp).toBe(33);
+  });
+
+  it("combatente sem defesas declaradas se comporta como antes", () => {
+    const c = mkCombatant({ name: "Thug", kind: "enemy", currentHp: 10 });
+    const adj = applyDamage(c, [{ amount: 4, type: "slashing" }]);
+    expect(c.currentHp).toBe(6);
+    expect(adj.note).toBe("");
   });
 });
 
@@ -328,6 +416,52 @@ describe("condições como mecânica", () => {
     expect(attackStatusPenalty(mkCombatant({ name: "B", kind: "enemy" }))).toBe(0);
   });
 
+  /**
+   * O contexto da rolagem tem de CHEGAR à fonte de modificadores (T5.2). Até
+   * aqui `ConditionModifierSource` não tinha esse parâmetro, então
+   * `conditionModifiersFor` recebia `ro` indefinido e descartava todo
+   * FlatModifier com predicado — o caminho condicional existia e estava morto.
+   */
+  describe("o contexto da rolagem chega à fonte de modificadores", () => {
+    afterEach(() => setConditionModifierSource(null));
+
+    it("effectiveAC e attackStatusPenalty repassam as roll options", () => {
+      const seen: (RollOptions | undefined)[] = [];
+      setConditionModifierSource((_conds, _sel, ro) => {
+        seen.push(ro);
+        return [];
+      });
+      const ro = rollOptionsFor({ action: "Strike" });
+      effectiveAC(mkCombatant({ name: "T", kind: "enemy" }), ro);
+      attackStatusPenalty(mkCombatant({ name: "A", kind: "enemy" }), ro);
+      expect(seen).toEqual([ro, ro]);
+    });
+
+    it("sem contexto, a fonte recebe `undefined` — e não um objeto vazio", () => {
+      // A diferença importa: `{}` seria um contexto que não cobre NADA, mas
+      // ainda assim um contexto. `undefined` é o sinal de "sem rolagem".
+      const seen: (RollOptions | undefined)[] = [];
+      setConditionModifierSource((_conds, _sel, ro) => {
+        seen.push(ro);
+        return [];
+      });
+      effectiveAC(mkCombatant({ name: "T", kind: "enemy" }));
+      expect(seen).toEqual([undefined]);
+    });
+
+    it("o seletor continua chegando junto", () => {
+      const seen: string[] = [];
+      setConditionModifierSource((_conds, sel) => {
+        seen.push(sel);
+        return [];
+      });
+      const c = mkCombatant({ name: "T", kind: "enemy" });
+      effectiveAC(c);
+      attackStatusPenalty(c);
+      expect(seen).toEqual(["ac", "attack-roll"]);
+    });
+  });
+
   it("tickEndOfRound: off-guard expira, frightened decai, prone fica", () => {
     const combat = buildCombat([
       mkCombatant({
@@ -503,7 +637,16 @@ describe("orçamento de encontro (GM Core, party de 1)", () => {
   });
 });
 
-describe("passiveFeatBonus / playerCombatant (passivos da engine)", () => {
+/**
+ * Os passivos da ficha deixaram de morar numa tabela escrita à mão
+ * (`PASSIVE_FEAT_EFFECTS`, uma entrada) e passaram a vir do dado via fonte
+ * injetada (T5.4). O que se testa AQUI é o contrato da injeção — que o número
+ * do dado é o número que a iniciativa usa. Que o dado realmente diz "+2 para
+ * Incredible Initiative" é asserção de `rules/actor-modifiers.test.ts`.
+ */
+describe("playerCombatant — passivos vindos da fonte injetada", () => {
+  afterEach(() => setActorModifierSource(null));
+
   const sheet = (feats: string[]): Character =>
     ({
       name: "Hero",
@@ -514,22 +657,44 @@ describe("passiveFeatBonus / playerCombatant (passivos da engine)", () => {
       feats,
     }) as unknown as Character;
 
-  it("Incredible Initiative soma +2 na iniciativa", () => {
-    const bonus = passiveFeatBonus(sheet(["Incredible Initiative", "Toughness"]), "initiative");
-    expect(bonus).toEqual({ total: 2, sources: ["Incredible Initiative"] });
+  it("a fonte recebe o seletor `initiative` e a ficha inteira", () => {
+    const seen: { selector: string | string[]; feats: string[] }[] = [];
+    setActorModifierSource((character, selector) => {
+      seen.push({ selector, feats: character.feats });
+      return [];
+    });
+    playerCombatant(sheet(["Incredible Initiative"]), 50);
+    expect(seen).toEqual([{ selector: "initiative", feats: ["Incredible Initiative"] }]);
   });
 
-  it("sem o feat, bônus zero", () => {
-    expect(passiveFeatBonus(sheet(["Toughness"]), "initiative").total).toBe(0);
-  });
-
-  it("playerCombatant aplica o passivo: iniciativa mínima = 1 + perception + 2", () => {
-    // d20 mínimo 1: com o feat, init ≥ 13; sem, pode ser 11. Roda várias vezes
-    // e checa o PISO (determinístico o suficiente sem mockar RNG).
+  it("o bônus da fonte entra na iniciativa (piso = 1 + perception + bônus)", () => {
+    setActorModifierSource(() => [
+      { slug: "incredible-initiative", type: "circumstance", value: 2 },
+    ]);
     for (let i = 0; i < 50; i++) {
-      const withFeat = playerCombatant(sheet(["Incredible Initiative"]), 50);
-      expect(withFeat.initiative).toBeGreaterThanOrEqual(13);
-      expect(withFeat.initiative).toBeLessThanOrEqual(32);
+      const c = playerCombatant(sheet(["Incredible Initiative"]), 50);
+      expect(c.initiative).toBeGreaterThanOrEqual(13);
+      expect(c.initiative).toBeLessThanOrEqual(32);
+    }
+  });
+
+  it("dois bônus do MESMO tipo não somam nem aqui", () => {
+    setActorModifierSource(() => [
+      { slug: "a", type: "circumstance", value: 2 },
+      { slug: "b", type: "circumstance", value: 1 },
+    ]);
+    for (let i = 0; i < 20; i++) {
+      const c = playerCombatant(sheet([]), 50);
+      expect(c.initiative).toBeGreaterThanOrEqual(13);
+      expect(c.initiative).toBeLessThanOrEqual(32);
+    }
+  });
+
+  it("sem fonte registrada, a ficha não contribui — e não quebra", () => {
+    for (let i = 0; i < 20; i++) {
+      const c = playerCombatant(sheet(["Incredible Initiative"]), 50);
+      expect(c.initiative).toBeGreaterThanOrEqual(11);
+      expect(c.initiative).toBeLessThanOrEqual(30);
     }
   });
 });
@@ -583,6 +748,26 @@ describe("enemyCombatant / strikeProfileFrom (statblock literal, sem dataset)", 
     expect(c.maxHp).toBe(b.hp);
     expect(c.sourceName).toBeUndefined();
     expect(c.saves).toBeUndefined();
+    expect(c.resistances).toBeUndefined();
+  });
+
+  it("traz imunidade/fraqueza/resistência do statblock para o combate", () => {
+    const c = enemyCombatant("Skeleton Guard", 0, {
+      ...sb,
+      sourceName: "Skeleton Guard",
+      traits: ["undead"],
+      immunities: ["death-effects", "poison"],
+      weaknesses: [{ type: "bludgeoning", value: 5 }],
+      resistances: [{ type: "cold", value: 5 }],
+    });
+    expect(c.immunities).toEqual(["death-effects", "poison"]);
+    expect(c.weaknesses).toEqual([{ type: "bludgeoning", value: 5 }]);
+    // E o dado chega até a aplicação: 4 de maça viram 9 pela fraqueza, e o
+    // esqueleto de 8 HP cai — sem a fraqueza sobrariam 4 HP.
+    const adj = applyDamage(c, [{ amount: 4, type: "bludgeoning" }]);
+    expect(adj.applied).toBe(9);
+    expect(c.currentHp).toBe(0);
+    expect(c.defeated).toBe(true);
   });
 
   it("strikeProfileFrom prefere melee sobre ranged e lê agile das traits", () => {

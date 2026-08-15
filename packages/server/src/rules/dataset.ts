@@ -93,6 +93,9 @@ export interface CreatureAbility {
   actionType: string; // "action" | "reaction" | "free" | "passive"
   actions: number | null;
   text: string;
+  /** Traços da habilidade — fonte dos roll options `item:trait:*`. */
+  traits?: string[];
+  frequency?: { max: number; per: string };
 }
 
 /** An NPC spellcasting entry (DC/attack + granted spell list). */
@@ -490,6 +493,37 @@ export function namedActivity(text: string): string | null {
   return null;
 }
 
+let basicActionNames: string[] | null = null;
+
+/**
+ * A AÇÃO básica citada em prosa livre ("Climb the wall" → "Climb"), para o
+ * vocabulário `action:*` das roll options (Fase 2.5 / T5.4).
+ *
+ * Existe separado de `namedActivity` porque aquele serve a outro propósito —
+ * cobrar o custo de atividades de várias ações — e por isso exige nome com 6+
+ * caracteres, o que exclui justamente as ações básicas que os rule elements
+ * mais testam (`Climb`, `Trip`, `Shove`, `Hide`, `Seek`).
+ *
+ * Só a categoria `actions` entra, e só com nome de 4+ letras casado por palavra
+ * inteira, preferindo o mais longo. Um falso positivo aqui não fabrica número
+ * nenhum sozinho: ele apenas TORNA DECIDÍVEL um predicado que sem isso ficaria
+ * indecidível — e indecidível já não aplica.
+ */
+export function mentionedAction(text: string): string | null {
+  if (!basicActionNames) {
+    basicActionNames = load()
+      .filter((r) => r.category === "actions" && r.name.length >= 4 && /^[A-Za-z' -]+$/.test(r.name))
+      .map((r) => r.name)
+      .sort((a, b) => b.length - a.length);
+  }
+  const t = text.toLowerCase();
+  for (const name of basicActionNames) {
+    const escaped = name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`).test(t)) return name;
+  }
+  return null;
+}
+
 let requirementTexts: Map<string, string> | null = null;
 
 /**
@@ -737,6 +771,26 @@ export function spellRecord(name: string): RuleRecord | null {
   return best;
 }
 
+/**
+ * Os registros da categoria `conditions`, sem fuzzy. `lookupLocalRule` casa por
+ * substring nas categorias da política, e "prone" acabaria num feat de nome
+ * parecido — quem consome rule element de condição precisa do exato.
+ */
+export function conditionRecords(): RuleRecord[] {
+  return load().filter((r) => r.category === "conditions");
+}
+
+/**
+ * Os registros de UMA categoria, sem fuzzy e sem a precedência do índice por
+ * nome. Quem consome rule element precisa disso: "Shield Block" existe em
+ * `actions` E em `feats`, e o índice global entrega o de `actions` (política
+ * declarada em `NAME_INDEX_ORDER`). Para saber o que o FEAT da ficha faz, é
+ * preciso olhar a categoria certa.
+ */
+export function categoryRecords(category: string): RuleRecord[] {
+  return load().filter((r) => r.category === category);
+}
+
 let conditionNames: Set<string> | null = null;
 
 /**
@@ -785,21 +839,32 @@ export function hazardRecord(name: string): RuleRecord | null {
 }
 
 let uuidMap: Map<string, RuleRecord> | null = null;
+let refNameMap: Map<string, RuleRecord> | null = null;
 
 /**
  * Resolve um documento pelo `_id` Foundry (aceita o UUID completo
  * "Compendium.pf2e.feat-effects.Item.XYZ" — usa o último segmento). É como
  * `selfEffect` e `GrantItem` chegam ao registro alvo.
+ *
+ * O último segmento nem sempre é um id: o repositório do pf2e escreve as
+ * referências do FONTE por NOME ("...Item.Breath Control") e só as converte em
+ * id no build do compêndio. Importamos o fonte, então o nome é o caso COMUM —
+ * medido: dos 1.248 `GrantItem` de ficha/efeito sem template, **1.247 resolvem
+ * por nome e 1 por id**. Tentar só id fazia esta ponte falhar inteira em
+ * silêncio.
  */
 export function byUuid(ref: string): RuleRecord | null {
   if (!uuidMap) {
     uuidMap = new Map();
+    refNameMap = new Map();
     for (const r of load()) {
       if (r.uuid && !uuidMap.has(r.uuid)) uuidMap.set(r.uuid, r);
+      const key = normalize(r.name);
+      if (!refNameMap.has(key)) refNameMap.set(key, r);
     }
   }
-  const id = ref.split(".").pop() ?? ref;
-  return uuidMap.get(id) ?? null;
+  const last = ref.split(".").pop() ?? ref;
+  return uuidMap.get(last) ?? refNameMap?.get(normalize(last)) ?? null;
 }
 
 /** Effect por uuid OU nome exato (effects ficam fora do fuzzy de propósito). */

@@ -3,6 +3,16 @@ import type { Character, Combat, Combatant, Companion, DegreeOfSuccess } from "@
 // Import de TIPO apenas: combat.ts segue puro (nunca carrega o dataset em runtime).
 import type { CreatureStatblock } from "../rules/dataset.js";
 import { degreeOfSuccess } from "../dice/check.js";
+import {
+  adjustDamage,
+  parsePlayerResistances,
+  UNTYPED,
+  type DamageAdjustment,
+  type DamageParcel,
+  type Defenses,
+} from "../rules/damage.js";
+import { ModifierStack, type Modifier } from "../rules/modifiers.js";
+import type { RollOptions } from "../rules/roll-options.js";
 
 /** Rolls `n` dice with `faces` sides and returns the total. */
 export function rollDice(n: number, faces: number): number {
@@ -223,44 +233,121 @@ function newCombatant(partial: Partial<Combatant> & Pick<Combatant, "name" | "ki
 }
 
 /**
- * Passivos de feats que a ENGINE aplica (regras-como-dados): o modelo nunca
- * lembrava deles. Tabela pequena e explícita — cresce conforme a auditoria
- * apontar. (Toughness NÃO entra: o Pathbuilder já soma o HP no export.)
+ * Fonte dos modificadores que a FICHA aplica, lida do dado (Fase 2.5 / T5.4).
+ *
+ * Injetada pelo mesmo motivo de `ConditionModifierSource`: `combat.ts` é puro e
+ * nunca carrega o dataset. Sem registro (teste unitário sem `generated/`), a
+ * ficha simplesmente não contribui — e é o comportamento honesto, porque a
+ * alternativa seria uma tabela escrita à mão fingindo cobrir 7.039 feats.
+ *
+ * Foi o que substituiu `PASSIVE_FEAT_EFFECTS`, que tinha UMA entrada
+ * ("incredible initiative": +2 iniciativa) — hoje esse mesmo +2 vem do
+ * `FlatModifier` do próprio feat no dataset.
  */
-const PASSIVE_FEAT_EFFECTS: Record<string, { initiative?: number }> = {
-  "incredible initiative": { initiative: 2 },
-};
-
-/** Soma dos bônus passivos de um tipo dado pelos feats da ficha. */
-export function passiveFeatBonus(
+export type ActorModifierSource = (
   character: Character,
-  kind: "initiative",
-): { total: number; sources: string[] } {
-  let total = 0;
-  const sources: string[] = [];
-  for (const feat of character.feats) {
-    const effect = PASSIVE_FEAT_EFFECTS[feat.toLowerCase().trim()];
-    const value = effect?.[kind];
-    if (value) {
-      total += value;
-      sources.push(feat);
-    }
-  }
-  return { total, sources };
+  selector: string | string[],
+) => Modifier[];
+
+let actorSource: ActorModifierSource | null = null;
+
+export function setActorModifierSource(fn: ActorModifierSource | null): void {
+  actorSource = fn;
+}
+
+/**
+ * Fonte das DEFESAS tipadas que a ficha concede (T5.5): `Resistance`,
+ * `Weakness` e `Immunity` do dado. Mesma injeção, mesmo motivo.
+ */
+export type ActorDefenseSource = (character: Character) => Defenses;
+
+let defenseSource: ActorDefenseSource | null = null;
+
+export function setActorDefenseSource(fn: ActorDefenseSource | null): void {
+  defenseSource = fn;
+}
+
+/** Os modificadores da ficha sobre um seletor, empilhados pela regra do PF2e. */
+export function sheetStack(
+  character: Character,
+  selector: string | string[],
+): ModifierStack {
+  return new ModifierStack().addAll(actorSource ? actorSource(character, selector) : []);
 }
 
 /** Builds the player's combatant from the sheet + current HP. */
+/**
+ * Recorta as defesas tipadas de um statblock. Campo vazio fica AUSENTE (mesmo
+ * padrão do importador) — save menor e `undefined` já significa "sem defesa".
+ */
+function statblockDefenses(sb: CreatureStatblock): Defenses {
+  return {
+    ...(sb.immunities?.length ? { immunities: sb.immunities } : {}),
+    ...(sb.weaknesses?.length ? { weaknesses: sb.weaknesses } : {}),
+    ...(sb.resistances?.length ? { resistances: sb.resistances } : {}),
+  };
+}
+
 export function playerCombatant(character: Character, currentHp: number): Combatant {
-  const passive = passiveFeatBonus(character, "initiative");
+  // Iniciativa é COMPOSTA pela engine (d20 + percepção), não vem pronta da
+  // ficha — por isso é um dos seletores em que o modificador incondicional do
+  // dado se aplica sem risco de dupla contagem.
+  const passive = sheetStack(character, "initiative").total();
+  // Duas fontes de defesa, e nenhuma cobre a outra: o Pathbuilder manda
+  // resistências como texto livre (`character.resistances`) e não exporta
+  // imunidade nem fraqueza; o dado tem as três, vindas de feats/herança/deidade.
+  // O que não tiver valor numérico fica de fora, nunca vira 0 silencioso.
+  const merged = playerDefenses(character);
   return newCombatant({
     name: character.name,
     kind: "player",
-    initiative: d20() + character.perception + passive.total,
+    initiative: d20() + character.perception + passive,
     ac: character.ac,
     maxHp: character.maxHp,
     currentHp,
     level: character.level,
+    ...merged,
   });
+}
+
+/**
+ * As defesas tipadas do jogador: ficha + dado + o que os efeitos ATIVOS dão.
+ *
+ * É recomposta do zero, nunca acumulada, porque efeito expira: somar resistência
+ * na entrada e esquecer de tirar na saída deixaria o personagem imune a frio
+ * três cenas depois de a magia acabar.
+ */
+export function playerDefenses(character: Character, fromEffects: Defenses = {}): Defenses {
+  const { resistances } = parsePlayerResistances(character.resistances);
+  const fromData = defenseSource ? defenseSource(character) : {};
+  return mergeDefenses(
+    mergeDefenses({ ...(resistances.length ? { resistances } : {}) }, fromData),
+    fromEffects,
+  );
+}
+
+/** Une duas listas de defesa; do mesmo tipo vale a MAIOR (RAW: não somam). */
+function mergeDefenses(a: Defenses, b: Defenses): Defenses {
+  const immunities = [...new Set([...(a.immunities ?? []), ...(b.immunities ?? [])])];
+  const pick = (
+    xs: { type: string; value: number }[] = [],
+    ys: { type: string; value: number }[] = [],
+  ): { type: string; value: number }[] => {
+    const out: { type: string; value: number }[] = [];
+    for (const d of [...xs, ...ys]) {
+      const cur = out.find((o) => o.type === d.type);
+      if (!cur) out.push({ ...d });
+      else if (d.value > cur.value) cur.value = d.value;
+    }
+    return out;
+  };
+  const weaknesses = pick(a.weaknesses, b.weaknesses);
+  const resistances = pick(a.resistances, b.resistances);
+  return {
+    ...(immunities.length ? { immunities } : {}),
+    ...(weaknesses.length ? { weaknesses } : {}),
+    ...(resistances.length ? { resistances } : {}),
+  };
 }
 
 /**
@@ -289,6 +376,7 @@ export function enemyCombatant(
       traits: sb.traits,
       sourceName: sb.sourceName,
       saves: sb.saves,
+      ...statblockDefenses(sb),
     });
   }
   const b = benchmark(level);
@@ -305,6 +393,33 @@ export function enemyCombatant(
 
 /** Teto de party do ADR-004: jogador + até 3 companheiros. */
 export const MAX_PARTY_SIZE = 4;
+
+/**
+ * Reações DEFENSIVAS do jogador que a engine dispara contra um Strike inimigo
+ * (ver `playerReactionVsStrike` em agent.ts).
+ *
+ * Mora AQUI, no módulo puro, porque o JUIZ da bateria também precisa dela: ele
+ * tem de saber quanto de CA a reação daria para decidir se deixar de usá-la foi
+ * erro ou economia. Quando cada lado tinha sua própria ideia disso, a engine
+ * guardava a reação num golpe que já erraria (correto) e o juiz acusava o jogo
+ * de não honrar o feat (gate de 26/07). Uma fonte, os dois concordam por
+ * construção.
+ *
+ * Só entram reações cujo gatilho a engine SABE produzir ("uma criatura te
+ * ataca"). Reações de movimento dependem de posição — Fase 3.
+ */
+export const PLAYER_STRIKE_REACTIONS: Record<
+  string,
+  { acBonus: number; meleeOnly?: boolean; needsShield?: boolean }
+> = {
+  // Trigger: "A creature targets you with an attack and you can see the attacker."
+  "nimble dodge": { acBonus: 2 },
+  // Trigger: "A creature you can see targets you with an attack." (panache não
+  // é modelado; o feat na ficha é o gate.)
+  "flashy dodge": { acBonus: 2 },
+  // Trigger: "An enemy hits you with a melee Strike." Raise a Shield na hora.
+  "reactive shield": { acBonus: 2, meleeOnly: true, needsShield: true },
+};
 
 /**
  * Builds a Companion at recruit time. With a real statblock (bestiary NPC)
@@ -334,6 +449,7 @@ export function newCompanion(
       persona,
       sourceName: sb.sourceName,
       saves: sb.saves,
+      ...statblockDefenses(sb),
     };
   }
   const b = benchmark(level);
@@ -371,6 +487,9 @@ export function allyCombatant(comp: Companion): Combatant {
     traits: [...comp.traits],
     sourceName: comp.sourceName,
     saves: comp.saves,
+    ...(comp.immunities?.length ? { immunities: comp.immunities } : {}),
+    ...(comp.weaknesses?.length ? { weaknesses: comp.weaknesses } : {}),
+    ...(comp.resistances?.length ? { resistances: comp.resistances } : {}),
     defeated: hp === 0,
   });
 }
@@ -603,20 +722,93 @@ export function isOffGuard(c: Combatant): boolean {
 }
 
 /**
- * Effective AC for a Strike against `target`: base AC −2 if off-guard
- * (circumstance) − the target's own frightened value (status penalty to DCs/AC).
+ * Fonte dos modificadores de condição. Fica INJETADA porque `combat.ts` é puro
+ * (nunca carrega o dataset em runtime) e a fonte oficial vive no dado. Sem
+ * registro — em teste unitário, por exemplo — vale o fallback embutido abaixo,
+ * que é o comportamento histórico da engine.
+ *
+ * Um ponto de injeção só, e não um parâmetro em cada chamada: com 10 call sites
+ * de `effectiveAC`/`attackStatusPenalty`, parâmetro é convite a um deles
+ * esquecer e a engine divergir de si mesma.
  */
-export function effectiveAC(target: Combatant): number {
-  let ac = target.ac;
-  if (isOffGuard(target)) ac -= 2;
-  ac -= conditionValue(target, "frightened");
-  return ac;
+export type ConditionModifierSource = (
+  conditions: string[],
+  selector: "ac" | "attack-roll",
+  ro?: RollOptions,
+) => Modifier[];
+
+let conditionSource: ConditionModifierSource | null = null;
+
+export function setConditionModifierSource(fn: ConditionModifierSource | null): void {
+  conditionSource = fn;
 }
 
-/** Status penalty to the attacker's Strike rolls (−frightened). */
-export function attackStatusPenalty(attacker: Combatant): number {
-  const v = conditionValue(attacker, "frightened");
-  return v === 0 ? 0 : -v; // avoid JS -0 from negating zero
+/**
+ * Fallback embutido: off-guard (circunstância −2 na CA) e frightened (status −N
+ * em tudo). É o que a engine sempre aplicou à mão — mantido para que o núcleo
+ * puro funcione sem dataset.
+ */
+function builtinConditionModifiers(
+  conditions: string[],
+  selector: "ac" | "attack-roll",
+): Modifier[] {
+  const mods: Modifier[] = [];
+  if (selector === "ac" && conditions.some((c) => /off-guard|flat-footed/i.test(c))) {
+    mods.push({ slug: "off-guard", type: "circumstance", value: -2 });
+  }
+  const frightened = valueOfCondition(conditions, "frightened");
+  if (frightened > 0) {
+    mods.push({ slug: "frightened", type: "status", value: -frightened });
+  }
+  return mods;
+}
+
+/** Valor de uma condição numa lista crua ("frightened 2" → 2). */
+function valueOfCondition(conditions: string[], name: string): number {
+  for (const cond of conditions) {
+    const m = cond.toLowerCase().match(new RegExp(`^${name}\\s*(\\d+)?$`));
+    if (m) return m[1] ? Number(m[1]) : 1;
+  }
+  return 0;
+}
+
+/**
+ * A pilha de modificadores de condição que incide sobre um seletor.
+ *
+ * `ro` é o contexto da rolagem DO PONTO DE VISTA de `c`: em PF2e o rule element
+ * mora no ator, e `self:` dentro do predicado é sempre o dono da condição. Por
+ * isso a CA do defensor e a rolagem do atacante pedem contextos diferentes —
+ * ver `rollOptionsOf` em `agent.ts`. Sem `ro`, condição com predicado não
+ * aplica (indecidível não é permissão).
+ */
+export function conditionStack(
+  c: Combatant,
+  selector: "ac" | "attack-roll",
+  ro?: RollOptions,
+): ModifierStack {
+  const source = conditionSource ?? builtinConditionModifiers;
+  return new ModifierStack().addAll(source(c.conditions, selector, ro));
+}
+
+/**
+ * Effective AC for a Strike against `target`. Os modificadores das condições
+ * empilham por tipo (PF2e): off-guard é circunstância e frightened é status,
+ * então somam entre si — mas dois status não somam entre eles.
+ */
+export function effectiveAC(
+  target: Combatant,
+  ro?: RollOptions,
+  extra: readonly Modifier[] = [],
+): number {
+  // `extra` são os modificadores de CA do próprio defensor vindos da ficha e
+  // dos efeitos ativos (Fase 2.6). Chegam de fora porque só `agent.ts` conhece a
+  // sessão; o núcleo segue puro e, sem eles, se comporta como antes.
+  return target.ac + conditionStack(target, "ac", ro).addAll(extra).total();
+}
+
+/** Penalidade das condições do atacante sobre a rolagem de ataque. */
+export function attackStatusPenalty(attacker: Combatant, ro?: RollOptions): number {
+  return conditionStack(attacker, "attack-roll", ro).total();
 }
 
 /**
@@ -660,6 +852,8 @@ export interface PersistentTick {
   flatRoll: number;
   /** true quando o flat check (DC 15) encerrou a condição. */
   ended: boolean;
+  /** Ajuste por imunidade/fraqueza/resistência (`""` quando não houve). */
+  note: string;
 }
 
 const PERSISTENT_RE = /^persistent\s+(.+?)\s+damage(?:\s+(\d+(?:d\d+)?(?:[+-]\d+)?))?$/i;
@@ -682,7 +876,9 @@ export function tickPersistentDamage(combat: Combat): PersistentTick[] {
       if (!m) continue;
       const amount = rollPersistentAmount(m[2]);
       const before = c.currentHp;
-      applyDamage(c, amount);
+      // O tipo já está na condição ("persistent fire damage 1d6") — dano
+      // persistente também respeita imunidade/resistência.
+      const adj = applyDamage(c, [{ amount, type: m[1]! }]);
       const flatRoll = d20();
       const ended = flatRoll >= 15;
       if (ended || c.defeated) {
@@ -696,16 +892,40 @@ export function tickPersistentDamage(combat: Combat): PersistentTick[] {
         after: c.currentHp,
         flatRoll,
         ended,
+        note: adj.note,
       });
     }
   }
   return out;
 }
 
-/** Applies damage (>=0) to a combatant, clamping HP and flagging defeat. */
-export function applyDamage(target: Combatant, amount: number): void {
-  target.currentHp = Math.max(0, target.currentHp - Math.max(0, amount));
+/** As defesas tipadas de um combatente, no formato que `adjustDamage` espera. */
+export function defensesOf(target: Combatant): Defenses {
+  return {
+    immunities: target.immunities,
+    weaknesses: target.weaknesses,
+    resistances: target.resistances,
+  };
+}
+
+/**
+ * Applies damage to a combatant, clamping HP and flagging defeat.
+ *
+ * Aceita um número (dano SEM tipo — `update_state`, testes) ou as parcelas
+ * tipadas da instância, e nesse caso passa por imunidade/fraqueza/resistência.
+ * Devolve o ajuste para que o resumo mecânico mostre POR QUE o HP caiu o que
+ * caiu — dano tipado que some sem explicação é estado mentindo.
+ */
+export function applyDamage(
+  target: Combatant,
+  damage: number | DamageParcel[],
+): DamageAdjustment {
+  const parcels: DamageParcel[] =
+    typeof damage === "number" ? [{ amount: damage, type: UNTYPED }] : damage;
+  const adj = adjustDamage(parcels, defensesOf(target));
+  target.currentHp = Math.max(0, target.currentHp - adj.applied);
   if (target.currentHp === 0) target.defeated = true;
+  return adj;
 }
 
 /**

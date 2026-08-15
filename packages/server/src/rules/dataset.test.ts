@@ -10,6 +10,8 @@ import {
   namedActivity,
   officialConditions,
   spellRecord,
+  mentionedAction,
+  categoryRecords,
 } from "./dataset.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -180,5 +182,34 @@ describe.skipIf(!hasGenerated)("dataset (requer generated/)", () => {
       expect(spellRecord("Giant Rat")).toBeNull();
       expect(spellRecord("zzz-not-a-spell")).toBeNull();
     });
+  });
+});
+
+describe.skipIf(!hasGenerated)("mentionedAction / categoryRecords (T5.4)", () => {
+  it("acha a ação básica citada em prosa livre", () => {
+    // `namedActivity` não serve aqui: exige nome com 6+ letras, o que exclui
+    // justamente Climb/Trip/Shove — as ações que os rule elements mais testam.
+    expect(mentionedAction("Climb the wall athletics")).toBe("Climb");
+    expect(mentionedAction("tenta derrubar o bandido com um Trip")).toBe("Trip");
+    expect(mentionedAction("Shove the guard aside")).toBe("Shove");
+  });
+
+  it("casa por palavra INTEIRA, não por pedaço", () => {
+    // "Aid" dentro de "maid"/"afraid" viraria bônus de Aid por acidente.
+    expect(mentionedAction("the maid is afraid")).toBeNull();
+    expect(mentionedAction("nada de ação aqui")).toBeNull();
+  });
+
+  it("prefere o nome mais longo quando dois casam", () => {
+    expect(mentionedAction("Recall Knowledge about the bandit")).toBe("Recall Knowledge");
+  });
+
+  it("categoryRecords não mistura categorias homônimas", () => {
+    const actions = categoryRecords("actions");
+    expect(actions.length).toBeGreaterThan(1000);
+    expect(actions.every((r) => r.category === "actions")).toBe(true);
+    // "Shield Block" existe nas duas categorias — é o caso que motivou a função.
+    expect(categoryRecords("feats").some((r) => r.name === "Shield Block")).toBe(true);
+    expect(categoryRecords("actions").some((r) => r.name === "Shield Block")).toBe(true);
   });
 });

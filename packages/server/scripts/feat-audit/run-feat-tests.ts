@@ -10,6 +10,11 @@
  * Uso:
  *   npx tsx scripts/feat-audit/run-feat-tests.ts [--side=combat|noncombat]
  *     [--archetype=nome] [--feat="Nome"] [--limit=N] [--port=3101] [--fresh]
+ *     [--repeat=N]
+ *
+ * `--repeat=N` roda cada cenário N vezes e reporta a TAXA de PASS (o estágio de
+ * regras roda a temperature 0.3 e alterna entre rodadas). Cenário que passa
+ * numa e falha noutra vira FLAKY — informação que o veredito binário destrói.
  *
  * Retomada: progress.json guarda os resultados; re-rodar pula os já feitos
  * (use --fresh para zerar). Relatório: report-<data>.md. Transcripts completos
@@ -25,6 +30,17 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { costProfileOf, lookupLocalRule } from "../../src/rules/dataset.js";
+import {
+  aggregate,
+  judge,
+  type BatteryFeat,
+  type CheckEv,
+  type Scenario,
+  type ScenarioResult,
+  type TurnResult,
+  type Verdict,
+} from "./judge.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = join(here, "../..");
@@ -59,22 +75,69 @@ const ONLY_FEATS = argValue("feat")
 const LIMIT = Number(argValue("limit") ?? Infinity);
 const PORT = Number(argValue("port") ?? 3101);
 const FRESH = argv.includes("--fresh");
+/**
+ * Quantas vezes rodar CADA cenário. O estágio de regras roda a temperature
+ * 0.3: o mesmo cenário alterna entre rodadas, e um veredito binário fazia essa
+ * variância parecer regressão (ou melhora) entre gates. Com N>1 o resultado
+ * vira taxa e cenários instáveis ganham o veredito próprio FLAKY.
+ * Custo: multiplica o tempo da bateria por N.
+ */
+const REPEAT = Math.max(1, Number(argValue("repeat") ?? 1));
 const BASE = `http://localhost:${PORT}`;
 
 // ---------------------------------------------------------------------------
 // Cenários a partir da battery.json
 // ---------------------------------------------------------------------------
 
-interface BatteryFeat {
-  name: string;
-  level: number | null;
-  actionType: string | null;
-  actionCost: number | null;
-  traits: string[];
+/**
+ * O `actionType` VALE o do dataset, não o congelado na battery.json.
+ *
+ * A bateria foi gerada antes de `costProfileOf` aprender a desempatar
+ * homônimos, e dois feats ficaram com a classificação errada: `Shield Block` e
+ * `Reactive Strike` existem em `feats.json` como passive E como reaction (além
+ * da entrada em `actions.json`), e o snapshot pegou a passive. Com isso o juiz
+ * os tratava como ponto cego em vez de aferir a reação. Reler o dado oficial
+ * aqui corrige sem regenerar a battery.json — regenerar mudaria QUAIS feats são
+ * testados e quebraria a comparação entre gates.
+ */
+function withDatasetActionType(f: BatteryFeat): BatteryFeat {
+  const profile = costProfileOf(f.name, "feats");
+  if (!profile || profile.kind === f.actionType) return f;
+  return { ...f, actionType: profile.kind };
 }
-interface Scenario extends BatteryFeat {
-  side: "combat" | "noncombat";
-  archetype: string;
+
+/**
+ * O gatilho do feat exige posição/alcance? Lido do TEXTO oficial da regra, não
+ * de uma lista escrita à mão: "within your reach", "leaves a square",
+ * "adjacent to you", "ends a move action". Sem grid a engine não produz esses
+ * gatilhos (Fase 3), e o juiz declara ponto cego em vez de acusar.
+ */
+const POSITIONAL_TRIGGER =
+  /within (?:your|his|her|its) reach|leaves a square|adjacent to you|ends a move action|within \d+ feet/i;
+
+function triggerNeedsPositioning(name: string): boolean {
+  const text = lookupLocalRule(name)?.text ?? "";
+  const trigger =
+    text.match(/\*\*Trigger\*\*\s*([^*]{0,300})/i)?.[1] ??
+    text.match(/Trigger[:\s]+([^.]{0,300})/i)?.[1] ??
+    "";
+  return POSITIONAL_TRIGGER.test(trigger);
+}
+
+/** Cenário completo: dado da bateria + o que o DATASET oficial diz sobre ele. */
+function withScenario(
+  f: BatteryFeat,
+  side: "combat" | "noncombat",
+  archetype: string,
+): Scenario {
+  const feat = withDatasetActionType(f);
+  return {
+    ...feat,
+    side,
+    archetype,
+    triggerNeedsPositioning:
+      feat.actionType === "reaction" ? triggerNeedsPositioning(feat.name) : false,
+  };
 }
 
 function loadScenarios(): Scenario[] {
@@ -84,10 +147,14 @@ function loadScenarios(): Scenario[] {
   };
   const out: Scenario[] = [];
   for (const [arch, feats] of Object.entries(b.combat)) {
-    for (const f of feats) out.push({ ...f, side: "combat", archetype: arch });
+    for (const f of feats) {
+      out.push(withScenario(f, "combat", arch));
+    }
   }
   for (const [arch, feats] of Object.entries(b.noncombat)) {
-    for (const f of feats) out.push({ ...f, side: "noncombat", archetype: arch });
+    for (const f of feats) {
+      out.push(withScenario(f, "noncombat", arch));
+    }
   }
   return out.filter(
     (s) =>
@@ -278,31 +345,6 @@ function stopServer(): void {
 // Execução de turno via SSE
 // ---------------------------------------------------------------------------
 
-interface CheckEv {
-  label: string;
-  die: number;
-  total: number;
-  dc: number;
-  degree: string;
-  attack?: {
-    attacker: string;
-    target: string;
-    attackerKind: string;
-    outcome: string;
-    damage: number | null;
-    damageType: string | null;
-  } | null;
-}
-interface TurnResult {
-  input: string;
-  narrative: string;
-  checks: CheckEv[];
-  finalState: Record<string, unknown> | null;
-  toolLines: string[];
-  errorLines: string[];
-  seconds: number;
-}
-
 async function runTurn(sessionId: string, text: string): Promise<TurnResult> {
   const logStart = serverLog.length;
   const started = Date.now();
@@ -339,10 +381,18 @@ async function runTurn(sessionId: string, text: string): Promise<TurnResult> {
     }
   }
   const slice = serverLog.slice(logStart);
-  const toolLines = slice
-    .split("\n")
-    .filter((l) => l.includes("tool ") && l.includes("[GM][rules]"));
+  const lines = slice.split("\n");
+  const toolLines = lines.filter(
+    (l) => l.includes("tool ") && l.includes("[GM][rules]"),
+  );
   const errorLines = toolLines.filter((l) => l.includes("-> ERROR"));
+  // O resumo mecânico é o que a engine DECLARA ao narrador. O juiz precisa dele
+  // para distinguir "a engine avisou que nada se aplicava" (doutrina 4
+  // funcionando) de "o modelo fugiu da mecânica" — ver `engineDeclaredVoid`.
+  const mechanicalSummary = lines
+    .filter((l) => l.includes("[GM] mechanical summary:"))
+    .map((l) => l.split("[GM] mechanical summary:")[1]?.trim() ?? "")
+    .pop();
   return {
     input: text,
     narrative,
@@ -351,146 +401,7 @@ async function runTurn(sessionId: string, text: string): Promise<TurnResult> {
     toolLines,
     errorLines,
     seconds: Math.round((Date.now() - started) / 1000),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Asserções
-// ---------------------------------------------------------------------------
-
-interface Verdict {
-  feat: string;
-  side: string;
-  archetype: string;
-  verdict: "PASS" | "FAIL" | "SUSPECT";
-  actionsSpent: number | null;
-  toolsUsed: string[];
-  notes: string[];
-  seconds: number;
-}
-
-function playerFromState(state: Record<string, unknown> | null): Record<string, unknown> | null {
-  const combat = (state as { combat?: { active?: boolean; combatants?: Record<string, unknown>[] } } | null)?.combat;
-  if (!combat?.combatants) return null;
-  return combat.combatants.find((c) => c.kind === "player") ?? null;
-}
-
-const FALSE_BLOW_KW =
-  /\b(blade|dagger|sword|strike|blow|fist|steel)\b[^.!]{0,60}\b(sinks|buries|slams into|connects|lands (solidly|squarely|true)|bites into|tears through|pierces)\b/i;
-
-function judge(s: Scenario, turns: TurnResult[]): Verdict {
-  const notes: string[] = [];
-  let verdict: Verdict["verdict"] = "PASS";
-  const useTurn = turns[turns.length - 1]!;
-  const toolsUsed = [
-    ...new Set(
-      useTurn.toolLines
-        .map((l) => l.match(/tool (\w+)\(/)?.[1] ?? "")
-        .filter(Boolean),
-    ),
-  ];
-
-  // Economia de ação (só no turno de uso, em combate, para feats com custo).
-  let actionsSpent: number | null = null;
-  const player = playerFromState(useTurn.finalState);
-  const combatActive = (useTurn.finalState as { combat?: { active?: boolean } } | null)?.combat?.active;
-  if (s.side === "combat" && player && typeof player.actionsRemaining === "number") {
-    actionsSpent = 3 - (player.actionsRemaining as number);
-    if (
-      s.actionType === "action" &&
-      (s.actionCost ?? 0) >= 1 &&
-      combatActive &&
-      actionsSpent < (s.actionCost ?? 0)
-    ) {
-      verdict = "FAIL";
-      notes.push(
-        `custo de ação não cobrado: feat custa ${s.actionCost}, turno gastou ${actionsSpent}`,
-      );
-    }
-  }
-
-  // DC inválido passou pela engine? (não deveria ser possível)
-  for (const c of useTurn.checks) {
-    if (!c.attack && c.dc < 5) {
-      verdict = "FAIL";
-      notes.push(`check com DC inválido (${c.dc}) escapou do guard`);
-    }
-  }
-
-  // Golpe narrado sem mecânica correspondente.
-  const anyHit = useTurn.checks.some(
-    (c) => c.attack && (c.attack.outcome === "hit" || c.attack.outcome === "criticalHit"),
-  );
-  if (s.side === "combat" && !anyHit && FALSE_BLOW_KW.test(useTurn.narrative)) {
-    verdict = "FAIL";
-    notes.push("narrativa descreve golpe conectando, mas nenhum hit mecânico ocorreu");
-  }
-
-  // Dupla contagem: update_state com hpDelta negativo no mesmo turno de um
-  // hit — só conta se a engine ACEITOU (chamadas rejeitadas pelo guard são o
-  // comportamento correto, não uma falha).
-  const manualDamage = useTurn.toolLines.some(
-    (l) =>
-      l.includes("update_state") &&
-      /"hpDelta":-\d+/.test(l) &&
-      /"target"/.test(l) &&
-      !l.includes("-> ERROR"),
-  );
-  if (anyHit && manualDamage) {
-    verdict = "FAIL";
-    notes.push("dupla contagem: hit da engine + hpDelta manual no mesmo turno");
-  }
-
-  // Erros de tool não recuperados (nenhuma tool bem-sucedida depois).
-  if (useTurn.errorLines.length > 0) {
-    const lastError = useTurn.toolLines.lastIndexOf(
-      useTurn.errorLines[useTurn.errorLines.length - 1]!,
-    );
-    const recovered = useTurn.toolLines
-      .slice(lastError + 1)
-      .some((l) => !l.includes("-> ERROR"));
-    if (!recovered && useTurn.checks.length === 0) {
-      if (verdict === "PASS") verdict = "SUSPECT";
-      notes.push(`tool errors sem recuperação: ${useTurn.errorLines.length}`);
-    } else {
-      notes.push(`tool errors recuperados: ${useTurn.errorLines.length}`);
-    }
-  }
-
-  // Nenhuma tool no turno de uso (feats ativos deveriam gerar mecânica).
-  if (
-    s.side === "combat" &&
-    s.actionType === "action" &&
-    useTurn.toolLines.length === 0
-  ) {
-    if (verdict === "PASS") verdict = "SUSPECT";
-    notes.push("nenhuma tool chamada no turno de uso de um feat com custo de ação");
-  }
-
-  // Fora de combate: uso ativo sem nenhum check nem update_state → suspeito.
-  // skill-activity e downtime são ATIVIDADES por definição (exigem mecânica
-  // mesmo quando o Foundry as marca actionType "passive" — caso Sow Rumor).
-  const isActivity =
-    s.archetype === "skill-activity" || s.archetype === "downtime";
-  if (
-    s.side === "noncombat" &&
-    (isActivity || s.actionType !== "passive") &&
-    useTurn.checks.length === 0 &&
-    !toolsUsed.includes("update_state")
-  ) {
-    if (verdict === "PASS") verdict = "SUSPECT";
-    notes.push("feat ativo fora de combate resolvido sem mecânica alguma");
-  }
-
-  return {
-    feat: s.name,
-    side: s.side,
-    archetype: s.archetype,
-    verdict,
-    actionsSpent,
-    toolsUsed,
-    notes,
-    seconds: turns.reduce((a, t) => a + t.seconds, 0),
+    mechanicalSummary,
   };
 }
 
@@ -498,7 +409,7 @@ function judge(s: Scenario, turns: TurnResult[]): Verdict {
 // Progresso + relatório
 // ---------------------------------------------------------------------------
 
-type Progress = Record<string, Verdict>;
+type Progress = Record<string, ScenarioResult>;
 
 function loadProgress(): Progress {
   if (FRESH || !existsSync(PROGRESS)) return {};
@@ -514,22 +425,62 @@ function writeReport(progress: Progress): string {
   const path = join(here, `report-${date}.md`);
   const all = Object.values(progress);
   const count = (v: string) => all.filter((r) => r.verdict === v).length;
+  const usage = (k: string) => all.filter((r) => r.usage?.kind === k).length;
+  const asserted = usage("confirmed") + usage("missing");
+  const repeats = Math.max(1, ...all.map((r) => r.passRate?.total ?? 1));
   const lines = [
     `# Feat audit — ${date}`,
     "",
-    `${all.length} cenários | PASS ${count("PASS")} · FAIL ${count("FAIL")} · SUSPECT ${count("SUSPECT")}`,
+    `${all.length} cenários | PASS ${count("PASS")} · FAIL ${count("FAIL")} · SUSPECT ${count("SUSPECT")}` +
+      (count("FLAKY") ? ` · FLAKY ${count("FLAKY")}` : ""),
+    "",
+    ...(repeats > 1
+      ? [
+          `Cada cenário rodou **${repeats}×** (\`--repeat\`). FLAKY = passou numa rodada e ` +
+            `falhou noutra — instabilidade do modelo, não defeito determinístico.`,
+          "",
+        ]
+      : []),
+    // A cobertura é tão importante quanto o veredito: um PASS sem asserção de
+    // uso não prova que o feat funcionou, só que nada explodiu.
+    `**Cobertura de asserção de uso: ${asserted}/${all.length}** ` +
+      `(uso confirmado ${usage("confirmed")} · uso ausente ${usage("missing")} · ` +
+      `sem asserção ${usage("not-asserted")}). Cenários "sem asserção" são ponto ` +
+      `cego declarado — passar ali significa apenas que nada quebrou.`,
     "",
   ];
-  const byArch = new Map<string, Verdict[]>();
+  const noAssert = all.filter((r) => r.usage?.kind === "not-asserted");
+  if (noAssert.length) {
+    lines.push(
+      "<details><summary>Cenários sem asserção de uso</summary>",
+      "",
+      ...noAssert.map((r) => `- \`${r.feat}\` — ${r.usage.kind === "not-asserted" ? r.usage.why : ""}`),
+      "",
+      "</details>",
+      "",
+    );
+  }
+  const byArch = new Map<string, ScenarioResult[]>();
   for (const r of all) {
     const key = `${r.side} / ${r.archetype}`;
     byArch.set(key, [...(byArch.get(key) ?? []), r]);
   }
   for (const [arch, list] of byArch) {
-    lines.push(`## ${arch}`, "", "| Feat | Veredito | Ações | Tools | Notas |", "|---|---|---|---|---|");
+    const rateCol = repeats > 1 ? " Taxa |" : "";
+    const rateSep = repeats > 1 ? "---|" : "";
+    lines.push(
+      `## ${arch}`,
+      "",
+      `| Feat | Veredito |${rateCol} Uso | Ações | Tools | Notas |`,
+      `|---|---|${rateSep}---|---|---|---|`,
+    );
     for (const r of list) {
+      const u =
+        r.usage?.kind === "confirmed" ? "✅" : r.usage?.kind === "missing" ? "❌" : "—";
+      const rate =
+        repeats > 1 ? ` ${r.passRate?.passed ?? "—"}/${r.passRate?.total ?? "—"} |` : "";
       lines.push(
-        `| ${r.feat} | ${r.verdict} | ${r.actionsSpent ?? "—"} | ${r.toolsUsed.join(", ") || "—"} | ${r.notes.join("; ") || "—"} |`,
+        `| ${r.feat} | ${r.verdict} |${rate} ${u} | ${r.actionsSpent ?? "—"} | ${r.toolsUsed.join(", ") || "—"} | ${r.notes.join("; ") || "—"} |`,
       );
     }
     lines.push("");
@@ -565,27 +516,38 @@ async function main() {
         `[${i + 1}/${pending.length}] ${s.side}/${s.archetype} — ${s.name} ... `,
       );
       try {
-        const imp = await fetch(`${BASE}/character/import`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(makeCharacter(s)),
-        });
-        if (!imp.ok) throw new Error(`import ${imp.status}: ${await imp.text()}`);
-        const { sessionId } = (await imp.json()) as { sessionId: string };
-        const turns: TurnResult[] = [];
-        for (const input of turnsFor(s)) {
-          turns.push(await runTurn(sessionId, input));
+        // Cada rodada é uma SESSÃO NOVA (import próprio): sem isso a segunda
+        // repetição herdaria o combate e o histórico da primeira, e mediria
+        // outra coisa. O último conjunto de turnos vira o transcript.
+        const runs: Verdict[] = [];
+        let lastTurns: TurnResult[] = [];
+        for (let attempt = 0; attempt < REPEAT; attempt++) {
+          const imp = await fetch(`${BASE}/character/import`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(makeCharacter(s)),
+          });
+          if (!imp.ok) throw new Error(`import ${imp.status}: ${await imp.text()}`);
+          const { sessionId } = (await imp.json()) as { sessionId: string };
+          const turns: TurnResult[] = [];
+          for (const input of turnsFor(s)) {
+            turns.push(await runTurn(sessionId, input));
+          }
+          runs.push(judge(s, turns));
+          lastTurns = turns;
         }
-        const verdict = judge(s, turns);
-        progress[s.name] = verdict;
+        const result = aggregate(runs);
+        progress[s.name] = result;
         const slug = s.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
         writeFileSync(
           join(TRANSCRIPTS, `${slug}.json`),
-          JSON.stringify({ scenario: s, turns, verdict }, null, 1),
+          JSON.stringify({ scenario: s, turns: lastTurns, verdict: result }, null, 1),
         );
+        const rate =
+          REPEAT > 1 ? ` [${result.passRate.passed}/${result.passRate.total} PASS]` : "";
         console.log(
-          `${verdict.verdict} (${Math.round((Date.now() - started) / 1000)}s)${
-            verdict.notes.length ? ` — ${verdict.notes[0]}` : ""
+          `${result.verdict}${rate} (${Math.round((Date.now() - started) / 1000)}s)${
+            result.notes.length ? ` — ${result.notes[0]}` : ""
           }`,
         );
       } catch (err) {
@@ -598,6 +560,9 @@ async function main() {
           toolsUsed: [],
           notes: [`erro do harness: ${(err as Error).message.slice(0, 120)}`],
           seconds: Math.round((Date.now() - started) / 1000),
+          usage: { kind: "not-asserted", why: "o cenário nem chegou a rodar" },
+          runs: [],
+          passRate: { passed: 0, total: 0 },
         };
         console.log(`ERRO — ${(err as Error).message.slice(0, 80)}`);
       }

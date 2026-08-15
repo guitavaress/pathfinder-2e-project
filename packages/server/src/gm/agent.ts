@@ -4,8 +4,8 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import type { AttackContext, Character, Combatant, Companion, Weapon } from "@pf2e/shared";
-import type { CheckResult, GameState } from "@pf2e/shared";
-import { isValidDc, rollCheck } from "../dice/check.js";
+import type { CheckResult, DegreeOfSuccess, GameState } from "@pf2e/shared";
+import { degreeOfSuccess, isValidDc, rollCheck } from "../dice/check.js";
 import {
   actionLabel,
   activityFrequency,
@@ -18,6 +18,7 @@ import {
   lookupLocalRule,
   multiActionCost,
   namedActivity,
+  mentionedAction,
   officialConditions,
   spellRecord,
   type CostProfile,
@@ -25,6 +26,21 @@ import {
   type SpellMechanics,
 } from "../rules/dataset.js";
 import { lookupWebRule } from "../rules/web.js";
+import { scaleParcels, type DamageParcel } from "../rules/damage.js";
+import { conditionModifiersFor } from "../rules/condition-modifiers.js";
+import { actorDefensesFor, actorModifiersFor } from "../rules/actor-modifiers.js";
+import { ModifierStack, type Modifier } from "../rules/modifiers.js";
+import { rollOptionsForCheck } from "../rules/roll-context.js";
+import {
+  anchorToRound,
+  effectLabel,
+  expireEffects,
+  grantEffect,
+  mentionedSelfEffect,
+  selfEffectOf,
+  type ExpiryEvent,
+} from "../rules/active-effects.js";
+import { slug, type RollOptions } from "../rules/roll-options.js";
 import { buildTools } from "./tool-schemas.js";
 import {
   allyCombatant,
@@ -50,13 +66,18 @@ import {
   mapPenalty,
   MAX_PARTY_SIZE,
   newCompanion,
+  PLAYER_STRIKE_REACTIONS,
   normalizeName,
-  passiveFeatBonus,
+  setActorDefenseSource,
+  setActorModifierSource,
+  sheetStack,
   planEncounter,
   playerCombatant,
+  playerDefenses,
   playerOf,
   partySizeOf,
   rollDice,
+  setConditionModifierSource,
   strikeProfileFrom,
   tickEndOfRound,
   tickPersistentDamage,
@@ -80,6 +101,53 @@ import {
   characterSheetBlock,
 } from "./prompts.js";
 import type { Session } from "./sessions.js";
+
+/**
+ * Liga o DADO oficial como fonte dos modificadores de condição (Fase 2.5 / T4).
+ *
+ * `combat.ts` é puro e não carrega o dataset; `agent.ts` já carrega. Um ponto
+ * de injeção só, no import — nenhum call site de `effectiveAC` pode esquecer, e
+ * o núcleo puro continua funcionando (com o fallback embutido) em teste unitário
+ * sem `generated/`.
+ */
+setConditionModifierSource(conditionModifiersFor);
+// Mesmo contrato para os modificadores da FICHA (T5.4): quem carrega o dataset
+// é `agent.ts`, `combat.ts` segue puro. Sem `ro` aqui de propósito — a
+// iniciativa é rolada antes de existir contexto de rolagem, e nesse ponto só
+// entram os incondicionais em seletor composto pela engine.
+setActorModifierSource((character, selector) => actorModifiersFor(character, selector).applied);
+// Defesas tipadas da ficha (T5.5). O contexto é o da FICHA — sem alvo e sem
+// item —, que é o que existe quando o combate começa; predicados que dependem
+// de efeito ativo ficam de fora, declarados.
+setActorDefenseSource(
+  (character) => actorDefensesFor(character, rollOptionsForCheck({ character })).defenses,
+);
+
+/**
+ * As roll options DO PONTO DE VISTA de `self` (Fase 2.5 / T5.2).
+ *
+ * Em PF2e o rule element mora no ator e o `self:` do predicado é sempre o dono
+ * da condição — então a CA do defensor e a rolagem do atacante NÃO podem
+ * compartilhar um contexto só. Um Strike monta dois: `(alvo, atacante)` para a
+ * CA e `(atacante, alvo)` para o ataque. Trocar os papéis inverteria silen-
+ * ciosamente todo predicado que fala de alvo.
+ */
+function rollOptionsOf(
+  session: Session,
+  self: Combatant,
+  target?: Combatant,
+  opts: { action?: string; item?: string; damageType?: string } = {},
+): RollOptions {
+  return rollOptionsForCheck({
+    ...(self.kind === "player" ? { character: session.character } : {}),
+    self,
+    ...(target ? { target } : {}),
+    // O registro de efeitos só cobre o JOGADOR: para inimigo/aliado a lista fica
+    // ausente, e `self:effect:*` segue indecidível em vez de virar falso.
+    ...(self.kind === "player" ? { effects: session.state.effects ?? [] } : {}),
+    ...opts,
+  });
+}
 
 /**
  * Single model that drives both stages by default. Each stage runs its own
@@ -431,6 +499,56 @@ function resolveModifier(session: Session, skillRaw: string): number | null {
   return null;
 }
 
+/**
+ * Os seletores do DADO para uma rolagem nomeada na ficha (Fase 2.5 / T5.4).
+ *
+ * O pf2e nomeia a mesma rolagem em dois níveis: um save de Vontade é
+ * `saving-throw` E `will`, uma perícia é `skill-check` E `stealth`. Rule
+ * elements usam os dois — pedir só um perderia metade.
+ */
+function checkSelectors(session: Session, skillRaw: string): string[] {
+  const key = skillRaw.toLowerCase().trim();
+  const c = session.character;
+  if (key === "perception") return ["perception"];
+  if (key === "fortitude" || key === "fort") return ["saving-throw", "fortitude"];
+  if (key === "reflex" || key === "ref") return ["saving-throw", "reflex"];
+  if (key === "will") return ["saving-throw", "will"];
+  if (c.skills[key]) return ["skill-check", key];
+  if (c.lores.some((l) => l.name.toLowerCase() === key || key.includes(l.name.toLowerCase()))) {
+    // Lore tem nome livre; o dado não tem seletor por lore específica.
+    return ["skill-check"];
+  }
+  if (findSheetWeapon(c, key)) return ["attack", "attack-roll"];
+  return [];
+}
+
+/**
+ * A estatística que está sendo rolada, no vocabulário do dado, e o rank de
+ * proficiência dela quando a ficha o traz (Fase 2.6 / T6.4).
+ *
+ * Só perícia e lore têm rank no export do Pathbuilder. Percepção e saves vêm
+ * como bônus final, sem o rank — então ali `proficiency:*` fica indecidível em
+ * vez de responder "destreinado" por não saber.
+ */
+function checkStatistic(
+  session: Session,
+  skillRaw: string,
+): { statistic?: string; statisticRank?: number } {
+  const key = skillRaw.toLowerCase().trim();
+  const c = session.character;
+  if (key === "perception") return { statistic: "perception" };
+  if (key === "fortitude" || key === "fort") return { statistic: "fortitude" };
+  if (key === "reflex" || key === "ref") return { statistic: "reflex" };
+  if (key === "will") return { statistic: "will" };
+  const skill = c.skills[key];
+  if (skill) return { statistic: key, statisticRank: skill.rank };
+  const lore = c.lores.find(
+    (l) => l.name.toLowerCase() === key || key.includes(l.name.toLowerCase()),
+  );
+  if (lore) return { statistic: `${slug(lore.name)}-lore`, statisticRank: lore.rank };
+  return {};
+}
+
 interface ToolOutcome {
   content: string;
   isError?: boolean;
@@ -489,19 +607,30 @@ export function rollFormula(formula: string): number {
   return Math.max(0, total);
 }
 
-/** Rolls Strike damage for the active attacker against a target. */
+/**
+ * Rolls Strike damage for the active attacker against a target.
+ *
+ * Devolve também as PARCELAS tipadas: um Strike de statblock pode ser
+ * "1d8 piercing + 1d6 fire", e colapsar isso num tipo só apagaria a fraqueza a
+ * fogo do alvo. `type` segue existindo para o texto do resumo.
+ */
 function rollDamage(
   session: Session,
   attacker: Combatant | undefined,
   input: Record<string, unknown>,
-): { amount: number; type: string } {
+): { amount: number; type: string; parcels: DamageParcel[] } {
   const crit = input.crit === true || input.degree === "criticalSuccess";
   const dbl = (n: number) => (crit ? n * 2 : n);
+  const one = (amount: number, type: string) => ({
+    amount,
+    type,
+    parcels: [{ amount, type }],
+  });
 
   const formula = input.formula ? String(input.formula) : "";
   if (formula) {
     const type = input.damageType ? String(input.damageType) : "damage";
-    return { amount: dbl(rollFormula(formula)), type };
+    return one(dbl(rollFormula(formula)), type);
   }
 
   if (attacker?.kind === "player") {
@@ -515,7 +644,7 @@ function rollDamage(
       const type = input.damageType
         ? String(input.damageType)
         : (DAMAGE_TYPE_NAMES[w.damageType] ?? w.damageType ?? "damage");
-      return { amount, type };
+      return one(amount, type);
     }
   }
 
@@ -524,11 +653,16 @@ function rollDamage(
   const profile = attacker
     ? strikeProfileFor(attacker)
     : strikeProfileFrom(undefined, 0);
-  const amount = profile.damage.reduce((sum, d) => sum + rollFormula(d.formula), 0);
-  const type = input.damageType
-    ? String(input.damageType)
-    : (profile.damage[0]?.type ?? "damage");
-  return { amount: dbl(amount), type };
+  // Tipo forçado pela tool colapsa as parcelas (o modelo declarou UM tipo);
+  // sem ele, cada entrada do statblock vira parcela própria.
+  const forced = input.damageType ? String(input.damageType) : null;
+  const rolled = profile.damage.map((d) => ({
+    amount: dbl(rollFormula(d.formula)),
+    type: forced ?? d.type,
+  }));
+  const amount = rolled.reduce((sum, d) => sum + d.amount, 0);
+  const type = forced ?? profile.damage[0]?.type ?? "damage";
+  return { amount, type, parcels: rolled.length > 0 ? rolled : [{ amount, type }] };
 }
 
 /** Title-cases a weapon/skill name for the summary ("dagger" → "Dagger"). */
@@ -587,6 +721,88 @@ function resolveCreature(name: string): { record: RuleRecord | null; level: numb
 /** Roster de companheiros da sessão (inicializa o campo em saves antigos). */
 function companionsOf(session: Session): Companion[] {
   return (session.state.companions ??= []);
+}
+
+/**
+ * Os modificadores de CA que o DEFENSOR carrega na própria ficha e nos efeitos
+ * ativos (Fase 2.6). Vazio para quem não é o jogador: inimigo não tem ficha, e
+ * o registro de efeitos não cobre terceiros.
+ */
+function defenseModifiers(session: Session, target: Combatant, ro: RollOptions): Modifier[] {
+  if (target.kind !== "player") return [];
+  const effects = session.state.effects ?? [];
+  return actorModifiersFor(session.character, "ac", ro, effects).applied;
+}
+
+/**
+ * Reescreve as defesas tipadas do combatente do jogador a partir da ficha MAIS
+ * os efeitos ativos (Fase 2.6 / T6.2).
+ *
+ * `defensesOf` lê os campos congelados do combatente, então sem isto a
+ * resistência que um Fire Shield concede no meio da luta nunca chegaria ao
+ * cálculo de dano — e, pior, a que expirou nunca sairia.
+ */
+function syncPlayerDefenses(session: Session): void {
+  const combat = session.state.combat;
+  const you = combat?.combatants.find((c) => c.kind === "player");
+  if (!you) return;
+  const effects = session.state.effects ?? [];
+  const fromEffects = effects.length
+    ? actorDefensesFor(
+        session.character,
+        rollOptionsForCheck({ character: session.character, effects }),
+        effects,
+      ).defenses
+    : {};
+  const { immunities, weaknesses, resistances } = playerDefenses(session.character, fromEffects);
+  you.immunities = immunities;
+  you.weaknesses = weaknesses;
+  you.resistances = resistances;
+}
+
+/** Tudo que a ficha nomeia e pode disparar um efeito auto-dirigido. */
+function ownedAbilities(session: Session): string[] {
+  const c = session.character;
+  return [...(c.feats ?? []), ...(c.classFeatures ?? [])];
+}
+
+/**
+ * Põe no registro o efeito que a ficha autoriza, devolvendo a linha do resumo.
+ *
+ * O efeito precisa existir no dado E estar na ficha: nome inventado não entra,
+ * e ability que o personagem não tem não concede nada. Reaplicar repõe a
+ * duração em vez de empilhar.
+ */
+function grantPlayerEffect(session: Session, ref: string, source: string): string | null {
+  const round = session.state.combat?.active ? session.state.combat.round : null;
+  const { effects, granted, refreshed } = grantEffect(
+    session.state.effects ?? [],
+    ref,
+    source,
+    round,
+  );
+  if (!granted) return null;
+  session.state.effects = effects;
+  syncPlayerDefenses(session);
+  return `- ${refreshed ? "Renewed" : "Now in effect"}: ${effectLabel(granted)}.`;
+}
+
+/**
+ * Expira os efeitos vencidos num dos três limites de tempo da engine e devolve
+ * as linhas do resumo mecânico.
+ *
+ * Efeito que não expira é pior do que efeito que não existe: vira bônus
+ * permanente inventado, e o narrador passa a descrever um personagem enfurecido
+ * três cenas depois. Por isso o tick é da engine, nunca do modelo.
+ */
+function expirePlayerEffects(session: Session, event: ExpiryEvent): string[] {
+  const list = session.state.effects;
+  if (!list?.length) return [];
+  const { effects, expired } = expireEffects(list, event, session.state.combat?.round ?? null);
+  if (expired.length === 0) return [];
+  session.state.effects = effects;
+  syncPlayerDefenses(session);
+  return expired.map((e) => `- Effect ends: ${effectLabel(e)}.`);
 }
 
 /** Companheiro do roster cujo nome bate (fuzzy, mesmos dois sentidos do combate). */
@@ -648,19 +864,24 @@ function castActionCost(raw: string | undefined): number {
 function rollSpellDamage(
   mech: SpellMechanics,
   castRank: number,
-): { total: number; type: string } {
+): { total: number; type: string; parcels: DamageParcel[] } {
   const steps = mech.heighten
     ? Math.max(0, Math.floor((castRank - mech.rank) / mech.heighten.interval))
     : 0;
   let total = 0;
   let type = "";
+  // Cada entrada de dano da magia vira parcela própria: magia de dois tipos
+  // (ex.: fogo + som) precisa ser medida contra as defesas de CADA tipo.
+  const parcels: DamageParcel[] = [];
   mech.damage.forEach((d, i) => {
-    total += rollFormula(d.formula);
+    let amount = rollFormula(d.formula);
     const add = mech.heighten?.add[i];
-    if (add) for (let s = 0; s < steps; s++) total += rollFormula(add);
+    if (add) for (let s = 0; s < steps; s++) amount += rollFormula(add);
+    total += amount;
+    parcels.push({ amount, type: d.type });
     if (!type && d.type && d.type !== "untyped") type = d.type;
   });
-  return { total, type };
+  return { total, type, parcels };
 }
 
 /** Devolve o slot/focus cobrado quando a conjuração acabou rejeitada. */
@@ -801,8 +1022,12 @@ export async function executeTool(
         const map = mapPenalty(attacker.mapProgress, agile);
         // Conditions as real mechanics: off-guard −2 AC, frightened −N to
         // the target's AC and to the attacker's rolls.
-        const ac = effectiveAC(target);
-        const statusPen = attackStatusPenalty(attacker);
+        const weaponName = findSheetWeapon(session.character, skill)?.name ?? skill;
+        const ac = effectiveAC(target, rollOptionsOf(session, target, attacker, { action: "Strike" }));
+        const statusPen = attackStatusPenalty(
+          attacker,
+          rollOptionsOf(session, attacker, target, { action: "Strike", item: weaponName }),
+        );
         const mapLabel = map ? `, MAP ${map}` : "";
         const result = rollCheck(
           `${reason} (${skill} vs AC ${ac}${mapLabel})`,
@@ -827,7 +1052,7 @@ export async function executeTool(
 
         // On a hit, roll and apply damage automatically (no separate tool call).
         let damageLine = "";
-        let dmg: { amount: number; type: string } | null = null;
+        let dmg: { amount: number; type: string; parcels: DamageParcel[] } | null = null;
         if (hit) {
           dmg = rollDamage(session, attacker, {
             weapon: skill,
@@ -840,17 +1065,20 @@ export async function executeTool(
             if (isOffGuard(target) && saDice > 0) {
               const sneak = crit ? rollDice(saDice, 6) * 2 : rollDice(saDice, 6);
               dmg.amount += sneak;
+              // Parcela PRÓPRIA: dano de precisão tem o tipo da arma, mas 464
+              // criaturas são imunes a precisão — só a parcela cai, não o golpe.
+              dmg.parcels.push({ amount: sneak, type: dmg.type, category: "precision" });
             }
           }
           const before = target.currentHp;
-          applyDamage(target, dmg.amount);
+          const adj = applyDamage(target, dmg.parcels);
           turnSet(turnStruck, session).add(target.id);
           if (target.kind === "player") session.state.currentHp = target.currentHp;
           let defeatedNote = target.defeated ? ` — ${target.name} DEFEATED` : "";
           if (target.kind === "player" && target.defeated) {
             defeatedNote = ` — ${enterDying(session, crit)}`;
           }
-          damageLine = ` for ${dmg.amount} ${dmg.type}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
+          damageLine = ` for ${dmg.amount} ${dmg.type}${adj.note}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
         }
         // Emit the roll with full attack context so the UI can render it richly.
         result.attack = {
@@ -962,7 +1190,41 @@ export async function executeTool(
         }
       }
       if (skillFreqCounts) commitFrequency(session, `${reason} ${skill}`);
-      const result = rollCheck(`${reason} (${skill} vs DC ${dc})`, modifier, dc);
+      // Modificadores vindos do DADO (T5.4): condições do jogador (frightened
+      // penaliza TODA checagem, não só ataque — a engine ignorava isso fora do
+      // combate) e os FlatModifier situacionais dos feats da ficha.
+      const selectors = checkSelectors(session, skill);
+      const you = combat?.active ? playerOf(combat) : undefined;
+      const activeEffects = session.state.effects ?? [];
+      const checkRo = rollOptionsForCheck({
+        character: session.character,
+        ...(you ? { self: you } : {}),
+        selfConditions: session.state.conditions,
+        // Passar a lista (mesmo vazia) é o que torna `self:effect:*` decidível.
+        effects: activeEffects,
+        ...checkStatistic(session, skill),
+        ...(() => {
+          const named = mentionedAction(`${reason} ${skill}`);
+          return named ? { action: named } : {};
+        })(),
+      });
+      const conditions = you?.conditions ?? session.state.conditions;
+      const stack = new ModifierStack()
+        .addAll(selectors.length ? conditionModifiersFor(conditions, selectors, checkRo) : [])
+        .addAll(
+          selectors.length
+            ? actorModifiersFor(session.character, selectors, checkRo, activeEffects).applied
+            : [],
+        );
+      // O "porquê" acompanha o número: `checkReason` corta no primeiro " (",
+      // então isto enriquece a UI sem mexer no resumo mecânico nem nas linhas
+      // que a bateria raspa.
+      const why = stack.total() ? ` [${stack.breakdown()}]` : "";
+      const result = rollCheck(
+        `${reason} (${skill} vs DC ${dc})${why}`,
+        modifier + stack.total(),
+        dc,
+      );
       emit({ type: "check", result });
       return {
         content: JSON.stringify(result),
@@ -996,12 +1258,14 @@ export async function executeTool(
         const doomed = conditionValueIn(conds, "doomed");
         if (doomed > 0) conds = setValuedCondition(conds, "doomed", doomed - 1);
         session.state.conditions = conds;
+        // Oito horas passam: só efeito SEM prazo atravessa a noite.
+        const ended = expirePlayerEffects(session, "rest");
         emit({ type: "state", state: session.state });
         const gained = session.state.currentHp - before;
         const slotsNote = c.spellcasting.length ? " Spell slots and focus points restored." : "";
         return {
           content: `Overnight rest (8h): healed ${gained} HP (CON ${conMod >= 0 ? "+" : ""}${conMod} × level ${c.level}): ${before}→${session.state.currentHp}/${c.maxHp}.${slotsNote} Fatigued removed; drained/doomed reduced by 1. A full night passes in the story.`,
-          summaryLine: `- A full night's rest: ${session.character.name} recovers ${gained} HP (${before}→${session.state.currentHp}) and wakes with renewed strength. The night passes.`,
+          summaryLine: `- A full night's rest: ${session.character.name} recovers ${gained} HP (${before}→${session.state.currentHp}) and wakes with renewed strength. The night passes.${ended.length ? ` ${ended.length} effect(s) wear off overnight.` : ""}`,
         };
       }
 
@@ -1175,12 +1439,27 @@ export async function executeTool(
 
       const castLabel = `${sheetName}${castRank > baseRank || isCantrip ? ` (rank ${castRank})` : ""}`;
 
+      // Magia BENIGNA com effect homônimo põe o efeito em quem conjurou, com a
+      // duração do dado (Fase 2.6). `selfEffectOf` já barra as 63 hostis — o
+      // efeito de Ill Omen incide em quem foi atingido, nunca no conjurador —,
+      // e um alvo inimigo explícito barra o resto.
+      const castRec = spellRecord(sheetName);
+      const spellTargetRef = String(input.target ?? "").trim();
+      const spellTargetFoe =
+        session.state.combat?.active && spellTargetRef
+          ? findCombatant(session.state.combat, spellTargetRef)?.kind === "enemy"
+          : false;
+      const castSelfEffect = castRec && !spellTargetFoe ? selfEffectOf(castRec) : null;
+      const castEffLine = castSelfEffect
+        ? grantPlayerEffect(session, castSelfEffect.name, sheetName)
+        : null;
+
       // Sem mecânica estruturada: gasto real + efeito narrado (utility spells).
       if (!mech || (mech.damage.length === 0 && !mech.attack && !mech.defense)) {
         emit({ type: "state", state: session.state });
         return {
           content: `${sheetName} is cast${resourceNote}. No structured combat effect — narrate its utility effect faithfully (text: ${spellRecord(sheetName)?.text.slice(0, 300) ?? "see rules"}).`,
-          summaryLine: `- Casts ${castLabel}${resourceNote}.`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}.${castEffLine ? `\n${castEffLine}` : ""}`,
         };
       }
 
@@ -1199,7 +1478,7 @@ export async function executeTool(
         emit({ type: "state", state: session.state });
         return {
           content: `${sheetName} heals ${amount.total} HP${resourceNote}: ${before}→${session.state.currentHp}/${c.maxHp}.`,
-          summaryLine: `- Casts ${castLabel}${resourceNote}: heals ${amount.total} (${before}→${session.state.currentHp} HP).`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}: heals ${amount.total} (${before}→${session.state.currentHp} HP).${castEffLine ? `\n${castEffLine}` : ""}`,
         };
       }
 
@@ -1207,7 +1486,7 @@ export async function executeTool(
         emit({ type: "state", state: session.state });
         return {
           content: `${sheetName} is cast${resourceNote} (no combat active — narrate the effect).`,
-          summaryLine: `- Casts ${castLabel}${resourceNote}.`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}.${castEffLine ? `\n${castEffLine}` : ""}`,
         };
       }
 
@@ -1223,7 +1502,7 @@ export async function executeTool(
           };
         }
         const map = mapPenalty(you!.mapProgress);
-        const ac = effectiveAC(target);
+        const ac = effectiveAC(target, rollOptionsOf(session, target, you!, { action: sheetName }));
         const result = rollCheck(
           `${sheetName} spell attack: ${c.name} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`,
           (entry.attack ?? 0) + map,
@@ -1237,8 +1516,8 @@ export async function executeTool(
           const dmg = rollSpellDamage(mech, castRank);
           const amount = crit ? dmg.total * 2 : dmg.total;
           const before = target.currentHp;
-          applyDamage(target, amount);
-          dmgNote = ` for ${amount} ${dmg.type || "damage"}; ${target.name} ${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""}`;
+          const adj = applyDamage(target, scaleParcels(dmg.parcels, amount));
+          dmgNote = ` for ${amount} ${dmg.type || "damage"}${adj.note}; ${target.name} ${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""}`;
         }
         result.attack = {
           attacker: c.name,
@@ -1301,9 +1580,9 @@ export async function executeTool(
           const amount = Math.floor(dmg.total * mult);
           if (amount > 0) {
             const before = target.currentHp;
-            applyDamage(target, amount);
+            const adj = applyDamage(target, scaleParcels(dmg.parcels, amount));
             parts.push(
-              `${target.name} ${DEGREE_EN[result.degree]} → takes ${amount} ${dmg.type || "damage"} (${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""})`,
+              `${target.name} ${DEGREE_EN[result.degree]} → takes ${amount} ${dmg.type || "damage"}${adj.note} (${before}→${target.currentHp} HP${target.defeated ? " — DOWN" : ""})`,
             );
           } else {
             parts.push(`${target.name} ${DEGREE_EN[result.degree]} → unharmed`);
@@ -1454,10 +1733,15 @@ export async function executeTool(
       const order = combat.combatants
         .map((c) => `${c.name} (init ${c.initiative}, AC ${c.ac}, ${c.currentHp} HP)`)
         .join("; ");
-      // Passivos aplicados pela engine ficam visíveis no resumo (auditoria).
-      const passive = passiveFeatBonus(session.character, "initiative");
-      const passiveNote = passive.total
-        ? ` [+${passive.total} initiative from ${passive.sources.join(", ")}]`
+      // Passivos aplicados pela engine ficam visíveis no resumo (auditoria) —
+      // agora com o nome do feat vindo do próprio dado, não de tabela local.
+      const passiveStack = sheetStack(session.character, "initiative");
+      const passiveTotal = passiveStack.total();
+      const passiveNote = passiveTotal
+        ? ` [${passiveTotal > 0 ? "+" : ""}${passiveTotal} initiative from ${passiveStack
+            .applied()
+            .map((m) => m.source ?? m.slug)
+            .join(", ")}]`
         : "";
       const note = specs.length
         ? ` Encounter: ${plan.classified} (${plan.totalXp}/${encounterBudget(plan.classified, partySize)} XP).`
@@ -1629,10 +1913,14 @@ export async function executeTool(
       if (spendActivity) spendCharged?.add(spendActivity.name);
       you.actionsRemaining -= cost;
       commitFrequency(session, reason);
+      // Postura/habilidade auto-dirigida da FICHA entra no registro de efeitos
+      // com a duração do dado (Fase 2.6) — o bônus dela deixa de ser prosa.
+      const selfEff = mentionedSelfEffect(reason, ownedAbilities(session));
+      const effLine = selfEff ? grantPlayerEffect(session, selfEff.name, selfEff.name) : null;
       emit({ type: "state", state: session.state });
       return {
-        content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.`,
-        summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).`,
+        content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.${effLine ? ` ${effLine.replace(/^- /, "")}` : ""}`,
+        summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).${effLine ? `\n${effLine}` : ""}`,
       };
     }
     case "use_item": {
@@ -1718,8 +2006,11 @@ export async function executeTool(
         you!.actionsRemaining -= cost;
         const atkBonus = bombAttackBonus(session.character, record!);
         const map = mapPenalty(you!.mapProgress, traits.includes("agile"));
-        const ac = effectiveAC(target);
-        const statusPen = attackStatusPenalty(you!);
+        const ac = effectiveAC(target, rollOptionsOf(session, target, you!, { action: "Strike" }));
+        const statusPen = attackStatusPenalty(
+          you!,
+          rollOptionsOf(session, you!, target, { action: "Strike", item: owned.name }),
+        );
         const mapLabel = map ? `, MAP ${map}` : "";
         const result = rollCheck(
           `${reason} (${owned.name} vs AC ${ac}${mapLabel})`,
@@ -1734,11 +2025,17 @@ export async function executeTool(
         let dmg: { amount: number; type: string } | null = null;
         if (hit) {
           const base = rollDice(record!.damage!.dice, parseDie(record!.damage!.die));
-          let amount = crit ? base * 2 : base;
+          const direct = crit ? base * 2 : base;
+          let amount = direct;
           if (record!.splash) amount += record!.splash;
           dmg = { amount, type: record!.damage!.type };
+          // Splash é parcela própria: 283 criaturas têm fraqueza a splash-damage.
+          const parcels: DamageParcel[] = [{ amount: direct, type: dmg.type }];
+          if (record!.splash) {
+            parcels.push({ amount: record!.splash, type: dmg.type, category: "splash" });
+          }
           const before = target.currentHp;
-          applyDamage(target, amount);
+          const adj = applyDamage(target, parcels);
           turnSet(turnStruck, session).add(target.id);
           let extra = "";
           if (record!.persistent) {
@@ -1748,7 +2045,7 @@ export async function executeTool(
           }
           if (record!.splash) extra += ` (incl. ${record!.splash} splash)`;
           const defeatedNote = target.defeated ? ` — ${target.name} DEFEATED` : "";
-          damageLine = ` for ${amount} ${dmg.type}${extra}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
+          damageLine = ` for ${amount} ${dmg.type}${adj.note}${extra}; ${target.name} ${before}→${target.currentHp} HP${defeatedNote}`;
         }
         consume(); // a bomba se foi mesmo errando o arremesso
         result.attack = {
@@ -2123,7 +2420,7 @@ function applyPersistentTicks(
     }
     const fate = t.ended || c.defeated ? "it ends" : "it continues";
     lines.push(
-      `- Persistent ${t.type} damage: ${c.name} takes ${t.amount} (${t.before}→${t.after} HP)${downNote}; ${fate}.`,
+      `- Persistent ${t.type} damage: ${c.name} takes ${t.amount}${t.note} (${t.before}→${t.after} HP)${downNote}; ${fate}.`,
     );
   }
 
@@ -2138,6 +2435,63 @@ function applyPersistentTicks(
   }
   emit({ type: "state", state: session.state });
   return lines;
+}
+
+/**
+ * POR QUE A REAÇÃO DO JOGADOR É RESOLVIDA AQUI (achado de 2026-07-26, ao
+ * consertar o juiz da bateria): `chargeNonAction` só era alcançável por tool
+ * call do modelo, ou seja, durante o turno do JOGADOR. Mas o revide inimigo é
+ * resolvido em código DEPOIS do estágio de regras — não havia instante em que o
+ * modelo pudesse reagir ao golpe. A reação era estruturalmente impossível de
+ * disparar no gatilho certo, e 9 cenários da bateria passavam sem o feat ter
+ * sido usado. Isto é o simétrico de `triggerEnemyReactions`.
+ *
+ * A tabela `PLAYER_STRIKE_REACTIONS` mora em combat.ts porque o juiz da bateria
+ * também a lê — ver o comentário lá.
+ */
+
+/** O personagem carrega um escudo no Equipment/armor? (Reactive Shield). */
+function hasShield(c: Character): boolean {
+  const shield = /shield/i;
+  return (
+    (c.equipment ?? []).some((e) => shield.test(e.name)) ||
+    (c.armor ?? []).some((a) => shield.test(a.name))
+  );
+}
+
+/**
+ * A reação defensiva do jogador contra ESTE Strike, se houver uma que MUDE o
+ * resultado. Devolve null quando não há reação aplicável, quando ela já foi
+ * gasta nesta rodada, ou quando o bônus não salvaria o golpe.
+ *
+ * Desvio deliberado e determinístico: a engine só gasta a reação quando ela
+ * MUDA o desfecho (transforma acerto em erro, ou crítico em acerto). RAW o
+ * jogador declara antes de saber o resultado; aqui não há a quem perguntar no
+ * meio do revide, e queimar a reação num golpe que já erraria seria pior para
+ * o jogador do que qualquer aproximação. Vale a mesma lógica de "1 mensagem =
+ * 1 turno": a engine joga o lado do jogador de forma previsível.
+ */
+function playerReactionVsStrike(
+  session: Session,
+  target: Combatant,
+  result: CheckResult,
+  melee: boolean,
+): { name: string; acBonus: number; degree: DegreeOfSuccess } | null {
+  if (target.kind !== "player" || !target.reactionAvailable) return null;
+  // Leitura defensiva: isto roda a CADA golpe inimigo, e ficha sem lista de
+  // feats (save antigo, fixture parcial) significa "sem reações" — nunca
+  // derrubar o turno inteiro por causa disso.
+  for (const featName of session.character?.feats ?? []) {
+    const spec = PLAYER_STRIKE_REACTIONS[featName.toLowerCase().trim()];
+    if (!spec) continue;
+    if (spec.meleeOnly && !melee) continue;
+    if (spec.needsShield && !hasShield(session.character)) continue;
+    const degree = degreeOfSuccess(result.die, result.total, result.dc + spec.acBonus);
+    if (degree === result.degree) continue; // não muda nada: guarda a reação
+    target.reactionAvailable = false;
+    return { name: titleCase(featName), acBonus: spec.acBonus, degree };
+  }
+  return null;
 }
 
 /**
@@ -2159,12 +2513,30 @@ function strikeAt(
   const strikeName = profile.label === "Strike" ? "Strike" : `${profile.label} Strike`;
   const map = mapPenalty(attacker.mapProgress, profile.agile);
   const mapTag = map ? ` [MAP ${map}${profile.agile ? " agile" : ""}]` : "";
-  // Same condition math as player Strikes (off-guard/frightened both ways).
-  const ac = effectiveAC(target);
+  // Same condition math as player Strikes (off-guard/frightened both ways) —
+  // mais a CA que a ficha/os efeitos do DEFENSOR dão, quando ele é o jogador.
+  const defRo = rollOptionsOf(session, target, attacker, { action: "Strike" });
+  const ac = effectiveAC(target, defRo, defenseModifiers(session, target, defRo));
   const reactionTag = opts.reactionName ? `Reaction (${opts.reactionName}): ` : "";
   const label = `${reactionTag}${attacker.name} ${strikeName} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`;
-  const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(attacker), ac);
+  const attackRo = rollOptionsOf(session, attacker, target, { action: "Strike" });
+  const result = rollCheck(label, profile.bonus + map + attackStatusPenalty(attacker, attackRo), ac);
   attacker.mapProgress += 1;
+  // Reação DEFENSIVA do jogador (Nimble Dodge, Reactive Shield…): dispara aqui,
+  // que é o único ponto onde a engine sabe que o gatilho ("uma criatura te
+  // ataca") ocorreu. Ajusta o grau ANTES de qualquer dano ser aplicado.
+  let reactionNote = "";
+  if (attacker.kind === "enemy") {
+    // Sem posicionamento, "melee" é o que o statblock indica: ataque sem
+    // rangeIncrement é corpo a corpo (mesma leitura de `strikeProfileFrom`).
+    const melee = !/bow|crossbow|sling|dart|javelin|thrown|ranged/i.test(profile.label);
+    const reacted = playerReactionVsStrike(session, target, result, melee);
+    if (reacted) {
+      result.dc += reacted.acBonus;
+      result.degree = reacted.degree;
+      reactionNote = ` [Reaction: ${reacted.name}, +${reacted.acBonus} AC → ${DEGREE_EN[reacted.degree]}]`;
+    }
+  }
   const crit = result.degree === "criticalSuccess";
   const hit = crit || result.degree === "success";
   let dmgLine = "";
@@ -2178,7 +2550,12 @@ function strikeAt(
     amount = parts.reduce((sum, p) => sum + p.rolled, 0);
     if (crit) amount *= 2;
     const before = target.currentHp;
-    applyDamage(target, amount);
+    // Cada entrada do statblock entra tipada: dobrar parcela a parcela dá
+    // exatamente o mesmo total (×2 não arredonda), e preserva os tipos.
+    const adj = applyDamage(
+      target,
+      parts.map((p) => ({ amount: crit ? p.rolled * 2 : p.rolled, type: p.type })),
+    );
     if (target.kind === "player") session.state.currentHp = target.currentHp;
     // Dano persistente do ataque (dados do statblock) vira condição no
     // hit; mesmo tipo não empilha (mantém a existente).
@@ -2206,7 +2583,7 @@ function strikeAt(
         : parts.length > 1
           ? ` (${parts.map((p) => `${crit ? p.rolled * 2 : p.rolled} ${p.type || "damage"}`).join(" + ")})`
           : "";
-    dmgLine = ` for ${amount}${typeNote}${persistentNote}; ${target.name} ${before}→${target.currentHp} HP${down}`;
+    dmgLine = ` for ${amount}${typeNote}${adj.note}${persistentNote}; ${target.name} ${before}→${target.currentHp} HP${down}`;
   }
   const verb = crit ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
   result.attack = {
@@ -2218,7 +2595,7 @@ function strikeAt(
     damageType: profile.damage[0]?.type || null,
   };
   emit({ type: "check", result });
-  const line = `- ${reactionTag}${attacker.name} ${strikeName} vs ${target.name}${mapTag} → ${verb}${dmgLine}.`;
+  const line = `- ${reactionTag}${attacker.name} ${strikeName} vs ${target.name}${mapTag}${reactionNote} → ${verb}${dmgLine}.`;
   emit({ type: "state", state: session.state });
   return line;
 }
@@ -2288,25 +2665,26 @@ function enemySpellTurn(
             : 0;
     const amount = Math.floor(dmg.total * mult);
     let downNote = "";
+    let adjNote = "";
     const before = player.currentHp;
     if (amount > 0) {
-      applyDamage(player, amount);
+      adjNote = applyDamage(player, scaleParcels(dmg.parcels, amount)).note;
       session.state.currentHp = player.currentHp;
       if (player.defeated) downNote = ` — ${enterDying(session, result.degree === "criticalFailure")}`;
     }
     emit({ type: "state", state: session.state });
     const dmgNote =
       amount > 0
-        ? ` takes ${amount} ${dmg.type || "damage"} (${before}→${player.currentHp} HP)${downNote}`
+        ? ` takes ${amount} ${dmg.type || "damage"}${adjNote} (${before}→${player.currentHp} HP)${downNote}`
         : " is unharmed";
     return `- ${enemy.name} casts ${pick.name}: ${player.name} ${saveKey} save ${DEGREE_EN[result.degree]} →${dmgNote}.`;
   }
 
   // Spell attack contra a AC do jogador (sem MAP: primeira ação do turno).
-  const ac = effectiveAC(player);
+  const ac = effectiveAC(player, rollOptionsOf(session, player, enemy, { action: pick.name }));
   const result = rollCheck(
     `${pick.name} spell attack: ${enemy.name} vs ${player.name} (AC ${ac})`,
-    pick.attack + attackStatusPenalty(enemy),
+    pick.attack + attackStatusPenalty(enemy, rollOptionsOf(session, enemy, player, { action: pick.name })),
     ac,
   );
   const crit = result.degree === "criticalSuccess";
@@ -2315,10 +2693,10 @@ function enemySpellTurn(
   if (hit) {
     const amount = crit ? dmg.total * 2 : dmg.total;
     const before = player.currentHp;
-    applyDamage(player, amount);
+    const adj = applyDamage(player, scaleParcels(dmg.parcels, amount));
     session.state.currentHp = player.currentHp;
     const down = player.defeated ? ` — ${enterDying(session, crit)}` : "";
-    dmgLine = ` for ${amount} ${dmg.type || "damage"}; ${player.name} ${before}→${player.currentHp} HP${down}`;
+    dmgLine = ` for ${amount} ${dmg.type || "damage"}${adj.note}; ${player.name} ${before}→${player.currentHp} HP${down}`;
   }
   result.attack = {
     attacker: enemy.name,
@@ -2508,6 +2886,15 @@ export async function runRulesStage(
   // the narrator dramatize old wounds out of nowhere).
   const hpBefore = session.state.currentHp;
   const condsBefore = session.state.conditions.join("|");
+  // A luta termina em NOVE pontos diferentes (end_combat, vitória, derrota,
+  // tick persistente que decide, dying...). Detectar a TRANSIÇÃO aqui pega
+  // todos com uma linha, em vez de nove remendos que a próxima saída esquece.
+  const inCombatBefore = session.state.combat?.active === true;
+  // Defesas do combatente recompostas (ficha + efeitos ativos) ANTES de
+  // qualquer ramo: o de dying retorna cedo e sofre dano persistente, e sem isto
+  // a resistência que um efeito concede não valeria justamente no turno em que
+  // o jogador está sangrando no chão.
+  syncPlayerDefenses(session);
 
   // Morto é morto: sem mecânica a resolver — o narrador conduz o epílogo.
   if (session.state.conditions.some((c) => /^dead$/i.test(c))) {
@@ -2579,8 +2966,14 @@ export async function runRulesStage(
       if (dyingCombat.active) dyingExtra.push(...applyPersistentTicks(session, emit));
       if (dyingCombat.active) {
         tickEndOfRound(dyingCombat);
+        dyingExtra.push(...expirePlayerEffects(session, "round"));
         emit({ type: "state", state: session.state });
       }
+    }
+    // Caído não congela o relógio dos efeitos: este ramo retorna aqui, então a
+    // expiração de fim de luta precisa acontecer nele também.
+    if (inCombatBefore && session.state.combat?.active !== true) {
+      dyingExtra.push(...expirePlayerEffects(session, "combat-end"));
     }
     return [
       `1. ${line}`,
@@ -2658,10 +3051,15 @@ export async function runRulesStage(
     for (const tc of toolCalls) {
       const args = parseToolArgs(tc.function.arguments);
       const outcome = await executeTool(session, tc.function.name, args, emit);
+      // 240 e não 80: este log É a fonte de verdade da bateria de feats (o
+      // harness lê o stdout do servidor para saber o que a engine respondeu).
+      // Com 80 caracteres, notas que a engine escreve no FIM da mensagem —
+      // como o `[+2 initiative from Incredible Initiative]` do start_combat —
+      // eram cortadas, e o juiz não conseguia verificar o passivo.
       console.log(
         `[GM][rules]   tool ${tc.function.name}(${JSON.stringify(args)}) -> ${
           outcome.isError ? "ERROR: " : ""
-        }${outcome.content.slice(0, 80)}`,
+        }${outcome.content.slice(0, 240)}`,
       );
       if (outcome.summaryLine) summaryLines.push(outcome.summaryLine);
       if (outcome.endedTurn) endedTurn = true;
@@ -2798,11 +3196,27 @@ export async function runRulesStage(
     if (combat.active) {
       summaryLines.push(...applyPersistentTicks(session, emit));
     }
-    // End-of-round upkeep: off-guard expires, frightened N decrements.
+    // End-of-round upkeep: off-guard expires, frightened N decrements, e os
+    // efeitos com prazo em rodadas vencem (Fase 2.6).
     if (combat.active) {
       tickEndOfRound(combat);
+      summaryLines.push(...expirePlayerEffects(session, "round"));
       emit({ type: "state", state: session.state });
     }
+  }
+
+  // Saiu da luta: o que durava "este encontro" ou tinha prazo em rodadas acaba
+  // aqui — inclusive quando a luta fechou por vitória/derrota, sem end_combat.
+  if (inCombatBefore && session.state.combat?.active !== true) {
+    summaryLines.push(...expirePlayerEffects(session, "combat-end"));
+  }
+  // Entrou na luta: quem foi concedido na exploração ganha prazo em rodadas
+  // agora que existe relógio (sem isso duraria a luta inteira).
+  if (!inCombatBefore && session.state.combat?.active === true && session.state.effects?.length) {
+    session.state.effects = anchorToRound(session.state.effects, session.state.combat.round);
+    // O combatente do jogador acabou de ser criado: as defesas dos efeitos que
+    // já estavam em pé precisam entrar nele.
+    syncPlayerDefenses(session);
   }
 
   const stateChanged =
@@ -2846,8 +3260,12 @@ export function buildMechanicalSummary(
   stateChanged: boolean,
 ): string {
   const combat = session.state.combat;
+  // Uma tool pode devolver DOIS fatos numa linha só (conjurar + o efeito que
+  // ficou em pé). O achatamento vem antes de tudo para que a contagem de "nada
+  // aconteceu" e a numeração enxerguem os mesmos fatos.
+  const flat = summaryLines.flatMap((l) => l.split("\n").filter((x) => x.trim()));
   if (
-    summaryLines.length === 0 &&
+    flat.length === 0 &&
     consulted.length === 0 &&
     !anyTool &&
     !combat?.active
@@ -2856,14 +3274,17 @@ export function buildMechanicalSummary(
   }
   // Number multi-event turns (and all combat turns) — a numbered list is much
   // harder for the narrator to skip or merge than a wall of dashes.
+  //
+  // Sem o achatamento acima, o segundo fato sairia SEM número — exatamente o
+  // que a numeração existe para evitar.
   const lines: string[] =
-    combat?.active || summaryLines.length >= 2
-      ? summaryLines.map((l, i) => `${i + 1}. ${l.replace(/^- /, "")}`)
-      : [...summaryLines];
+    combat?.active || flat.length >= 2
+      ? flat.map((l, i) => `${i + 1}. ${l.replace(/^- /, "")}`)
+      : [...flat];
   // In combat, an empty turn is a fact the narrator MUST respect: without this
   // line it "helpfully" invents blows that never happened (and the state
   // contradicts the story). Happens when every tool call errored out.
-  if (combat?.active && summaryLines.length === 0) {
+  if (combat?.active && flat.length === 0) {
     lines.unshift(
       "NOTHING was resolved this turn: no attack happened, nobody was hit, no damage was dealt. Narrate only hesitation or repositioning — do NOT invent any blow, wound, or damage.",
     );
@@ -2871,7 +3292,7 @@ export function buildMechanicalSummary(
   // Fora de combate o vazio era silencioso: o modelo consultava a regra, não
   // resolvia nada, e o narrador ficava livre para dizer que a atividade deu
   // certo. Doutrina 4 — o que não está nas linhas não aconteceu.
-  if (!combat?.active && summaryLines.length === 0 && anyTool) {
+  if (!combat?.active && flat.length === 0 && anyTool) {
     lines.unshift(
       "NOTHING was resolved mechanically this turn: the rules were consulted but no check was rolled, no cost was paid and no effect was applied. Narrate only the attempt and the atmosphere — do NOT state that it worked, that anything changed, or that any rule took effect.",
     );

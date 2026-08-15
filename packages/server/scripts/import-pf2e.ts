@@ -141,6 +141,9 @@ interface CreatureAbility {
   actionType: string; // "action" | "reaction" | "free" | "passive"
   actions: number | null;
   text: string;
+  /** Traços da habilidade — fonte dos roll options `item:trait:*`. */
+  traits?: string[];
+  frequency?: { max: number; per: string };
 }
 
 /** Entrada de conjuração de NPC (item type "spellcastingEntry" + spells irmãs). */
@@ -220,10 +223,82 @@ function categoryOf(type: string): string {
   return cat;
 }
 
+/**
+ * Tabela de localização do sistema pf2e (`static/lang/en.json`), indexada pelo
+ * caminho pontilhado que o `@Localize[...]` referencia.
+ *
+ * POR QUE ISTO EXISTE (achado de 2026-07-26): `cleanText` APAGAVA o marcador
+ * `@Localize` sem substituto, e a descrição inteira de 6.966 habilidades de
+ * criatura (22% do bestiary) virava string vazia — o texto de `Grab`,
+ * `Ferocity`, `Void Healing`, `Constrict`… simplesmente sumia no import. Não
+ * era dado ausente na fonte: era dado que a gente jogava fora. Também mutilava
+ * 46 entradas do pack de glossário em `actions.json` (o `Constrict` ficou
+ * gravado como `"(0) bludgeoning,"`).
+ *
+ * O alias de remaster NÃO precisa de tabela: a própria fonte resolve. O doc
+ * chamado "Void Healing" traz `@Localize[PF2E.NPC.Abilities.Glossary.NegativeHealing]`,
+ * então expandir a chave que ESTÁ no dado basta.
+ */
+let localization: Record<string, unknown> = {};
+/** Contadores do conserto, reportados no manifest (prova, não promessa). */
+let localizeHits = 0;
+let localizeMisses = 0;
+const localizeMissedKeys = new Set<string>();
+
+/** Navega um caminho pontilhado ("PF2E.NPC.Abilities.Glossary"), sem exigir folha. */
+function localizeNode(key: string): unknown {
+  let node: unknown = localization;
+  for (const part of key.split(".")) {
+    if (!node || typeof node !== "object") return undefined;
+    node = (node as Record<string, unknown>)[part];
+  }
+  return node;
+}
+
+/** Resolve um caminho pontilhado até a FOLHA de texto ("…Glossary.Grab"). */
+function localizeLookup(key: string): string | null {
+  const node = localizeNode(key);
+  return typeof node === "string" ? node : null;
+}
+
+function loadLocalization(path: string): void {
+  if (!existsSync(path)) {
+    console.warn(
+      `[localize] ${path} não encontrado — @Localize seguirá sendo descartado (texto de habilidade de criatura ficará vazio).`,
+    );
+    return;
+  }
+  localization = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const glossary = localizeNode("PF2E.NPC.Abilities.Glossary");
+  const n =
+    glossary && typeof glossary === "object" ? Object.keys(glossary).length : 0;
+  if (n === 0) {
+    console.warn(
+      `[localize] ${path} carregado, mas SEM PF2E.NPC.Abilities.Glossary — o texto das habilidades de criatura não será recuperado.`,
+    );
+    return;
+  }
+  console.log(`[localize] ${path} carregado (${n} chaves de glossário de criatura).`);
+}
+
 /** Remove HTML e marcadores do Foundry (@UUID[...]{label}, @Localize, etc.). */
 function cleanText(html: unknown): string {
   if (typeof html !== "string") return "";
   return html
+    // EXPANDE o @Localize ANTES de tudo: 23 das 55 entradas do glossário de
+    // criatura trazem @UUID no próprio texto (e 2 trazem @Damage/@Check), então
+    // o resultado da expansão precisa passar por todo o resto do pipeline.
+    // Expandir no fim deixaria esses marcadores crus no dado.
+    .replace(/@Localize\[([^\]]+)\]/g, (_m, key: string) => {
+      const text = localizeLookup(key.trim());
+      if (text === null) {
+        localizeMisses++;
+        localizeMissedKeys.add(key.trim());
+        return "";
+      }
+      localizeHits++;
+      return text;
+    })
     .replace(/@(UUID|Compendium)\[[^\]]+\]\{([^}]*)\}/g, "$2")
     // Sem label: o Foundry renderiza o NOME do documento — recuperar o último
     // segmento do path quando ele é um nome legível (descarta hashes de id).
@@ -234,7 +309,6 @@ function cleanText(html: unknown): string {
         ? seg.replace(/-/g, " ")
         : "";
     })
-    .replace(/@Localize\[[^\]]+\]/g, "")
     // @Damage tem colchetes ANINHADOS (@Damage[1d8[healing]]) — o padrão
     // genérico parava no 1º "]" e mutilava o texto ("you regain ] Hit
     // Points"), perdendo a fórmula que a engine lê (use_item).
@@ -361,11 +435,26 @@ function extractStatblock(
       const atObj = (isys.actionType ?? {}) as Record<string, unknown>;
       const acObj2 = (isys.actions ?? {}) as Record<string, unknown>;
       const descObj = (isys.description ?? {}) as Record<string, unknown>;
+      const abTraits = (isys.traits ?? {}) as Record<string, unknown>;
+      const abFreq = (isys.frequency ?? null) as Record<string, unknown> | null;
       abilitiesList.push({
         name,
         actionType: typeof atObj.value === "string" && atObj.value ? atObj.value : "passive",
         actions: typeof acObj2.value === "number" ? acObj2.value : null,
         text: cleanText(descObj.value).slice(0, 600),
+        // Traços e frequency alimentam os roll options da engine (Fase 2.5):
+        // `item:trait:x` só é respondível se o traço vier importado.
+        ...(Array.isArray(abTraits.value) && abTraits.value.length > 0
+          ? { traits: (abTraits.value as unknown[]).map(String) }
+          : {}),
+        ...(abFreq && typeof abFreq.max === "number"
+          ? {
+              frequency: {
+                max: abFreq.max,
+                per: typeof abFreq.per === "string" ? abFreq.per : "round",
+              },
+            }
+          : {}),
       });
     } else if (item.type === "spellcastingEntry") {
       const id = typeof item._id === "string" ? item._id : "";
@@ -763,13 +852,18 @@ function collectFromGit(): RuleRecord[] {
       ],
       { stdio: "inherit" },
     );
-    execFileSync("git", ["-C", tmp, "sparse-checkout", "set", "packs"], {
-      stdio: "inherit",
-    });
+    // `static/lang` entra junto: é de onde sai o texto que o @Localize
+    // referencia (sem ele, 22% das habilidades de criatura ficam sem descrição).
+    execFileSync(
+      "git",
+      ["-C", tmp, "sparse-checkout", "set", "packs", "static/lang"],
+      { stdio: "inherit" },
+    );
     const packsDir = join(tmp, "packs");
     if (!existsSync(packsDir)) {
       throw new Error(`'packs/' não encontrado no clone (ref ${GIT_REF}).`);
     }
+    loadLocalization(join(tmp, "static", "lang", "en.json"));
     const docs = readJsonFilesRecursive(packsDir);
     sourceDocCount = docs.length;
     return docs
@@ -791,6 +885,8 @@ async function collectFromLocal(): Promise<RuleRecord[]> {
       `PF2E_SYSTEM_PATH inválido: ${packsDir} não existe. Ajuste a env ou use o modo download.`,
     );
   }
+  // Na instalação local o arquivo de idioma fica em lang/ (no repo é static/lang/).
+  loadLocalization(join(SYSTEM_PATH, "lang", "en.json"));
   // Import dinâmico via specifier não-literal: o pacote é opcional e pode não
   // estar instalado; só é necessário neste modo.
   const spec = "classic-level";
@@ -908,6 +1004,14 @@ async function main() {
     categories: Object.fromEntries(
       [...byCategory.entries()].map(([c, arr]) => [c, arr.length]),
     ),
+    // Prova do conserto do @Localize: quantas referências foram expandidas e
+    // quantas não acharam chave. Chave ausente é PERDA — fica nomeada aqui em
+    // vez de virar texto vazio silencioso.
+    localize: {
+      expanded: localizeHits,
+      missed: localizeMisses,
+      missedKeys: [...localizeMissedKeys].sort().slice(0, 40),
+    },
   };
   writeFileSync(join(OUT_DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
 

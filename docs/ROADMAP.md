@@ -11,8 +11,10 @@
 > 3. **A Régua é lei:** mecânica em código, voz no LLM. PR que mova estado para o
 >    modelo é rejeitado por princípio.
 > 4. **Todo comportamento mecânico novo nasce com teste** e estende a bateria
->    feat-audit. O gate vigente da bateria e os **353 testes** (322 server + 31
->    brain) são piso, não meta.
+>    feat-audit. O gate vigente da bateria e os **645 testes** (614 server + 31
+>    brain) são piso, não meta. Ao mexer no JUIZ da bateria, rode
+>    `replay-judge.ts` antes de gastar GPU — ele re-julga transcripts gravados e
+>    separa "o juiz mudou de opinião" de "o jogo mudou".
 > 5. Se uma tarefa contradisser um ADR, **pare e sinalize**.
 
 Ordem definida no **ADR-003**. Fases posteriores assumem as anteriores prontas.
@@ -55,14 +57,32 @@ action, custo lido da taxonomia do dataset); camada determinística de
 conformidade do dataset; e dois bugs de bloqueio corrigidos (arquivamento de
 campanha colidindo, e a bateria rodando contra o brain real do jogador).
 
-**Piso vigente (gate de 2026-07-25, pós-Fase 2): 353 testes unitários e 75/75
-na feat-audit.** O 75/75 de 2026-07-05 NÃO é o mesmo número: foi medido no LM
-Studio antes da migração para llama.cpp, com a bateria quebrada entre 14/07 e
-25/07. Progressão na stack atual: 71/75 (25/07) → 73/75 (26/07, após o fix do
-`[ENGINE CHECK]` + `lookup_rule` pela ficha + import total) → **75/75 (25/07,
-pós-Fase 2)**. Atenção ao ler essa curva: o rules stage roda a temperature 0.3
-e o mesmo cenário alterna entre rodadas — a diferença de 73 para 75 é
-compatível com variância + juiz cego, não é prova de melhora do jogo.
+**Piso vigente (gate de 2026-07-26, pós-conserto do juiz): 362 testes unitários
+e 70 PASS · 2 FLAKY · 2 FAIL · 1 SUSPECT em 75 cenários, cada um rodado 3×
+(`--repeat=3`), com cobertura de asserção de uso de 40/75.**
+
+**Este número NÃO é comparável com os anteriores** — e essa é a questão. Todos
+os gates até 25/07 (71/75 → 73/75 → 75/75) foram medidos por um juiz que
+aprovava 40 dos 75 cenários sem verificar nada: bastava não explodir. O 75/75
+de 25/07 era o auge dessa ilusão. A partir daqui a régua afere de verdade, e o
+que interessa não é só o veredito, mas a **cobertura**: quantos cenários o
+harness realmente sabe verificar.
+
+Os 35 cenários "sem asserção" são o ponto cego DECLARADO — nem falha nem
+aprovação. Por motivo: 26 passivos que a engine não implementa (nada
+observável), 4 reações bloqueadas na Fase 3 (gatilho depende de posição), 3 em
+que guardar a reação foi a jogada certa, 2 em que a engine declarou que a cena
+não se aplicava. Esse número só cai implementando mecânica — é o mapa honesto
+da dívida, não ruído a ser escondido.
+
+Os não-PASS, todos com causa nomeada:
+- `Shield Block` e `Clever Gambit` (FAIL 0/3) — reações cujo gatilho a engine
+  detecta mas cujo efeito não implementa. Dívida real, item da fila.
+- `Shackles of Law` (FLAKY 2/3) — cobrou 1 ação de um feat que custa 2 em uma
+  das três rodadas. Instabilidade de enforcement: candidato à escada da
+  doutrina 2.
+- `Acupuncturist` (FLAKY 2/3) e `Exotic Edge` (SUSPECT 0/3) — atividade fora de
+  combate resolvida sem mecânica; o feat não aparece em nenhuma tool aceita.
 
 Os 2 não-PASS do gate são AMBOS do juiz, não do jogo (exemplares documentados
 para o item 2 da fila): FAIL `Flying Blade` — mecânica perfeita (Strike com
@@ -94,12 +114,14 @@ e o consumidor piloto `condition-modifiers.ts` — a conformidade compara as
 constantes da engine com o dado oficial das condições.
 
 **Fila de consumidores de rule element** (um por vez, cada um com teste):
-1. `FlatModifier` de condições → engine (substituir as constantes pelo dado);
+1. ~~`FlatModifier` de condições → engine (substituir as constantes pelo dado);~~
+   **FEITO na Fase 2.5** (T4, ADR-008).
 2. `MultipleAttackPenalty` (Agile Grace etc.) no cálculo de MAP;
 3. `DamageDice`/`FlatModifier` de feats de dano (selector strike-damage);
 4. `Strike` de ancestry (ataques naturais concedidos);
 5. hazards no GM (gerar cena de armadilha com statblock + stealth DC + desarme);
-6. `selfEffect`/effects: aplicar o effect do feat como condição com duração.
+6. ~~`selfEffect`/effects: aplicar o effect do feat como condição com duração.~~
+   **FEITO na Fase 2.6** (ADR-009) — registro de efeitos ativos com prazo do dado.
 
 Também na fila: bump do ref 7.8.0 → 7.12.2 auditado pela conformidade; corrigir
 `Purging Toxins` (`@item.rank`); redesenho da bateria sobre a taxonomia nativa
@@ -201,6 +223,146 @@ companheiro caído.
 
 ---
 
+## Fase 2.5 — Regras como DADOS (consumo de rule elements)
+
+### ✅ CONCLUÍDA em 2026-08-03 (ver ADR-008)
+
+Fase não planejada no ADR-003: nasceu de uma auditoria de profundidade que mediu
+quanto de PF2e a engine realmente implementava. O achado que a justificou: o
+import era total desde a Fase 1.5, mas a engine consumia **1 rule element key de
+38** — `FlatModifier`, e só de `conditions.json` (16 REs). O resto dos 16.671
+rule elements era prosa. Os passivos de feat viviam numa tabela escrita à mão com
+UMA entrada.
+
+Entregue, uma tarefa por vez:
+
+- **T0** — `@Localize` expandido no importador: 81% do texto que era descartado
+  volta (7.596 expansões, 0 perdas no manifesto).
+- **T1** — dano tipado: imunidade, fraqueza e resistência com parcelas
+  (`rules/damage.ts`), e o ponto cego DECLARADO (defesas que a engine não
+  suporta: `cold-iron`, `area-damage`, `critical-hits`…).
+- **T2** — `rules/roll-options.ts`: o estado do turno no vocabulário do dado,
+  com `covered` separando "falso" de "não sei".
+- **T3** — `rules/predicate.ts`: avaliador de três valores, TOTAL sobre a
+  gramática real dos 7.948 predicados do dataset.
+- **T4** — pilha de modificadores do PF2e (`rules/modifiers.ts`) e as condições
+  lidas do dado em vez de constantes.
+- **T5** — **ligar T2·T3 ao turno e ampliar as keys consumidas.** Até aqui T2 e
+  T3 estavam DESLIGADOS: nenhum módulo fora de `rules/` os importava, e
+  `conditionModifiersFor` recebia `ro` indefinido, descartando todo predicado.
+  - `rules/roll-context.ts` — a ponte estado→roll options que faltava;
+  - `ro` chega a `effectiveAC`/`attackStatusPenalty`, com contexto SEPARADO por
+    ator (o rule element é avaliado do ponto de vista de quem o carrega);
+  - `rules/actor-modifiers.ts` — os `FlatModifier` dos feats/features/herança/
+    ancestralidade/antecedente da ficha, com a regra de não-duplo-cômputo;
+  - `PASSIVE_FEAT_EFFECTS` **removido** (o +2 de Incredible Initiative agora vem
+    do dado); condições passam a pesar em **perícia e save**, não só em ataque;
+  - `Resistance`/`Weakness`/`Immunity` da ficha — imunidade e fraqueza, que o
+    Pathbuilder nem exporta, passam a existir.
+
+**Gate da fase: 525 testes unitários (32 arquivos), sem GPU.**
+
+**Métrica que a fase existe para mover** (linha `[T5]` em
+`rules/dataset-conformance.test.ts` — mede a cada `npm test`, não a cada
+impressão):
+
+| | antes | depois |
+|---|---|---|
+| keys de rule element com leitor | 1 / 38 | **4 / 38** |
+| rule elements alcançáveis pela engine | 16 | **1.057** (6% dos 16.671) |
+| condições com efeito mecânico | 2 / 44 | todas as que têm `FlatModifier` |
+| tabela de passivos escrita à mão | 1 entrada | **não existe mais** |
+
+**A dívida, nomeada e medida** (é o que a próxima fase tem de mover):
+dos 781 `FlatModifier` das categorias de ficha, 574 avaliam corretamente como
+FALSO na cena de teste (a engine funcionando), 60 são presumidos já embutidos no
+export do Pathbuilder, 3 têm valor por expressão — e **133 são INDECIDÍVEIS**.
+Travam em `self:effect:*` e nos slugs que `RollOption` acenderia. Nas defesas,
+216 das 260 ficam declaradas (tipo escolhido por `ChoiceSet`, valor por
+expressão de nível).
+
+**Teto atual, e o que o destrava:** um **registro de efeitos ativos**. Sem ele
+não entram `RollOption` (1.334), `GrantItem` (1.510), `ChoiceSet` (1.245) nem
+`ActiveEffectLike` (1.461) — as quatro maiores keys sem leitor. É o candidato
+natural a T6.
+
+**Fora de escopo, registrado:** as reações que a bateria acusa (`Shield Block`
+precisa de hardness estruturado, `Clever Gambit`); a família posicional
+(`target:distance`, `self:flanking`, cobertura), que é Fase 3.
+
+---
+
+## Fase 2.6 — Registro de efeitos ativos
+
+### ✅ CONCLUÍDA em 2026-08-12 (ver ADR-009)
+
+O teto que a Fase 2.5 nomeou. Nasceu de medir antes de construir — e a medição
+**corrigiu duas coisas que o ADR-008 tinha registrado errado**:
+
+- dos 133 `FlatModifier` indecidíveis, só **30** travavam em `self:effect:*`; o
+  resto era `origin:trait` (16), `check:statistic` (10), `item:tag` (9) e uma
+  cauda de vocabulário que a ficha já respondia;
+- `ActiveEffectLike` (1.461 REs) **não** era prêmio: 1.259 estão nas categorias
+  de ficha e são `system.skills.X.rank`, que o Pathbuilder já entrega somado.
+  Duplo-cômputo puro.
+
+O prêmio real, que o ADR-008 não mencionava, era `effects.json`: **2.815 docs,
+2.674 com rule elements** — o dobro das cinco categorias de ficha somadas — e
+**todos** com `effectDuration` estruturado.
+
+Entregue, uma tarefa por vez:
+
+- **T6.1** — `GameState.effects` com prazo do dado. Duração crua em vez de prazo
+  calculado (rodada só existe em combate); `minutes` → rodadas por conversão RAW.
+  Ticks LIGADOS de saída: fim de rodada, fim de luta pela transição
+  `active→inactive` (pega os nove pontos que zeram `active`), descanso, e âncora
+  ao entrar em combate.
+- **T6.3** *(antes da T6.2, de propósito: leitor sem caminho de concessão nasce
+  lendo lista vazia, que é o pecado do ADR-008)* — as três pontes de concessão,
+  e o conserto do `byUuid` que fazia `GrantItem` falhar inteiro em silêncio.
+- **T6.2** — os rule elements do efeito viram número. `self:effect:*` decidível
+  (com `PARTIAL_COVERAGE` para o badge que não modelamos) e os
+  `FlatModifier`/defesas do efeito valendo, SEM o portão de não-duplo-cômputo.
+- **T6.4** — o vocabulário que a ficha já respondia: `check:statistic`,
+  `self:armored`, `armor:category`, `item:magical`, `item:proficiency:rank`,
+  `proficiency:<rank>`.
+- **T6.5** — docs, ADR-009 e a linha `[T6]` de métrica.
+
+**Gate da fase: 620 testes do servidor (37 arquivos) + 31 do brain, sem GPU.**
+
+**Gate da BATERIA (2026-08-14, `--repeat=3` contra o commit 8dafee6, ~2h de
+GPU):** 69 PASS · 3 FLAKY · 2 FAIL · 1 SUSPECT, **cobertura 40/75**. Primeira
+medição contra o modelo desde 26/07.
+
+Contra o piso (70 · 2 · 2 · 1, cobertura 40/75): um PASS virou FLAKY e a
+**cobertura não mudou**. Ela NÃO subiu, contra o que se esperava da fase — e o
+motivo é o conteúdo da bateria, não a fase: os 35 cenários sem asserção são
+passivos sem doc de efeito (Toughness, Diehard, Bravery…) e reações bloqueadas
+em posição. O que a Fase 2.6 acende — postura, buff conjurado — não está entre
+eles. **Para a bateria medir a Fase 2.6 é preciso ADICIONAR cenários** (entrar em
+stance, conjurar buff e ver o bônus incidir, efeito expirando no fim da luta).
+
+Os dois FLAKY novos (`Double Shot`, `Furious Finish`) têm causa idêntica e é
+[MODELO]: numa das três rodadas o modelo resolveu a atividade por `roll_check`
+com o combate inativo, e fora de combate a engine deliberadamente não cobra
+ações. `Shackles of Law`, FLAKY no piso anterior, agora passa 3/3.
+
+| | antes (fim da 2.5) | depois |
+|---|---|---|
+| rule elements alcançáveis | 1.057 (6%) | **3.548 (21%)** |
+| predicados decididos | 5.093 (64%) | **5.379 (68%)** |
+| statements decidíveis | 61% | **63%** |
+| `FlatModifier` de ficha INDECIDÍVEL | 133 | **90** |
+| efeitos que a engine sabe conceder | 0 | **567** |
+
+**A dívida, nomeada e medida:** efeito em inimigo/aliado (o registro só cobre o
+jogador); o badge/contador do efeito (53 statements); `DamageDice` (308) e
+`TempHP` (221) dos efeitos, sem leitor; e `ItemAlteration`, agora a maior key sem
+leitor (1.714). A maior família indecidível que sobra é `spellcasting` (544),
+seguida da posicional — que é Fase 3.
+
+---
+
 ## Fase 3 — Combate posicional + geração procedural
 
 - **Objetivo:** sair do combate abstrato para o tático (posição importa) e gerar
@@ -256,24 +418,51 @@ companheiro caído.
 Levantados durante a Fase 1 e **deliberadamente adiados** para não abrir frentes
 paralelas. Atacar nesta ordem, um por vez:
 
-1. **Buraco do `[ENGINE CHECK]`** — causa de 3 das 4 falhas do baseline. A escada
-   de escalação existe para "combate ativo e nada resolvido", mas o loop é
-   `if (runIteration(...) === 0) break`: uma resposta em prosa a encerra na
-   primeira das 3 tentativas. Precisa também de gatilho para "as únicas tools do
-   turno foram `lookup_rule`", e de declarar no resumo mecânico quando nada foi
-   resolvido (doutrina 4). Junto: `lookup_rule` deve deixar a **ficha** escolher a
-   entrada principal em homônimo, como `costProfileOf` já faz.
-2. **Juiz da bateria** — hoje é cego e acusa errado. Cego: 40 dos 75 cenários
-   (7 reaction, 2 free, 31 passive) não têm asserção de que o feat foi usado —
-   `Nimble Dodge` e `Reactive Shield` passaram sem o feat ter sido usado uma vez.
-   Acusa errado: o `FALSE_BLOW_KW` não entende negação.
+1. ✅ **Buraco do `[ENGINE CHECK]` — CONCLUÍDO na Fase 1** (a entrada ficou sem
+   marcação até 2026-07-26). O `if (runIteration(...) === 0) break` virou o
+   helper `escalate()` com condições de parada próprias por escada; existe o
+   gatilho para "as únicas tools do turno foram `lookup_rule`"; o resumo
+   mecânico declara o vazio (doutrina 4 — e é justamente isso que o juiz passou
+   a ler em `engineDeclaredVoid`); e `lookup_rule` deixa a FICHA desempatar
+   homônimos.
+2. ✅ **Juiz da bateria — CONCLUÍDO em 2026-07-26.** Era cego em 40 dos 75
+   cenários e acusava errado em 2. Entregue: juiz extraído para
+   `scripts/feat-audit/judge.ts` com **31 testes** (não tinha nenhum) e asserção
+   proporcional à evidência — reação aferida pelo estado da engine (FAIL),
+   free action por heurística de nome (SUSPECT), passivo sem implementação
+   **declarado** como ponto cego em vez de aprovado. Os dois falsos positivos
+   fechados com a string real virando teste de regressão (`Flying Blade`, e
+   `Esoteric Wayfinder` via `engineDeclaredVoid` — engine que cumpre a doutrina
+   4 não é fuga). Novo `replay-judge.ts` re-julga transcripts gravados: validar
+   mudança de juiz passa a custar **zero GPU**. `--repeat=N` (item 4) entrou
+   junto, com o veredito **FLAKY** para cenário instável.
+
+   **A cegueira escondia uma lacuna de código real**, hoje fechada: a reação do
+   jogador era estruturalmente impossível de disparar — `chargeNonAction` só era
+   alcançável por tool call do modelo, durante o turno do jogador, enquanto o
+   revide inimigo roda em código depois. `playerReactionVsStrike` (simétrico ao
+   `triggerEnemyReactions`) resolve Nimble Dodge, Flashy Dodge e Reactive Shield
+   dentro do `strikeAt`. Política determinística: a reação só é gasta quando MUDA
+   o desfecho — sem alguém a quem perguntar no meio do revide, queimá-la num
+   golpe que já erraria seria pior para o jogador.
+
+   **Reações ainda não honradas** (cada uma é tarefa própria):
+   - `Shield Block` e `Clever Gambit` — gatilho é detectável pela engine, mas o
+     efeito não está implementado (redução por Hardness do escudo; identificação
+     via Recall Knowledge). Seguem FAIL na bateria, que é o veredito correto.
+   - `Stand Still`, `Reactive Strike`, `Disrupt Prey`, `Goblin Scuttle` —
+     gatilho depende de alcance/posição. **Bloqueadas na Fase 3**; o juiz as
+     declara "sem asserção" (lendo o `**Trigger**` do dado oficial, não uma
+     lista escrita à mão) em vez de acusar o jogo por uma regra que ele ainda
+     não tem como conhecer.
 3. **Baterias seccionadas por área de regra** — `rest`, magias, itens,
    bestiary/reações/dano persistente hoje têm **zero** cobertura de bateria. Nota:
    reações de inimigo nunca disparam nos cenários atuais porque o "bandit"
    genérico não tem statblock.
-4. **`--repeat` para medir variância** — o estágio de regras roda a `temperature
-   0.3`; o mesmo cenário alterna PASS/FAIL entre rodadas, o que dificultou
-   atribuir falhas. Taxa de PASS vale mais que veredito binário.
+4. ✅ **`--repeat` para medir variância — CONCLUÍDO em 2026-07-26** (junto do
+   item 2). Cada cenário roda N vezes com sessão nova; misto vira **FLAKY**, que
+   é o gatilho da escada de escalação da doutrina 2 (o modelo às vezes acerta →
+   candidato a virar enforcement em código).
 5. **`run-bestiary-battery.ts` não tem sandbox de brain** — rodá-la hoje arquiva a
    campanha real do jogador a cada um dos 10 cenários. **Não rodar** antes de
    portar o fix.
