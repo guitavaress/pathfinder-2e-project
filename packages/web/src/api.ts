@@ -1,4 +1,4 @@
-import type { Character, CheckResult, GameState, TurnRef } from "@pf2e/shared";
+import type { Adjudicated, Character, CheckResult, GameState, TurnRef } from "@pf2e/shared";
 
 export interface ImportResult {
   sessionId: string;
@@ -12,6 +12,7 @@ export type StreamEvent =
   | { type: "check"; result: CheckResult }
   | { type: "state"; state: GameState }
   | { type: "phase"; phase: "rules" | "narrative" }
+  | { type: "adjudicated"; adjudicated: Adjudicated }
   | { type: "done" }
   | { type: "error"; message: string };
 

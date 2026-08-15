@@ -465,6 +465,85 @@ vier depois.
 **Revisitar quando:** posição voltar à mesa numa proposta nova. Aí este ADR é o
 ponto de partida (medições + desenho relacional), não um documento a refazer.
 
+### ADR-012 — O teto está na FONTE; o alvo é saber o que sabe
+
+**Data:** 2026-08-15 · **Status:** aceito, implementado na branch
+`fix/contrato-desligado`.
+
+**Contexto.** O usuário levantou a suspeita certa: "os testes só medem os
+personagens que eu criei, e cada personagem ou feature nova traz bugs novos".
+Pediu honestidade sobre o teto real e sobre precisar de fontes melhores que o
+AoN e o módulo pf2e do Foundry. A investigação confirmou a suspeita e achou
+duas coisas piores.
+
+**Achado 1 — o teto é da FONTE, não da engine.** Medido sobre
+`data/pf2e/generated`:
+
+| categoria | total | inerte (sem RE nem doc de Effect) |
+|---|---|---|
+| feat de **classe** | 3.914 | **2.360 (60%)** |
+| feat de **perícia** | 320 | **237 (74%)** |
+| ancestralidade | 1.554 | 580 (37%) |
+| class feature | 824 | 247 (30%) |
+
+**3.701 feats (52,6%) são prosa pura** — sem mecânica legível por máquina.
+Não é falha do importador: **o Foundry também não os automatiza**, mostra o
+texto a um GM humano. Magias enganam ao contrário: só 11 de 1.795 têm rule
+element, mas a mecânica delas vive em bloco estruturado e o importador capturou
+1.646; o buraco real ali é que **51% não têm dano, save nem ataque**.
+
+**Decisão sobre fontes: não há fonte melhor para importar.** O
+`foundryvtt/pf2e` é o estado da arte em PF2e estruturado. O AoN é prosa canônica
+e já cumpre exatamente esse papel (`rules/web.ts` devolve texto, nunca
+mecânica). A única fonte adicional real são módulos de automação da comunidade
+Foundry, que codificam o que o core não automatiza — mas como **lógica JS por
+feature**, não como dado importável: é engenharia caso a caso, não import.
+**Não procurar fonte nova; o problema não está lá.**
+
+**Decisão sobre o alvo.** "State of the art" para este projeto **não** é
+automatizar 100% das regras — é ser impecável em **saber o que sabe**. Todo item
+mecanizado, exato; todo item não-mecanizado, DECLARADO ao narrador e ao jogador,
+nunca improvisado em silêncio. É a doutrina 4 aplicada ao que a engine NÃO faz.
+
+**Achado 2 — o contrato da doutrina 1 estava desligado.**
+`validateToolArgs` nasceu em 2026-07-25 exportada, testada e **nunca chamada em
+produção**; o comentário do próprio arquivo afirmava que ela rodava antes do
+dispatch. Somado ao ADR-006 (o caminho Gemma 4 do llama.cpp IGNORA o schema de
+argumentos), o efeito é que por ~3 semanas **nada validou argumento de tool**.
+Junto vinham quatro caminhos que FABRICAVAM mecânica: bônus de ataque tirado da
+Percepção, dano da arma errada, spell attack em +0, e `findCombatant` casando
+`includes("")` e devolvendo o combatente de maior iniciativa.
+
+**A lição que generaliza, e é o motivo deste ADR existir:** ligar o contrato
+**não quebrou um único teste**. Não porque estivesse tudo bem — porque o laço de
+tool calls só roda com o llama-server no ar, e todos os testes chamavam
+`executeTool` direto. **O buraco era inalcançável pela suíte por construção.**
+Regra que sai daqui: *comportamento que só existe atrás de uma dependência
+externa precisa de uma unidade testável sem ela* — foi assim que nasceu
+`dispatchToolCall`.
+
+**Consequência medida (linha `[T9]`, a cada `npm test`).** Sobre 60 fichas
+geradas do dataset, 1.339 entradas: **MECANIZADO 25,4% · DECLARADO 13,3% ·
+CEGO 61,3%**. O invariante é **teto congelado** (0,62), não "zero CEGO":
+exigir zero seria desonesto e produziria um teste vermelho permanente que
+alguém marcaria como `skip`. O que se exige é que o silêncio **não cresça**.
+
+**Dívida nomeada e medida:**
+- **nenhuma ação de perícia aplica condição** — Demoralize não dá `frightened`,
+  Trip não dá `prone`, Grapple não dá `grabbed`; única exceção do sistema é
+  Treat Wounds. É provavelmente o buraco mais visível em jogo, e é fase própria;
+- **uma única feature de classe** é mecanizada (`/sneak attack/i`);
+- `classes 0/27` e `ancestries 0/50` docs com leitor;
+- os **140 iconics** (`pregens.json`) entraram VAZIOS: `import-pf2e.ts` só
+  extrai items para `npc`/`hazard`, e o `manifest.json` prova paridade de
+  documentos, não de conteúdo;
+- o parser descarta runas, o flag `Invested`, `shieldBonus`, proficiências
+  unarmed/advanced e `build.pets`/`familiars`/`focus`.
+
+**Revisitar quando:** a linha `[T9]` mostrar o balde CEGO subindo (alguma
+mudança deixou a engine mais silenciosa), ou se alguém propuser trocar de fonte
+de dados — a resposta já está medida aqui.
+
 ### Bifurcações consideradas e adiadas (não fazer sem reabrir a decisão)
 - **Modo dois-modelos** (`RULES_MODEL`/`NARRATIVE_MODEL`): exige segundo
   `llama-server`; limitado pela VRAM. Adiado.

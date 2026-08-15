@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CheckResult, Combat, TurnRef } from "@pf2e/shared";
+import type { Adjudicated, CheckResult, Combat, TurnRef } from "@pf2e/shared";
 import type { PaletteEntry } from "../api.js";
 import { ScribeIndicator, type ScribeState } from "../brain/ScribeIndicator.js";
 import { AbilityPalette } from "./AbilityPalette.js";
@@ -10,7 +10,8 @@ import { RollMedallion } from "./RollMedallion.js";
 export type LogItem =
   | { kind: "narration"; text: string }
   | { kind: "player"; text: string }
-  | { kind: "check"; result: CheckResult };
+  | { kind: "check"; result: CheckResult }
+  | { kind: "adjudicated"; adjudicated: Adjudicated };
 
 const PHASE_LABEL: Record<"rules" | "narrative", string> = {
   rules: "Consulting the rules…",
@@ -204,6 +205,17 @@ function LogRow({ item, dropCap }: { item: LogItem; dropCap: boolean }) {
   }
   if (item.kind === "narration") {
     return <div className={`row narration${dropCap ? " first" : ""}`}>{item.text}</div>;
+  }
+  if (item.kind === "adjudicated") {
+    // Discreto de propósito: é meta-informação honesta, não um evento da cena.
+    // O jogador precisa saber que aquilo foi NARRADO e não enforced — sem que
+    // o aviso compita com a narrativa.
+    return (
+      <div className="row adjudicated" title={item.adjudicated.reason}>
+        <span className="adjudicated-name">{item.adjudicated.name}</span>
+        <span className="adjudicated-note">narrado, não automatizado pela engine</span>
+      </div>
+    );
   }
   return (
     <div className="row rollrow">

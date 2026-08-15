@@ -117,6 +117,9 @@ export function App() {
             case "check":
               setLog((prev) => [...prev, { kind: "check", result: event.result }]);
               break;
+            case "adjudicated":
+              setLog((prev) => [...prev, { kind: "adjudicated", adjudicated: event.adjudicated }]);
+              break;
             case "state":
               setState(event.state);
               break;

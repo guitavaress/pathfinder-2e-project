@@ -4,7 +4,8 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import type { AttackContext, Character, Combatant, Companion, Weapon } from "@pf2e/shared";
-import type { CheckResult, DegreeOfSuccess, GameState, TurnRef } from "@pf2e/shared";
+import type { Adjudicated, CheckResult, DegreeOfSuccess, GameState, TurnRef } from "@pf2e/shared";
+import { adjudicationFor } from "../rules/coverage.js";
 import { degreeOfSuccess, isValidDc, rollCheck } from "../dice/check.js";
 import {
   actionLabel,
@@ -42,7 +43,7 @@ import {
   type ExpiryEvent,
 } from "../rules/active-effects.js";
 import { slug, type RollOptions } from "../rules/roll-options.js";
-import { buildTools } from "./tool-schemas.js";
+import { buildTools, validateToolArgs } from "./tool-schemas.js";
 import {
   allyCombatant,
   applyDamage,
@@ -457,6 +458,9 @@ export type StreamEvent =
   | { type: "check"; result: CheckResult }
   | { type: "state"; state: GameState }
   | { type: "phase"; phase: "rules" | "narrative" }
+  // Habilidade da ficha que a engine reconhece mas não executa: vai ao jogador
+  // pelo mesmo canal do `check`, para o silêncio deixar de ser invisível.
+  | { type: "adjudicated"; adjudicated: Adjudicated }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -474,6 +478,16 @@ const client = new OpenAI({ baseURL: LLM_BASE_URL, apiKey: "local" });
 const TOOLS: ChatCompletionTool[] = buildTools();
 
 /** Resolves a check's modifier from the character sheet. */
+/**
+ * "Strike" genérico: o modelo não nomeou arma, atacou com o que tem na mão.
+ *
+ * Exportado como constante porque `resolveModifier` (bônus) e `rollDamage`
+ * (dado) PRECISAM concordar: se um trata "strike" como a arma [0] e o outro
+ * não, o ataque sai com o bônus de uma arma e o dano de outra — que foi
+ * exatamente o bug introduzido ao tentar consertar o fallback do dano.
+ */
+const GENERIC_STRIKE = /^(attack|strike|ataque|unarmed)$/;
+
 function resolveModifier(session: Session, skillRaw: string): number | null {
   const key = skillRaw.toLowerCase().trim();
   const c = session.character;
@@ -491,12 +505,7 @@ function resolveModifier(session: Session, skillRaw: string): number | null {
     c.weapons.find((w) => w.name.toLowerCase() === key) ??
     c.weapons.find((w) => key.includes(w.name.toLowerCase()));
   if (weapon) return weapon.attack;
-  if (
-    (key === "attack" || key === "strike" || key === "ataque" || key === "unarmed") &&
-    c.weapons[0]
-  ) {
-    return c.weapons[0].attack;
-  }
+  if (GENERIC_STRIKE.test(key) && c.weapons[0]) return c.weapons[0].attack;
   return null;
 }
 
@@ -572,17 +581,23 @@ export function findSheetWeapon(c: Character, ref: string): Weapon | null {
   );
 }
 
-/** Attack bonus for a Strike: the player's weapon bonus, or the enemy's real/benchmark attack. */
+/**
+ * Attack bonus for a Strike: the player's weapon bonus, or the enemy's
+ * real/benchmark attack. `null` quando a ficha do JOGADOR não resolve o nome.
+ *
+ * Devolvia `weapons[0]?.attack ?? perception` — fabricava bônus de ataque a
+ * partir da PERCEPÇÃO, que não é bônus de ataque de coisa nenhuma, e o resumo
+ * ainda imprimia o nome que o modelo inventou. O caminho não-ataque
+ * (`roll_check` de perícia) sempre rejeitou nome desconhecido; este era o
+ * assimétrico, e assimetria em favor de rolar é o bug `dc ?? 0` de novo.
+ * Ausência agora é ausência: quem chama rejeita.
+ */
 function combatAttackModifier(
   session: Session,
   attacker: Combatant,
   skill: string,
-): number {
-  if (attacker.kind === "player") {
-    const mod = resolveModifier(session, skill);
-    if (mod !== null) return mod;
-    return session.character.weapons[0]?.attack ?? session.character.perception;
-  }
+): number | null {
+  if (attacker.kind === "player") return resolveModifier(session, skill);
   return strikeProfileFor(attacker).bonus;
 }
 
@@ -636,10 +651,16 @@ function rollDamage(
 
   if (attacker?.kind === "player") {
     const name = String(input.weapon ?? "").toLowerCase().trim();
+    // O `?? weapons[0]` incondicional fazia o dano sair da adaga enquanto o
+    // resumo dizia "Greatsword". Agora a arma [0] só entra quando o BÔNUS
+    // também veio dela — nome vazio ou Strike genérico (ver GENERIC_STRIKE em
+    // `resolveModifier`). Nome nomeado que não resolve não chega aqui: o
+    // caminho de ataque rejeita antes de rolar.
+    const generic = !name || GENERIC_STRIKE.test(name);
     const w =
       session.character.weapons.find((x) => x.name.toLowerCase() === name) ??
       session.character.weapons.find((x) => name && name.includes(x.name.toLowerCase())) ??
-      session.character.weapons[0];
+      (generic ? session.character.weapons[0] : undefined);
     if (w) {
       // `w.dice`, não 1: a runa striking multiplica os DADOS, e o Pathbuilder
       // manda sempre o dado base no `die`. O `?? 1` cobre arma montada sem
@@ -959,6 +980,32 @@ function budgetNotes(plan: EncounterPlan): string {
 
 // Exportada para os testes unitários (use_item, guards) — o fluxo normal só a
 // chama via runRulesStage.
+/**
+ * Validação de argumentos + dispatch, na ordem que a doutrina 1 exige.
+ *
+ * Existe como unidade própria porque o laço de tool calls do `runRulesStage` só
+ * roda com o llama-server no ar — durante ~3 semanas `validateToolArgs` ficou
+ * exportada, testada e NUNCA chamada em produção, e nenhum teste podia ter
+ * pego isso. Aqui o contrato é exercitável sem GPU.
+ *
+ * Rejeição não aplica NADA: `executeTool` sequer é chamado.
+ */
+export async function dispatchToolCall(
+  session: Session,
+  name: string,
+  rawArgs: Record<string, unknown>,
+  emit: (e: StreamEvent) => void,
+): Promise<{ outcome: ToolOutcome; args: Record<string, unknown> }> {
+  const check = validateToolArgs(name, rawArgs);
+  if (!check.ok) {
+    return { outcome: { content: check.message, isError: true }, args: rawArgs };
+  }
+  return {
+    outcome: await executeTool(session, name, check.args, emit),
+    args: check.args,
+  };
+}
+
 export async function executeTool(
   session: Session,
   name: string,
@@ -1042,6 +1089,15 @@ export async function executeTool(
           }
         }
         const baseMod = combatAttackModifier(session, attacker, skill);
+        if (baseMod === null) {
+          // Mesma prosa corretiva do caminho não-ataque: o modelo nomeou uma
+          // arma que a ficha não tem. Rejeitar é o único desfecho honesto —
+          // nada é aplicado, a MAP não avança, nenhuma ação é cobrada.
+          return {
+            content: `No weapon or attack named "${skill}" on the sheet. Use a weapon the character actually carries, or an existing skill/save name.`,
+            isError: true,
+          };
+        }
         const map = mapPenalty(attacker.mapProgress, agile);
         // Conditions as real mechanics: off-guard −2 AC, frightened −N to
         // the target's AC and to the attacker's rolls.
@@ -1524,11 +1580,24 @@ export async function executeTool(
             isError: true,
           };
         }
+        // `entry.attack` é nullable de verdade (`parse.ts` grava null quando o
+        // Pathbuilder não manda). O `?? 0` rolava em +0 e o resultado passava
+        // por legítimo — enquanto 27 linhas abaixo o MESMO bloco rejeita
+        // corretamente o DC ausente. Assimetria fechada: sem bônus de ataque
+        // de magia, não há ataque de magia.
+        if (entry.attack == null) {
+          refundSpellResource(session, isCantrip, isFocus, castRank);
+          if (you) you.actionsRemaining += cost;
+          return {
+            content: `The sheet has no spell attack bonus for ${c.name}'s tradition (nothing was spent). Import the character again or resolve ${sheetName} by its save instead.`,
+            isError: true,
+          };
+        }
         const map = mapPenalty(you!.mapProgress);
         const ac = effectiveAC(target, rollOptionsOf(session, target, you!, { action: sheetName }));
         const result = rollCheck(
           `${sheetName} spell attack: ${c.name} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`,
-          (entry.attack ?? 0) + map,
+          entry.attack + map,
           ac,
         );
         you!.mapProgress += 1;
@@ -1941,9 +2010,21 @@ export async function executeTool(
       const selfEff = mentionedSelfEffect(reason, ownedAbilities(session));
       const effLine = selfEff ? grantPlayerEffect(session, selfEff.name, selfEff.name) : null;
       emit({ type: "state", state: session.state });
+      // Doutrina 4 aplicada ao que a engine NÃO faz: se a atividade citada é
+      // uma habilidade da ficha que nada implementa, isso é dito — ao narrador
+      // (numerado, como todo resultado mecânico) e ao jogador (evento próprio).
+      // Sem isto, gastar ação com Toughness e com Sneak Attack produz a MESMA
+      // linha, e o jogador não sabe qual foi enforced.
+      const adj = effLine
+        ? null
+        : adjudicationFor(session.character, reason, ownedAbilities(session));
+      if (adj) emit({ type: "adjudicated", adjudicated: adj });
+      const adjLine = adj
+        ? `\n- ${adj.name}: NÃO automatizado pela engine (${adj.reason}) — adjudique pela regra escrita, sem inventar número.`
+        : "";
       return {
-        content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.${effLine ? ` ${effLine.replace(/^- /, "")}` : ""}`,
-        summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).${effLine ? `\n${effLine}` : ""}`,
+        content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.${effLine ? ` ${effLine.replace(/^- /, "")}` : ""}${adjLine ? ` ${adjLine.trim()}` : ""}`,
+        summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).${effLine ? `\n${effLine}` : ""}${adjLine}`,
       };
     }
     case "use_item": {
@@ -2195,13 +2276,15 @@ export async function executeTool(
       // Contrato estrito: parâmetro desconhecido não pode ser engolido em
       // silêncio (play-test: `updateType: "off-guard"` foi ignorado e o
       // off-guard do Twin Feint nunca aplicou — a 2ª Strike rolou vs AC cheia).
+      // O `&& !hasEffect` que existia aqui era a brecha: com
+      // `{"hpDelta":-5,"updateType":"off-guard"}` o HP era aplicado e o
+      // `updateType` descartado sem uma linha de log — metade do conserto do
+      // Twin Feint. Desde 2026-08-15 o `strictObject` do zod pega isso antes
+      // (ver `dispatchToolCall`); esta checagem fica como defesa em
+      // profundidade, para quem chama `executeTool` direto.
       const KNOWN_PARAMS = new Set(["hpDelta", "addConditions", "removeConditions", "target"]);
       const unknown = Object.keys(input).filter((k) => !KNOWN_PARAMS.has(k));
-      const hasEffect =
-        typeof input.hpDelta === "number" ||
-        Array.isArray(input.addConditions) ||
-        Array.isArray(input.removeConditions);
-      if (unknown.length > 0 && !hasEffect) {
+      if (unknown.length > 0) {
         return {
           content: `Unknown parameter(s) ${unknown.map((k) => `"${k}"`).join(", ")} — NOTHING was applied. Valid parameters: hpDelta (number), addConditions (string[]), removeConditions (string[]), target (combatant id/name). To apply a condition, retry with addConditions, e.g. {"target":"${targetRef || "..."}","addConditions":["off-guard"]}.`,
           isError: true,
@@ -2833,6 +2916,39 @@ function partyBlock(session: Session): string {
  * vivo. Aliado caster luta como marcial por enquanto (conjuração de aliado é
  * tarefa futura registrada no ROADMAP — exigiria política própria de alvo).
  */
+/**
+ * O fim de rodada COMPLETO, na ordem que o PF2e exige.
+ *
+ * Exportado como unidade porque a simulação (`scripts/sim-battery.ts`) precisa
+ * rodar exatamente esta sequência — copiá-la lá criaria uma ficção que diverge
+ * do código real na primeira mudança, e a bateria passaria a medir a cópia.
+ * Mesmo motivo de `dispatchToolCall` e `GENERIC_STRIKE`: se dois lugares TÊM de
+ * concordar, eles compartilham o código em vez de repeti-lo.
+ *
+ * Ordem, e por quê: aliados agem entre o jogador e o revide (podem fechar a
+ * luta sozinhos) → inimigos revidam → dano persistente ticka (dano → flat check
+ * DC 15) → upkeep de fim de rodada (off-guard expira, frightened decrementa,
+ * ações renovam, efeitos com prazo em rodadas vencem).
+ */
+export function resolveRoundEnd(
+  session: Session,
+  emit: (e: StreamEvent) => void,
+): string[] {
+  const lines: string[] = [];
+  const combat = session.state.combat;
+  if (!combat?.active) return lines;
+
+  lines.push(...resolveAllyTurns(session, emit));
+  if (combat.active) lines.push(...resolveEnemyTurns(session, emit));
+  if (combat.active) lines.push(...applyPersistentTicks(session, emit));
+  if (combat.active) {
+    tickEndOfRound(combat);
+    lines.push(...expirePlayerEffects(session, "round"));
+    emit({ type: "state", state: session.state });
+  }
+  return lines;
+}
+
 export function resolveAllyTurns(
   session: Session,
   emit: (e: StreamEvent) => void,
@@ -3075,8 +3191,17 @@ export async function runRulesStage(
     anyTool = true;
 
     for (const tc of toolCalls) {
-      const args = parseToolArgs(tc.function.arguments);
-      const outcome = await executeTool(session, tc.function.name, args, emit);
+      // `dispatchToolCall` valida ANTES de executar (doutrina 1). Sem isto,
+      // todo `input.x ?? default` de `executeTool` é porta aberta — e o caminho
+      // Gemma 4 do llama.cpp ignora o schema (ADR-006), então esta camada é a
+      // ÚNICA que resta. Rejeição volta ao modelo pelo mesmo canal dos erros
+      // semânticos, e NADA é aplicado ao estado.
+      const { outcome, args } = await dispatchToolCall(
+        session,
+        tc.function.name,
+        parseToolArgs(tc.function.arguments),
+        emit,
+      );
       // 240 e não 80: este log É a fonte de verdade da bateria de feats (o
       // harness lê o stdout do servidor para saber o que a engine respondeu).
       // Com 80 caracteres, notas que a engine escreve no FIM da mensagem —
@@ -3213,22 +3338,7 @@ export async function runRulesStage(
     combat?.combatants.some((c) => c.kind === "enemy" && !c.defeated) ?? false;
   const tookTurn = endedTurn || (you ? you.actionsRemaining < 3 : false);
   if (combat?.active && enemiesAlive && tookTurn) {
-    // Aliados agem entre o jogador e o revide (podem fechar a luta sozinhos).
-    summaryLines.push(...resolveAllyTurns(session, emit));
-    if (combat.active) {
-      summaryLines.push(...resolveEnemyTurns(session, emit));
-    }
-    // Dano persistente ticka no fim da rodada (dano → flat check DC 15).
-    if (combat.active) {
-      summaryLines.push(...applyPersistentTicks(session, emit));
-    }
-    // End-of-round upkeep: off-guard expires, frightened N decrements, e os
-    // efeitos com prazo em rodadas vencem (Fase 2.6).
-    if (combat.active) {
-      tickEndOfRound(combat);
-      summaryLines.push(...expirePlayerEffects(session, "round"));
-      emit({ type: "state", state: session.state });
-    }
+    summaryLines.push(...resolveRoundEnd(session, emit));
   }
 
   // Saiu da luta: o que durava "este encontro" ou tinha prazo em rodadas acaba

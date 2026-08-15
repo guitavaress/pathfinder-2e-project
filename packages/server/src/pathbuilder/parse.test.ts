@@ -100,7 +100,87 @@ describe("parsePathbuilder with the example character (Goblin Rogue level 5)", (
  * isso no `die` — ele manda o dado base e a runa separada, no campo `str`.
  * Bug real de play-test: um "+1 Striking Rapier" rolava 1d6 em vez de 2d6.
  */
+/**
+ * Campo mecânico ausente é ERRO DE IMPORT, não zero.
+ *
+ * O parser usava `asNumber(v, 0)` em tudo. Um export com campo renomeado ou
+ * truncado importava "com sucesso" e o personagem entrava em jogo com CA 0 —
+ * todo ataque inimigo virando crítico automático — ou 0 HP, ou uma arma sem
+ * dado que `parseDie("")` transformava num d6 fabricado. Falhar é ruidoso e
+ * recuperável; jogar com CA 0 não é.
+ */
+describe("piso numérico do import", () => {
+  const valido = {
+    name: "T",
+    class: "Fighter",
+    level: 3,
+    abilities: { str: 18, dex: 12, con: 14, int: 10, wis: 10, cha: 10 },
+    attributes: { ancestryhp: 8, classhp: 10, bonushp: 0, bonushpPerLevel: 0 },
+    acTotal: { acTotal: 19, acItemBonus: 4 },
+    keyability: "str",
+    weapons: [
+      { name: "Longsword", display: "Longsword", die: "d8", attack: 11, damageBonus: 4, damageType: "S" },
+    ],
+  };
+  const semCampo = (drop: (b: Record<string, any>) => void) => {
+    const build = structuredClone(valido) as Record<string, any>;
+    drop(build);
+    return () => parsePathbuilder({ success: true, build });
+  };
+
+  it("a fixture de controle importa (a rede não apertou demais)", () => {
+    const c = parsePathbuilder({ success: true, build: structuredClone(valido) });
+    expect(c.ac).toBe(19);
+    expect(c.maxHp).toBe(8 + (10 + 2) * 3);
+  });
+
+  it("sem acTotal: rejeita em vez de importar com CA 0", () => {
+    expect(semCampo((b) => delete b.acTotal)).toThrow(/acTotal\.acTotal/);
+  });
+
+  it("sem ancestryhp/classhp: rejeita em vez de importar com 0 HP", () => {
+    expect(semCampo((b) => delete b.attributes.ancestryhp)).toThrow(/ancestryhp/);
+    expect(semCampo((b) => delete b.attributes.classhp)).toThrow(/classhp/);
+  });
+
+  it("arma sem dado de dano: rejeita em vez de fabricar um d6", () => {
+    // `parseDie("")` devolve 6 — a arma sem `die` rolava d6 e nada dizia isso.
+    expect(semCampo((b) => delete b.weapons[0].die)).toThrow(/sem dado de dano/);
+    expect(semCampo((b) => (b.weapons[0].die = ""))).toThrow(/sem dado de dano/);
+  });
+
+  it("arma sem bônus de ataque: rejeita em vez de virar +0", () => {
+    expect(semCampo((b) => delete b.weapons[0].attack)).toThrow(/attack/);
+  });
+
+  it("keyability inválida: rejeita em vez de corromper a Class DC calada", () => {
+    // Antes: `abilityModifiers[keyAbility]` era undefined, o `?? 0` engolia, e
+    // a Class DC saía sem o modificador da habilidade-chave.
+    expect(semCampo((b) => (b.keyability = "strength"))).toThrow(/keyability/);
+  });
+
+  it("bônus OPCIONAIS seguem com default 0 (não viraram obrigatórios)", () => {
+    const c = parsePathbuilder({
+      success: true,
+      build: (() => {
+        const b = structuredClone(valido) as Record<string, any>;
+        delete b.attributes.bonushp;
+        delete b.attributes.bonushpPerLevel;
+        delete b.weapons[0].damageBonus;
+        return b;
+      })(),
+    });
+    expect(c.maxHp).toBe(8 + (10 + 2) * 3);
+    expect(c.weapons[0]!.damageBonus).toBe(0);
+  });
+});
+
 describe("runa striking → quantidade de dados de dano", () => {
+  // `attributes` e `acTotal` entraram aqui em 2026-08-15: o parser passou a
+  // exigir os campos que DEFINEM HP e CA, porque `asNumber(v, 0)` fazia um
+  // export truncado importar com CA 0 (todo ataque inimigo vira crítico) sem
+  // uma linha de aviso. A fixture antes era válida só porque o parser era
+  // permissivo — que é o padrão que essa mudança existe para acabar.
   const build = (str: unknown) =>
     parsePathbuilder({
       success: true,
@@ -109,6 +189,8 @@ describe("runa striking → quantidade de dados de dano", () => {
         class: "Rogue",
         level: 5,
         abilities: { str: 10, dex: 18, con: 12, int: 10, wis: 10, cha: 10 },
+        attributes: { ancestryhp: 8, classhp: 8, bonushp: 0, bonushpPerLevel: 0 },
+        acTotal: { acTotal: 21, acItemBonus: 2 },
         weapons: [
           { name: "Rapier", display: "Rapier", die: "d6", str, attack: 14, damageBonus: 1, damageType: "P" },
         ],

@@ -140,8 +140,14 @@ export const CharacterSchema = z.object({
   level: z.number().int().min(1).max(20),
   abilities: AbilityScoresSchema,
   abilityModifiers: AbilityScoresSchema,
-  maxHp: z.number().int(),
-  ac: z.number().int(),
+  // `.min(1)` não é regra de PF2e — é rede contra o default 0 do import.
+  // `asNumber(v, 0)` no parser fazia um export sem `acTotal` (campo renomeado,
+  // JSON truncado) entrar com CA 0, e `buildCombat` copia isso para o
+  // combatente: todo ataque inimigo vira crítico automático, em silêncio. O
+  // parser agora rejeita o campo AUSENTE com mensagem; isto aqui é a última
+  // instância, para save antigo e para quem monta `Character` na mão.
+  maxHp: z.number().int().min(1),
+  ac: z.number().int().min(1),
   speed: z.number().int(),
   perception: z.number().int(),
   saves: z.object({
@@ -217,11 +223,33 @@ export const CheckResultSchema = z.object({
 });
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 
+/**
+ * Uma habilidade da ficha que a engine RECONHECE mas não sabe executar.
+ *
+ * Medido em 2026-08-15: 61% das entradas de uma ficha típica caem nesse caso —
+ * 52,6% dos feats do PF2e são prosa pura, sem mecânica legível por máquina em
+ * fonte nenhuma (o Foundry também não os automatiza; mostra o texto a um GM
+ * humano). Antes disso o silêncio era total: invocar Toughness e invocar Sneak
+ * Attack produziam a mesma linha, e o jogador não tinha como saber que uma foi
+ * enforced pela engine e a outra apenas narrada por cima.
+ *
+ * Declarar não conserta a lacuna — torna a lacuna VISÍVEL, que é a doutrina 4
+ * ("estado nunca mente") aplicada ao que a engine não faz.
+ */
+export const AdjudicatedSchema = z.object({
+  /** O nome como está na ficha ("Toughness"). */
+  name: z.string(),
+  /** Por que a engine não aplicou — vem da auditoria de cobertura. */
+  reason: z.string(),
+});
+export type Adjudicated = z.infer<typeof AdjudicatedSchema>;
+
 /** Events that make up a scene's log (rendered in the UI). */
 export const SceneEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("narration"), text: z.string() }),
   z.object({ type: z.literal("player"), text: z.string() }),
   z.object({ type: z.literal("check"), result: CheckResultSchema }),
+  z.object({ type: z.literal("adjudicated"), adjudicated: AdjudicatedSchema }),
 ]);
 export type SceneEvent = z.infer<typeof SceneEventSchema>;
 
