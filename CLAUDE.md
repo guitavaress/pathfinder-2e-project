@@ -84,7 +84,11 @@ de histórico dimensionadas para os 64k (`RULES_CONTEXT_TURNS=16`,
 1. **Rules** (`runRulesStage`): tool loop (roll_check, cast_spell, rest,
    start_combat, end_combat, end_turn, spend_actions, use_item, update_state,
    manage_companion, lookup_rule, get_character) → resumo mecânico
-   determinístico. `rest` cura
+   determinístico. `lookup_rule` desambigua nome colidido em três forças
+   (ADR-010, `rules/sheet-lookup.ts`): **referência que o jogador fixou na
+   paleta `@`** (`refs` no turno, viva um turno só) → **portão da ficha**
+   (172 das 309 colisões, em código) → índice, com homônimos sempre listados.
+   `rest` cura
    com as regras reais (overnight: CON×nível + slots/focus; Treat Wounds:
    Medicine check DC 15 com toolkit) — cura inventada via `update_state` é
    rejeitada dentro e fora de combate. Em combate: 1 mensagem do
@@ -156,7 +160,7 @@ mora em código determinístico e testado. O modelo só chama tools e narra.
 Regras de trabalho:
 - Uma fase / uma tarefa por vez. Nada de frentes paralelas.
 - Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
-  O piso vigente é **620 testes do servidor** (+31 do brain) e, na bateria, **69 PASS · 3 FLAKY ·
+  O piso vigente é **653 testes do servidor** (+31 do brain) e, na bateria, **69 PASS · 3 FLAKY ·
   1 SUSPECT · 2 FAIL com cobertura de asserção 40/75** (gate de **2026-08-14**,
   pós-Fases 2.5/2.6, `--repeat=3` contra o commit 8dafee6; juiz honesto — NÃO
   comparável com os 75/75 antigos). Piso, não meta.
@@ -164,4 +168,6 @@ Regras de trabalho:
   estruturado, `Clever Gambit`) e o SUSPECT é `Exotic Edge` — dívida declarada.
   Os FLAKY são [MODELO]: o modelo resolve a atividade por `roll_check` com o
   combate inativo, e fora de combate a engine não cobra ações.
+  A bateria **não** exercita a paleta da Fase 2.7 (manda prosa direto, sem
+  `refs`) nem os efeitos ativos da 2.6 — medir os dois exige cenários novos.
 - Se uma tarefa contradisser uma decisão registrada nos ADRs, PARE e sinalize.

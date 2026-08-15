@@ -78,6 +78,12 @@ export const WeaponSchema = z.object({
   attack: z.number().int(),
   /** Damage die, e.g. "d4". */
   die: z.string(),
+  /**
+   * How many damage dice the weapon rolls — a striking rune adds dice
+   * (striking 2, greater 3, major 4). `default(1)` porque save.json antigo
+   * não tem o campo: ficha sem runa continua rolando 1 dado.
+   */
+  dice: z.number().int().min(1).default(1),
   /** Flat damage bonus. */
   damageBonus: z.number().int(),
   /** Damage type, e.g. "P", "S", "B". */
@@ -365,3 +371,23 @@ export const GameStateSchema = z.object({
   effects: z.array(ActiveEffectSchema).optional(),
 });
 export type GameState = z.infer<typeof GameStateSchema>;
+
+/**
+ * Referência EXPLÍCITA a um documento do dataset, anexada ao turno (Fase 2.7).
+ *
+ * É o que a paleta da UI manda quando o jogador escolhe uma habilidade da
+ * própria ficha em vez de digitar o nome solto. Sem isto, um nome colidido
+ * ("Shake It Off": reação em `actions` E feat em `feats`, textos diferentes)
+ * depende de o índice adivinhar. Com isto não há adivinhação — e a garantia é
+ * da ENGINE, não do prompt: a referência não trafega como prosa para o modelo
+ * reproduzir, ela fica fixada no turno e o `lookup_rule` a consulta primeiro.
+ */
+export const TurnRefSchema = z.object({
+  /** Nome exibido, como aparece na ficha e no texto do jogador. */
+  name: z.string().min(1),
+  /** Categoria do dataset ("feats", "spells", "equipment"…). */
+  category: z.string().min(1),
+  /** uuid do documento, quando conhecido — a forma mais forte. */
+  uuid: z.string().optional(),
+});
+export type TurnRef = z.infer<typeof TurnRefSchema>;

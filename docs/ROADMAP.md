@@ -363,6 +363,49 @@ seguida da posicional — que é Fase 3.
 
 ---
 
+## Fase 2.7 — Desambiguação de nome (a paleta `@`)
+
+### ✅ CONCLUÍDA em 2026-08-15 (ver ADR-010)
+
+**O problema, medido.** 309 nomes do dataset existem em 2+ categorias com
+textos diferentes. Dos 53 pares `feats`×`actions`, **47 divergem** — o GM lia a
+regra errada em 89% dos casos onde a colisão acontece. `Shake It Off` (a
+reação vs o feat de bárbaro) e `Fly` (a ação vs a magia) são os retratos.
+
+**O que foi feito.**
+
+| tarefa | entrega |
+|---|---|
+| T7.1 | `lookupInCategory`: nome exato dentro de UMA categoria, sem fuzzy nem precedência |
+| T7.2 | `rules/sheet-lookup.ts`: três forças — referência explícita → portão da ficha → índice |
+| T7.3 | `refs` no `/scene/turn`, fixados por `runTurn` e consultados pelo `lookup_rule` antes do que o modelo pediu |
+| T7.4 | `GET /palette/:sessionId` + o `@` no campo de ação (`AbilityPalette`) |
+| T7.5 | testes (+33, piso 653) e docs |
+
+**O ganho do portão, medido.** O portão anterior era feats-only e escrito à
+mão: cobria **73** das 172 colisões que a ficha decide. Generalizado — magia,
+item, ancestralidade, herança, background, classe, divindade — cobre **172**.
+
+| | colisões |
+|---|---|
+| a FICHA decide (um lado só) → código | **172 (56%)** |
+| dois lados na ficha → só a intenção decide (é o que a paleta resolve) | 131 (42%) |
+| nenhum lado na ficha (bestiary, hazard) → o modelo escolhe, com os dois à vista | 6 (2%) |
+
+Medido a cada `npm test` na linha `[T7]` de `rules/sheet-lookup.test.ts`.
+
+**O que esta fase NÃO resolve, dito claramente:**
+- **Texto livre continua existindo.** Quem digitar "eu sacudo o medo" sem passar
+  pela paleta cai no portão e no índice, como antes. A paleta reduz a
+  ambiguidade; não a elimina.
+- **A bateria não mede o caminho da paleta** — ela manda prosa direto ao
+  servidor, sem `refs`. Medir isto exige cenários novos, como na Fase 2.6.
+- Os 2 FAIL da bateria seguem de pé: `Shield Block` precisa de hardness
+  estruturado (o importador não guarda hardness/HP/BT dos 115 escudos) e
+  `Clever Gambit` é reação não implementada. Nenhum dos dois era colisão.
+
+---
+
 ## Fase 3 — Combate posicional + geração procedural
 
 - **Objetivo:** sair do combate abstrato para o tático (posição importa) e gerar

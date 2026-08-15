@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Character, GameState } from "@pf2e/shared";
+import type { Character, GameState, TurnRef } from "@pf2e/shared";
 import {
   continueCampaign,
   fetchCampaign,
+  fetchPalette,
   importCharacter,
   streamTurn,
   type CampaignInfo,
+  type PaletteEntry,
 } from "./api.js";
 import { BrainOverlay, type BrainTab } from "./brain/BrainOverlay.js";
 import { useScribe } from "./brain/ScribeIndicator.js";
@@ -34,7 +36,18 @@ export function App() {
   const [fullSheetOpen, setFullSheetOpen] = useState(false);
   const [brainTab, setBrainTab] = useState<BrainTab | null>(brainTabFromHash);
   const [campaign, setCampaign] = useState<CampaignInfo | null>(null);
+  const [palette, setPalette] = useState<PaletteEntry[]>([]);
   const { scribe, onTurnStart, onTurnDone } = useScribe();
+
+  // A paleta do `@`: o que a ficha nomeia, com uuid e custo do dado. Só muda
+  // quando a sessão muda — a ficha não se altera no meio da campanha.
+  useEffect(() => {
+    if (!sessionId) {
+      setPalette([]);
+      return;
+    }
+    void fetchPalette(sessionId).then(setPalette);
+  }, [sessionId]);
 
   // Campanha salva? (alimenta o card "Continue campaign" na tela de entrada)
   useEffect(() => {
@@ -75,7 +88,7 @@ export function App() {
   }, [sessionId, brainTab, openBrain]);
 
   const runTurn = useCallback(
-    async (id: string, text: string) => {
+    async (id: string, text: string, refs: TurnRef[] = []) => {
       setBusy(true);
       setPhase(null);
       onTurnStart();
@@ -114,7 +127,7 @@ export function App() {
               completed = true;
               break;
           }
-        });
+        }, refs);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -167,10 +180,10 @@ export function App() {
   }, [runTurn]);
 
   const handleSend = useCallback(
-    (text: string) => {
+    (text: string, refs: TurnRef[]) => {
       if (!sessionId) return;
       setLog((prev) => [...prev, { kind: "player", text }]);
-      void runTurn(sessionId, text);
+      void runTurn(sessionId, text, refs);
     },
     [sessionId, runTurn],
   );
@@ -198,6 +211,7 @@ export function App() {
           combat={state.combat}
           onSend={handleSend}
           scribe={scribe}
+          palette={palette}
         />
         <CompactRail
           character={character}
