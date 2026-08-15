@@ -15,7 +15,7 @@
 > 3. **A Régua é lei:** mecânica em código, voz no LLM. PR que mova estado para o
 >    modelo é rejeitado por princípio.
 > 4. **Todo comportamento mecânico novo nasce com teste** e estende a bateria
->    feat-audit. O gate vigente da bateria e os **694 testes** (663 server + 31
+>    feat-audit. O gate vigente da bateria e os **740 testes** (709 server + 31
 >    brain, medidos em 2026-08-15) são piso, não meta. Ao mexer no JUIZ da bateria, rode
 >    `replay-judge.ts` antes de gastar GPU — ele re-julga transcripts gravados e
 >    separa "o juiz mudou de opinião" de "o jogo mudou".
@@ -461,6 +461,59 @@ Medido a cada `npm test` na linha `[T7]` de `rules/sheet-lookup.test.ts`.
   cenário de cada fase 2.6/2.7 falha se a mecânica for revertida (teste do teste).
 - **Riscos:** ⚠️ antes de qualquer bateria nova, portar o sandbox de brain (item 5
   da fila) — `run-bestiary-battery.ts` hoje arquiva a campanha real do jogador.
+
+---
+
+## Fase 2.75 — O contrato desligado e a fronteira medida
+
+### ✅ CONCLUÍDA em 2026-08-15 (ver ADR-012)
+
+Fase não planejada: nasceu da desconfiança do usuário de que "os testes só medem
+os personagens que eu criei". A desconfiança estava certa, e o que havia embaixo
+era pior.
+
+| tarefa | entrega |
+|---|---|
+| T1 | `validateToolArgs` ligada no dispatch — estava exportada, testada e **nunca chamada** desde 25/07. Nasce `dispatchToolCall`, testável sem GPU |
+| T2 | quatro fabricadores mortos: bônus de ataque tirado da Percepção, dano da arma errada, spell attack +0, `findCombatant` casando `includes("")` |
+| T3 | piso numérico no import: campo mecânico ausente é erro, não 0 (CA 0 fazia todo ataque inimigo virar crítico, calado) |
+| T4 | `rules/coverage.ts` + corpus gerado do dataset, seeded; linha **`[T9]`** |
+| T5 | a engine DECLARA o que reconhece e não executa — ao narrador e ao jogador |
+
+**A medição que a fase existe para ter** (`[T9]`, 60 fichas geradas, 1.339
+entradas): **MECANIZADO 25,4% · DECLARADO 13,3% · CEGO 61,3%**. Invariante =
+**teto congelado** (0,62), não "zero CEGO" — 52,6% dos feats são prosa em
+qualquer fonte, e exigir zero produziria um vermelho permanente.
+
+**A lição que generaliza:** ligar o contrato não quebrou um único teste — porque
+o laço de tool calls só roda com o llama-server no ar e todos os testes chamavam
+`executeTool` direto. O buraco era **inalcançável pela suíte por construção**.
+Comportamento atrás de dependência externa precisa de unidade testável sem ela.
+
+**Piso: 663 → 709 testes do servidor** (+46), 31 do brain.
+
+**Dívida nomeada (ADR-012):** nenhuma ação de perícia aplica condição; uma única
+feature de classe mecanizada; `classes 0/27` e `ancestries 0/50` com leitor; os
+140 iconics importados vazios; o parser descartando runas, `Invested` e
+`shieldBonus`.
+
+---
+
+## Fase 3 (nova numeração livre) — Ações de perícia com consequência
+
+- **Status:** nomeada e medida, **não iniciada**. É a candidata natural a
+  próxima fase de mecânica, ao lado da 2.8.
+- **O buraco:** `roll_check` de perícia rola o d20 e PARA. Demoralize não aplica
+  `frightened`, Trip não aplica `prone`, Grapple não aplica `grabbed`, Shove e
+  Feint não fazem nada. A única ação de perícia com consequência real no sistema
+  inteiro é Treat Wounds (tool `rest` própria). O `summaryLine` de um Demoralize
+  bem-sucedido é idêntico ao de uma rolagem inventada.
+- **Antes de começar, o censo** (como em toda fase que deu certo): quantas ações
+  de perícia têm consequência ESTRUTURADA no dado, e quantas só a descrevem em
+  prosa por grau de sucesso. `skill-actions.json` existe mas hoje só é lido como
+  seed de fallback, e achata os quatro graus numa string.
+- **Por que não entrou na fase 2.75:** é regra nova, e aquela fase era sobre
+  fazer a engine parar de mentir. Misturar as duas teria escondido as duas.
 
 ---
 

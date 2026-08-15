@@ -15,6 +15,11 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
    dele) — ver ADR-006 para por que o enforcement é client-side e não GBNF. Vale
    também para o backend: samplers vão fixados em código (`SAMPLERS` no
    `agent.ts`), não herdados dos defaults de quem serve o modelo.
+   **`validateToolArgs` roda no dispatch, dentro de `dispatchToolCall`** — de
+   25/07 a 15/08/2026 ela existia, era testada e NUNCA era chamada, e nenhum
+   teste podia pegar isso porque o laço de tool calls só roda com o llama-server
+   no ar (ADR-012). Regra que ficou: **comportamento atrás de dependência externa
+   precisa de unidade testável sem ela**.
 2. **Classificar antes de corrigir.** Toda falha do GM é diagnosticada como
    [MODELO] × [CÓDIGO] × [FALTA DE DEFINIÇÃO] antes do fix. Fix de prompt que
    reincide é promovido a código (escada de escalação).
@@ -41,6 +46,15 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
 4. **Estado nunca mente.** O narrador recebe os resultados mecânicos numerados como
    última mensagem e é proibido de inventar/inverter; o que não está nas linhas
    não aconteceu. Cura/dano/itens sem fonte na ficha são rejeitados pela engine.
+   **Vale também para o que a engine NÃO faz** (ADR-012): habilidade da ficha que
+   ela reconhece mas não executa é DECLARADA — linha própria no resumo e evento
+   `adjudicated` ao jogador (`rules/coverage.ts` → `adjudicationFor`). Medido:
+   **61,3% das entradas de uma ficha caem nesse caso**, porque 52,6% dos feats do
+   PF2e são prosa pura em QUALQUER fonte (o Foundry também não os automatiza). O
+   alvo do projeto não é automatizar tudo — é ser impecável em saber o que sabe.
+   A linha `[T9]` de `rules/coverage.test.ts` mede a cada `npm test`
+   (MECANIZADO 25,4% · DECLARADO 13,3% · CEGO 61,3%), com **teto congelado**: o
+   balde CEGO pode encolher, nunca crescer.
 
 ## Fluxos e restrições
 
@@ -112,7 +126,17 @@ de histórico dimensionadas para os 64k (`RULES_CONTEXT_TURNS=16`,
 2. **Narrative** (`runNarrativeStage`): narra o resumo (streaming), temperatura
    menor em combate, sem tools.
 
-SSE: `delta`/`check`/`state`/`phase`/`done`/`error`; o combate vai dentro de `state`.
+SSE: `delta`/`check`/`state`/`phase`/`adjudicated`/`done`/`error`; o combate vai
+dentro de `state`. `adjudicated` (ADR-012) é a habilidade da ficha que a engine
+reconhece e não executa — some do log quando o que foi citado é mecanizado.
+
+**Cobertura de ficha** (`rules/coverage.ts`): `auditCharacter` classifica cada
+entrada da ficha em MECANIZADO / DECLARADO / CEGO, estaticamente — o runtime não
+emite sinal (`ToolOutcome` não tem campo de "mecanizei"), então a auditoria
+replica os portões e lê o `.skipped` de `actorModifiersFor`, que produção
+calcula e descarta. `rules/corpus.ts` gera fichas do dataset real, **seeded**,
+para a suíte parar de medir sempre o mesmo personagem — sem substituir as
+fixtures truncadas, que provam "ausência ≠ falso" e um corpus não reproduz.
 
 ## Companheiros (Fase 2 / ADR-004)
 
@@ -160,7 +184,7 @@ mora em código determinístico e testado. O modelo só chama tools e narra.
 Regras de trabalho:
 - Uma fase / uma tarefa por vez. Nada de frentes paralelas.
 - Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
-  O piso vigente é **663 testes do servidor** (+31 do brain, medido em 2026-08-15)
+  O piso vigente é **709 testes do servidor** (+31 do brain, medido em 2026-08-15)
   e, na bateria, **69 PASS · 3 FLAKY ·
   1 SUSPECT · 2 FAIL com cobertura de asserção 40/75** (gate de **2026-08-14**,
   pós-Fases 2.5/2.6, `--repeat=3` contra o commit 8dafee6; juiz honesto — NÃO
@@ -180,7 +204,11 @@ Regras de trabalho:
   retirou o plano da Fase 3 em diante para repensar a direção.
 - **O roadmap vivo vai até a Fase 2.9** — **2.8** (deadly/fatal + runas + a
   decisão de ADR do item investido) e **2.9** (a bateria voltar a medir as Fases
-  2.6 e 2.7). Depois disso está **em aberto de propósito**; o plano antigo está
+  2.6 e 2.7). A **2.75** (contrato desligado + fronteira medida) entrou fora do
+  plano, por medição, e está CONCLUÍDA. Nomeada e não iniciada: **ações de
+  perícia com consequência** — hoje Demoralize não aplica `frightened`, Trip não
+  aplica `prone`, e a única exceção do sistema é Treat Wounds.
+  Depois disso está **em aberto de propósito**; o plano antigo está
   congelado em `docs/ROADMAP-LEGADO-2026-08-15.md` — **consultar, não obedecer**.
   Proposta de fase nova nasce de censo com métrica no `npm test`, não de
   cronograma: foi assim que 1.5, 2.5, 2.6 e 2.7 deram certo e é por não ser assim
