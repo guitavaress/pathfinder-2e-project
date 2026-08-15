@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import type { Character, GameState } from "@pf2e/shared";
+import type { Character, GameState, TurnRef } from "@pf2e/shared";
 
 export interface Session {
   id: string;
@@ -10,6 +10,10 @@ export interface Session {
   messages: ChatCompletionMessageParam[];
   /** True quando restaurada de um save — o primeiro turno vira recap. */
   resumed?: boolean;
+  /** Referências que o JOGADOR fixou neste turno pela paleta da UI (Fase 2.7).
+   *  Vivem um turno só — `runTurn` põe na entrada e limpa na saída — porque
+   *  são intenção do turno, não estado do jogo: nada disto vai para o save. */
+  turnRefs?: TurnRef[];
 }
 
 const sessions = new Map<string, Session>();

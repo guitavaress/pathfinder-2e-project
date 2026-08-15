@@ -200,6 +200,17 @@ const endCombatSchema = z.strictObject({
 
 const lookupRuleSchema = z.strictObject({
   query: z.string().min(1).describe("What to look up (the rule's name)."),
+  // 309 nomes existem em duas categorias com textos DIFERENTES ("Shake It Off"
+  // é reação em `actions` e feat em `feats`). Quando o modelo sabe qual quer,
+  // dizer é mais barato que a engine adivinhar. Opcional de propósito: a
+  // garantia vem do portão da ficha e da referência fixada pelo jogador, não
+  // daqui — isto é reforço (doutrina 1).
+  category: z
+    .enum(["actions", "feats", "spells", "equipment", "conditions", "bestiary", "hazards"])
+    .optional()
+    .describe(
+      "Optional: which kind of entry you mean, when the name exists as more than one thing.",
+    ),
 });
 
 const getCharacterSchema = z.strictObject({});

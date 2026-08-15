@@ -12,7 +12,9 @@ import {
   type StreamEvent,
 } from "../gm/agent.js";
 import { existsSync, renameSync } from "node:fs";
+import { z } from "zod";
 import { graphView } from "@pf2e/brain";
+import { TurnRefSchema } from "@pf2e/shared";
 import {
   brainActivityLog,
   brainBumpSession,
@@ -180,7 +182,7 @@ app.post("/campaign/continue", (_req, res) => {
 
 /** Runs a turn and streams the GM events via SSE. */
 app.post("/scene/turn", async (req, res) => {
-  const { sessionId, text } = req.body ?? {};
+  const { sessionId, text, refs } = req.body ?? {};
   const session = getSession(String(sessionId ?? ""));
   if (!session) {
     res.status(404).json({ error: "Session not found." });
@@ -206,7 +208,14 @@ app.post("/scene/turn", async (req, res) => {
   } else {
     playerText = KICKOFF;
   }
-  await runTurn(session, playerText, send);
+  // Referências que o jogador fixou na paleta (Fase 2.7). Validadas aqui: um
+  // `refs` malformado vira lista vazia — o turno acontece do mesmo jeito, só
+  // sem a desambiguação. Nunca derruba a jogada por causa da UI.
+  const parsedRefs = z.array(TurnRefSchema).safeParse(refs);
+  if (refs !== undefined && !parsedRefs.success) {
+    console.warn("[turn] refs inválidos, ignorados:", parsedRefs.error.issues[0]?.message);
+  }
+  await runTurn(session, playerText, send, parsedRefs.success ? parsedRefs.data : []);
   res.end();
 });
 

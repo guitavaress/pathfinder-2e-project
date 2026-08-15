@@ -299,6 +299,23 @@ function load(): RuleRecord[] {
 }
 
 /**
+ * Registro de nome EXATO dentro de UMA categoria (Fase 2.7).
+ *
+ * É o primitivo da referência explícita: sem fuzzy, sem precedência, sem
+ * adivinhação. Quem sabe a categoria — a paleta da UI, a ficha, o modelo
+ * passando `category` — resolve por aqui e a colisão de nomes deixa de existir
+ * nesse caminho. O `lookupLocalRule` continua sendo o caminho da PROSA.
+ *
+ * Homônimos DENTRO da mesma categoria existem (variantes com o mesmo nome);
+ * mantém-se o primeiro, igual ao índice principal.
+ */
+export function lookupInCategory(name: string, category: string): RuleRecord | null {
+  const q = normalize(name);
+  if (!q) return null;
+  return recordsNamed(q).find((r) => r.category === category) ?? null;
+}
+
+/**
  * Looks up a rule by name (any category). Strategy: exact name → substring →
  * highest token overlap. Returns the best match or `null`.
  */

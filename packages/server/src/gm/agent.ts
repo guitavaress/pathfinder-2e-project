@@ -4,7 +4,7 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import type { AttackContext, Character, Combatant, Companion, Weapon } from "@pf2e/shared";
-import type { CheckResult, DegreeOfSuccess, GameState } from "@pf2e/shared";
+import type { CheckResult, DegreeOfSuccess, GameState, TurnRef } from "@pf2e/shared";
 import { degreeOfSuccess, isValidDc, rollCheck } from "../dice/check.js";
 import {
   actionLabel,
@@ -31,6 +31,7 @@ import { conditionModifiersFor } from "../rules/condition-modifiers.js";
 import { actorDefensesFor, actorModifiersFor } from "../rules/actor-modifiers.js";
 import { ModifierStack, type Modifier } from "../rules/modifiers.js";
 import { rollOptionsForCheck } from "../rules/roll-context.js";
+import { lookupForSheet } from "../rules/sheet-lookup.js";
 import {
   anchorToRound,
   effectLabel,
@@ -758,6 +759,24 @@ function syncPlayerDefenses(session: Session): void {
   you.immunities = immunities;
   you.weaknesses = weaknesses;
   you.resistances = resistances;
+}
+
+/**
+ * A referência que o jogador fixou neste turno para o que o modelo consultou.
+ *
+ * Casa por nome exato, ou pelo nome fixado contido na consulta — o modelo às
+ * vezes pergunta "Shake It Off feat" em vez do nome puro. NÃO casa ao
+ * contrário (consulta contida no nome fixado): "Fly" não pode capturar a
+ * referência de "Flying Blade".
+ */
+function pinnedRefFor(session: Session, query: string): TurnRef | undefined {
+  const q = query.toLowerCase().trim();
+  if (!q || !session.turnRefs?.length) return undefined;
+  const refs = session.turnRefs;
+  return (
+    refs.find((r) => r.name.toLowerCase().trim() === q) ??
+    refs.find((r) => q.includes(r.name.toLowerCase().trim()))
+  );
 }
 
 /** Tudo que a ficha nomeia e pode disparar um efeito auto-dirigido. */
@@ -2113,37 +2132,40 @@ export async function executeTool(
     }
     case "lookup_rule": {
       const query = String(input.query ?? "");
-      const local = lookupLocalRule(query);
-      if (local) {
-        // A FICHA escolhe a entrada principal, igual ao `costProfileOf`. O
-        // índice é primeiro-ganha por ordem alfabética de arquivo, então
-        // "Shake it Off" era servido como a REAÇÃO de actions.json — e o modelo
-        // ancorava na primeira linha ("reaction") e concluía que não gastava
-        // ação, mesmo com o feat de 1 ação logo abaixo na nota de homônimo.
-        let primary = local;
-        const onSheet = session.character.feats.some(
-          (f) => f.toLowerCase().trim() === primary.name.toLowerCase().trim(),
-        );
-        if (onSheet && primary.category !== "feats") {
-          const asFeat = homonymsOf(primary).find((r) => r.category === "feats");
-          if (asFeat) primary = asFeat;
-        }
+      // Desambiguação em três forças (Fase 2.7, `rules/sheet-lookup.ts`):
+      // referência explícita → portão da ficha → índice. Antes daqui o portão
+      // era feats-only e escrito à mão: cobria 73 das 167 colisões que a ficha
+      // decide. "Shake it Off" era servido como a REAÇÃO de actions.json e o
+      // modelo ancorava na primeira linha ("reaction"), concluindo que não
+      // gastava ação — com o feat de 1 ação logo abaixo, na nota de homônimo.
+      // A referência fixada pelo JOGADOR vence a que o modelo pediu: ele
+      // clicou na habilidade da própria ficha, não há o que interpretar.
+      const pinned = pinnedRefFor(session, query);
+      const category =
+        pinned?.category ?? (typeof input.category === "string" ? input.category : undefined);
+      const hit = lookupForSheet(session.character, query, { ref: pinned?.uuid, category });
+      const primary = hit.primary;
+      if (primary) {
         const traits = primary.traits?.length ? ` [${primary.traits.join(", ")}]` : "";
         // Custo explícito: era o campo mais decisivo do registro e não aparecia
         // no texto que o modelo lê — ele tinha que adivinhar pela prosa.
         const cost = actionLabel(primary);
         const costTag = cost ? ` [${cost}]` : "";
         // Homônimos: mostrar o outro lado em vez de escolher escondido.
-        const others = homonymsOf(primary)
+        const others = hit.homonyms
           .map((r) => {
             const c = actionLabel(r);
             const tr = r.traits?.length ? ` [${r.traits.join(", ")}]` : "";
             return `- ${r.name} (${r.category})${c ? ` [${c}]` : ""}${tr}`;
           })
           .join("\n");
-        const alsoBlock = others
-          ? `\n\nNOTE — another entry shares this name. The one above is the one THIS character uses:\n${others}`
-          : "";
+        // A nota diz a VERDADE sobre quem escolheu. Afirmar "esta é a que o
+        // personagem usa" quando ninguém decidiu era o estado mentindo.
+        const alsoBlock = !others
+          ? ""
+          : hit.ambiguous
+            ? `\n\nNOTE — another entry shares this name and the character sheet does NOT settle it. Pick by the scene, and say which you used:\n${others}`
+            : `\n\nNOTE — another entry shares this name. The one above is the one THIS character uses:\n${others}`;
         return {
           content: `${primary.name} (${primary.category})${costTag}${traits}\n${primary.text}${alsoBlock}`,
         };
@@ -3534,7 +3556,10 @@ export async function runTurn(
   session: Session,
   playerText: string,
   emit: (e: StreamEvent) => void,
+  refs: TurnRef[] = [],
 ): Promise<void> {
+  // Intenção do turno, não estado do jogo: vive daqui até o `finally`.
+  session.turnRefs = refs.length ? refs : undefined;
   session.messages.push({ role: "user", content: playerText });
   console.log(
     `[GM] turn started (rules=${RULES_MODEL}, narrative=${NARRATIVE_MODEL})`,
@@ -3578,5 +3603,9 @@ export async function runTurn(
     const message = err instanceof Error ? err.message : String(err);
     console.error("[GM] turn ERROR:", message);
     emit({ type: "error", message });
+  } finally {
+    // Referência fixada NÃO vaza para o turno seguinte: o jogador escolheu
+    // "Shake It Off" agora, não para sempre. Limpa mesmo com erro.
+    session.turnRefs = undefined;
   }
 }
