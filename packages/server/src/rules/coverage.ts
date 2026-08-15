@@ -281,6 +281,38 @@ export function auditCharacter(c: Character): CoverageReport {
   return { entries, counts, mechanizedRatio: counts.mechanized / total };
 }
 
+/**
+ * A habilidade da FICHA citada num texto e o que a engine faz com ela.
+ *
+ * É a ponte da T5: o que a auditoria classifica offline vira, em jogo, uma
+ * declaração ao narrador e ao jogador. Sem isto, invocar Toughness e invocar
+ * Sneak Attack produzem exatamente a mesma linha de resumo — e o jogador não
+ * tem como saber que uma foi enforced e a outra foi narrada por cima.
+ *
+ * Devolve `null` quando nada da ficha é citado OU quando o que foi citado é
+ * MECANIZADO: declarar o que funciona seria ruído.
+ */
+export function adjudicationFor(
+  c: Character,
+  text: string,
+  owned: readonly string[],
+): { name: string; reason: string } | null {
+  const t = text.toLowerCase();
+  for (const name of owned) {
+    const key = name.toLowerCase().trim();
+    // Nomes curtos casam demais em prosa livre (o mesmo piso que
+    // `mentionedSelfEffect` usa).
+    if (key.length < 6) continue;
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!new RegExp(`\\b${escaped}\\b`).test(t)) continue;
+    const kind: EntryKind = (c.feats ?? []).includes(name) ? "feat" : "classFeature";
+    const entry = auditNamed(c, name, kind);
+    if (entry.verdict === "mechanized") return null;
+    return { name, reason: entry.reason };
+  }
+  return null;
+}
+
 /** Conta, no dataset inteiro, quantos docs de ficha caem em cada balde. */
 export function datasetCoverageCensus(): Record<string, { total: number; withReader: number }> {
   const out: Record<string, { total: number; withReader: number }> = {};

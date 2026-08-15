@@ -286,6 +286,32 @@ button:disabled {
 .row.rollrow {
   margin-bottom: 1.1rem;
 }
+/*
+ * Habilidade que a engine reconhece mas não executa (61% das entradas de uma
+ * ficha típica, medido). Discreto de propósito: é meta-informação honesta, não
+ * um evento da cena — o jogador precisa poder distinguir "a engine garantiu"
+ * de "o narrador contou", sem que o aviso dispute com a narrativa.
+ */
+.row.adjudicated {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 13px;
+  color: var(--muted-2);
+  border-left: 2px dashed var(--gold-border);
+  padding-left: 0.8rem;
+  margin-bottom: 0.9rem;
+  cursor: help;
+}
+.adjudicated-name {
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
+  color: var(--ink-read);
+}
+.adjudicated-note {
+  font-style: italic;
+  opacity: 0.75;
+}
 .typing {
   display: flex;
   align-items: center;

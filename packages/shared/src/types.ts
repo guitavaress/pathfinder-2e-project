@@ -223,11 +223,33 @@ export const CheckResultSchema = z.object({
 });
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 
+/**
+ * Uma habilidade da ficha que a engine RECONHECE mas não sabe executar.
+ *
+ * Medido em 2026-08-15: 61% das entradas de uma ficha típica caem nesse caso —
+ * 52,6% dos feats do PF2e são prosa pura, sem mecânica legível por máquina em
+ * fonte nenhuma (o Foundry também não os automatiza; mostra o texto a um GM
+ * humano). Antes disso o silêncio era total: invocar Toughness e invocar Sneak
+ * Attack produziam a mesma linha, e o jogador não tinha como saber que uma foi
+ * enforced pela engine e a outra apenas narrada por cima.
+ *
+ * Declarar não conserta a lacuna — torna a lacuna VISÍVEL, que é a doutrina 4
+ * ("estado nunca mente") aplicada ao que a engine não faz.
+ */
+export const AdjudicatedSchema = z.object({
+  /** O nome como está na ficha ("Toughness"). */
+  name: z.string(),
+  /** Por que a engine não aplicou — vem da auditoria de cobertura. */
+  reason: z.string(),
+});
+export type Adjudicated = z.infer<typeof AdjudicatedSchema>;
+
 /** Events that make up a scene's log (rendered in the UI). */
 export const SceneEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("narration"), text: z.string() }),
   z.object({ type: z.literal("player"), text: z.string() }),
   z.object({ type: z.literal("check"), result: CheckResultSchema }),
+  z.object({ type: z.literal("adjudicated"), adjudicated: AdjudicatedSchema }),
 ]);
 export type SceneEvent = z.infer<typeof SceneEventSchema>;
 

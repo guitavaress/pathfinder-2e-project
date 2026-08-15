@@ -4,7 +4,8 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import type { AttackContext, Character, Combatant, Companion, Weapon } from "@pf2e/shared";
-import type { CheckResult, DegreeOfSuccess, GameState, TurnRef } from "@pf2e/shared";
+import type { Adjudicated, CheckResult, DegreeOfSuccess, GameState, TurnRef } from "@pf2e/shared";
+import { adjudicationFor } from "../rules/coverage.js";
 import { degreeOfSuccess, isValidDc, rollCheck } from "../dice/check.js";
 import {
   actionLabel,
@@ -457,6 +458,9 @@ export type StreamEvent =
   | { type: "check"; result: CheckResult }
   | { type: "state"; state: GameState }
   | { type: "phase"; phase: "rules" | "narrative" }
+  // Habilidade da ficha que a engine reconhece mas não executa: vai ao jogador
+  // pelo mesmo canal do `check`, para o silêncio deixar de ser invisível.
+  | { type: "adjudicated"; adjudicated: Adjudicated }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -2006,9 +2010,21 @@ export async function executeTool(
       const selfEff = mentionedSelfEffect(reason, ownedAbilities(session));
       const effLine = selfEff ? grantPlayerEffect(session, selfEff.name, selfEff.name) : null;
       emit({ type: "state", state: session.state });
+      // Doutrina 4 aplicada ao que a engine NÃO faz: se a atividade citada é
+      // uma habilidade da ficha que nada implementa, isso é dito — ao narrador
+      // (numerado, como todo resultado mecânico) e ao jogador (evento próprio).
+      // Sem isto, gastar ação com Toughness e com Sneak Attack produz a MESMA
+      // linha, e o jogador não sabe qual foi enforced.
+      const adj = effLine
+        ? null
+        : adjudicationFor(session.character, reason, ownedAbilities(session));
+      if (adj) emit({ type: "adjudicated", adjudicated: adj });
+      const adjLine = adj
+        ? `\n- ${adj.name}: NÃO automatizado pela engine (${adj.reason}) — adjudique pela regra escrita, sem inventar número.`
+        : "";
       return {
-        content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.${effLine ? ` ${effLine.replace(/^- /, "")}` : ""}`,
-        summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).${effLine ? `\n${effLine}` : ""}`,
+        content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.${effLine ? ` ${effLine.replace(/^- /, "")}` : ""}${adjLine ? ` ${adjLine.trim()}` : ""}`,
+        summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).${effLine ? `\n${effLine}` : ""}${adjLine}`,
       };
     }
     case "use_item": {
