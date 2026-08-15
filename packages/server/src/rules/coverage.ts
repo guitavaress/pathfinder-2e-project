@@ -1,0 +1,298 @@
+/**
+ * Auditoria de cobertura de uma FICHA: o que a engine executa, o que ela
+ * declara não executar, e o que ela ignora em silêncio.
+ *
+ * POR QUE ESTE ARQUIVO EXISTE. Medido em 2026-08-15 sobre o dataset: dos 7.039
+ * feats do PF2e, só 42,6% carregam rule elements — 60% dos feats de CLASSE e
+ * 74% dos de PERÍCIA não têm mecânica legível por máquina em fonte nenhuma
+ * (nem aqui, nem no Foundry, que mostra o texto a um GM humano). Ou seja: o
+ * teto do projeto não é "importar melhor", é **saber o que sabe**. Sem esta
+ * medição, cada personagem novo parecia trazer bugs novos, quando o que ele
+ * trazia era a fronteira do implementado, invisível.
+ *
+ * A auditoria é ESTÁTICA por necessidade, não por gosto: `ToolOutcome` não tem
+ * campo de "mecanizei", então sucesso mecânico e prosa saem indistinguíveis do
+ * runtime. Aqui replicamos os portões chamando as mesmas funções puras que a
+ * engine usa — inclusive `actorModifiersFor`, cujo canal `.skipped` o runtime
+ * calcula e joga fora nos quatro call sites de produção.
+ *
+ * Os três baldes, e a fronteira entre eles:
+ *  - MECANIZADO — a engine aplica. Rule element com leitor que sobrevive aos
+ *    portões, efeito concedível, magia com dano/save/ataque, Sneak Attack.
+ *  - DECLARADO — a engine viu, decidiu não aplicar, e SABE POR QUÊ (`skipped`
+ *    com razão tipada). Honesto: dá para contar ao jogador.
+ *  - CEGO — a engine não aplica e não avisa. É o balde que importa: silêncio.
+ *    Feat de prosa pura mora aqui, e é daqui que a Fase de declaração (T5)
+ *    tira coisas para o balde DECLARADO.
+ */
+import type { Character } from "@pf2e/shared";
+import {
+  categoryRecords,
+  costProfileOf,
+  lookupInCategory,
+  spellRecord,
+  type RuleRecord,
+} from "./dataset.js";
+import { selfEffectOf } from "./active-effects.js";
+import { actorModifiersFor, type SkipReason } from "./actor-modifiers.js";
+
+/** As 4 keys de rule element de 38 que têm leitor (ver [T5] na conformance). */
+export const CONSUMED_KEYS = new Set([
+  "FlatModifier",
+  "Resistance",
+  "Weakness",
+  "Immunity",
+]);
+
+/** Categorias cujos rule elements a engine abre para a ficha. */
+const SHEET_CATEGORIES = ["feats", "classes", "heritages", "ancestries", "backgrounds"] as const;
+
+export type CoverageVerdict = "mechanized" | "declared" | "blind";
+
+export type EntryKind =
+  | "feat"
+  | "classFeature"
+  | "ancestry"
+  | "heritage"
+  | "background"
+  | "class"
+  | "spell"
+  | "weapon"
+  | "item";
+
+export interface CoverageEntry {
+  name: string;
+  kind: EntryKind;
+  verdict: CoverageVerdict;
+  /** A razão É o produto: um veredito sem porquê não serve nem a teste nem a jogador. */
+  reason: string;
+  /** Keys de rule element do doc, quando ele tem — inclusive as sem leitor. */
+  ruleKeys?: string[];
+  skipReason?: SkipReason;
+}
+
+export interface CoverageReport {
+  entries: CoverageEntry[];
+  counts: Record<CoverageVerdict, number>;
+  /** Fração mecanizada, para a linha de métrica. */
+  mechanizedRatio: number;
+}
+
+/** Categoria do dataset onde cada tipo de entrada de ficha mora. */
+const CATEGORY_OF: Partial<Record<EntryKind, string>> = {
+  feat: "feats",
+  classFeature: "feats",
+  ancestry: "ancestries",
+  heritage: "heritages",
+  background: "backgrounds",
+  class: "classes",
+};
+
+function ruleKeysOf(rec: RuleRecord): string[] {
+  return [...new Set((rec.rules ?? []).map((r) => String((r as { key?: unknown }).key ?? "")))].filter(
+    Boolean,
+  );
+}
+
+/**
+ * Acha o doc de uma entrada de ficha. Procura na categoria natural primeiro e
+ * só então nas demais de ficha — o mesmo espírito do portão do ADR-010, sem
+ * fuzzy: nome que não casa EXATO é achado da auditoria, não coisa a adivinhar.
+ */
+function recordFor(name: string, kind: EntryKind): RuleRecord | null {
+  const primary = CATEGORY_OF[kind];
+  if (primary) {
+    const hit = lookupInCategory(name, primary);
+    if (hit) return hit;
+  }
+  for (const cat of SHEET_CATEGORIES) {
+    if (cat === primary) continue;
+    const hit = lookupInCategory(name, cat);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Sneak Attack é a ÚNICA feature de classe com código próprio (agent.ts). */
+const HARDCODED_FEATURES = /sneak attack/i;
+
+function auditNamed(c: Character, name: string, kind: EntryKind): CoverageEntry {
+  if (HARDCODED_FEATURES.test(name)) {
+    return { name, kind, verdict: "mechanized", reason: "implementada em código (Sneak Attack)" };
+  }
+
+  const rec = recordFor(name, kind);
+  if (!rec) {
+    return {
+      name,
+      kind,
+      verdict: "blind",
+      reason: "nome não casa nenhum doc do dataset — a engine não sabe que existe",
+    };
+  }
+
+  // Concessão de efeito (stance, selfEffect, Effect: homônimo) é mecanização
+  // real: o efeito entra no registro e seus rule elements passam a valer.
+  if (selfEffectOf(rec)) {
+    return { name, kind, verdict: "mechanized", reason: "concede efeito ativo com prazo do dado" };
+  }
+
+  const keys = ruleKeysOf(rec);
+  if (keys.length === 0) {
+    const cost = costProfileOf(name, kind === "feat" ? "feats" : "actions");
+    return {
+      name,
+      kind,
+      verdict: "blind",
+      reason: cost
+        ? `prosa pura: a engine cobra o custo (${cost.kind}) mas nada aplica o efeito`
+        : "prosa pura: nenhuma mecânica legível por máquina, aqui ou em qualquer fonte",
+    };
+  }
+
+  const readable = keys.filter((k) => CONSUMED_KEYS.has(k));
+  if (readable.length === 0) {
+    return {
+      name,
+      kind,
+      verdict: "blind",
+      reason: `tem mecânica no dado que nenhum leitor abre (${keys.join(", ")})`,
+      ruleKeys: keys,
+    };
+  }
+
+  // Tem key com leitor: o veredito depende dos portões. `skipped` é o canal
+  // honesto — a engine sabe por que não aplicou.
+  const skip = skipOf(c, name);
+  if (skip) {
+    return {
+      name,
+      kind,
+      verdict: "declared",
+      reason: `a engine viu e não aplicou (${skip})`,
+      ruleKeys: keys,
+      skipReason: skip,
+    };
+  }
+  return {
+    name,
+    kind,
+    verdict: "mechanized",
+    reason: `rule element com leitor (${readable.join(", ")})`,
+    ruleKeys: keys,
+  };
+}
+
+/**
+ * O motivo de skip de um doc, se ele aparecer em `skipped` em algum seletor.
+ *
+ * Sem contexto de rolagem (`ro`), todo predicado fica indecidível — que é
+ * exatamente o estado do runtime em quatro dos call sites. Varremos os
+ * seletores mais comuns; a ausência de skip significa que existe cena em que o
+ * modificador entra.
+ */
+const PROBE_SELECTORS = [
+  "ac",
+  "attack",
+  "damage",
+  "initiative",
+  "perception",
+  "saving-throw",
+  "skill-check",
+];
+
+function skipOf(c: Character, source: string): SkipReason | null {
+  const key = source.toLowerCase().trim();
+  let seen: SkipReason | null = null;
+  for (const selector of PROBE_SELECTORS) {
+    const { applied, skipped } = actorModifiersFor(c, selector);
+    if (applied.some((m) => m.source?.toLowerCase().trim() === key)) return null;
+    const hit = skipped.find((s) => s.source.toLowerCase().trim() === key);
+    if (hit && !seen) seen = hit.reason;
+  }
+  return seen;
+}
+
+function auditSpell(name: string): CoverageEntry {
+  const rec = spellRecord(name);
+  if (!rec) {
+    return {
+      name,
+      kind: "spell",
+      verdict: "blind",
+      reason: "magia não encontrada no dataset — cast_spell não resolve nada",
+    };
+  }
+  const mech = rec.spell;
+  if (!mech) {
+    return { name, kind: "spell", verdict: "blind", reason: "sem bloco de mecânica estruturada" };
+  }
+  if (mech.damage?.length || mech.attack || mech.defense?.save) {
+    return {
+      name,
+      kind: "spell",
+      verdict: "mechanized",
+      reason: "dano/ataque/save estruturados — cast_spell resolve em código",
+    };
+  }
+  // O caso de utilidade tem string sentinela no runtime ("No structured combat
+  // effect"), então a engine ao menos DIZ ao narrador que não resolveu.
+  return {
+    name,
+    kind: "spell",
+    verdict: "declared",
+    reason: "utilidade: sem dano/save/ataque — a engine declara o vazio ao narrador",
+  };
+}
+
+/**
+ * Audita a ficha inteira.
+ *
+ * Não recebe contexto de rolagem de propósito: a pergunta é "o que esta FICHA
+ * tem que a engine sabe executar", não "o que incide nesta cena".
+ */
+export function auditCharacter(c: Character): CoverageReport {
+  const entries: CoverageEntry[] = [];
+
+  for (const name of c.feats ?? []) entries.push(auditNamed(c, name, "feat"));
+  for (const name of c.classFeatures ?? []) entries.push(auditNamed(c, name, "classFeature"));
+  if (c.heritage) entries.push(auditNamed(c, c.heritage, "heritage"));
+  if (c.ancestry) entries.push(auditNamed(c, c.ancestry, "ancestry"));
+  if (c.background) entries.push(auditNamed(c, c.background, "background"));
+
+  for (const entry of c.spellcasting ?? []) {
+    for (const spell of entry.spells ?? []) entries.push(auditSpell(spell));
+  }
+
+  // Armas: o Strike é resolvido em código de ponta a ponta (bônus da ficha,
+  // MAP, CA efetiva, dano tipado). É a parte mais sólida do sistema.
+  for (const w of c.weapons ?? []) {
+    entries.push({
+      name: w.name,
+      kind: "weapon",
+      verdict: "mechanized",
+      reason: "Strike resolvido em código (ataque, MAP, dano tipado)",
+    });
+  }
+
+  const counts: Record<CoverageVerdict, number> = { mechanized: 0, declared: 0, blind: 0 };
+  for (const e of entries) counts[e.verdict]++;
+  const total = entries.length || 1;
+  return { entries, counts, mechanizedRatio: counts.mechanized / total };
+}
+
+/** Conta, no dataset inteiro, quantos docs de ficha caem em cada balde. */
+export function datasetCoverageCensus(): Record<string, { total: number; withReader: number }> {
+  const out: Record<string, { total: number; withReader: number }> = {};
+  for (const cat of SHEET_CATEGORIES) {
+    let total = 0;
+    let withReader = 0;
+    for (const rec of categoryRecords(cat)) {
+      total++;
+      const keys = ruleKeysOf(rec);
+      if (keys.some((k) => CONSUMED_KEYS.has(k)) || selfEffectOf(rec)) withReader++;
+    }
+    out[cat] = { total, withReader };
+  }
+  return out;
+}
