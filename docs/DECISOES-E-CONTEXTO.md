@@ -78,6 +78,10 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
 - **Revisitar quando:** o objetivo passar a ser a experiência visual completa de
   VTT (mapa/token/grid tático maduro) **e** houver disposição de aposentar a
   engine própria. Aí vira decisão de *mudar de produto*, não de evoluir este.
+- **Defendido em 2026-08-15:** a Fase 3 do roadmap trazia "render de grid +
+  tokens no HUD" — a própria cláusula acima, escrita como tarefa. O **ADR-011**
+  reescreveu a fase para posição RELACIONAL (sem grid), mantendo este ADR de pé.
+  A cláusula segue valendo: geometria fina (área, elevação, terreno) é o gatilho.
 
 ### ADR-002 — Mecânica em código, voz no LLM (a Régua)
 - **Status:** Aceito (já é a arquitetura vigente).
@@ -105,6 +109,18 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   o baseline vigente nem os testes unitários.
 - **Revisitar quando:** um achado da Fase 2 (limite do modelo) reordenar as
   prioridades.
+- **REVISITADO em 2026-08-15 (ver ADR-011).** O item 3 desta lista ("combate
+  posicional + geração procedural") foi reescrito: a parte de grid/tokens
+  contradizia o ADR-001 e a geometria valia <1% dos rule elements. Virou
+  **posição relacional sem grid**, e a geração procedural virou fase própria.
+- **RETIRADO no mesmo dia.** Horas depois, o usuário congelou o plano inteiro da
+  Fase 3 em diante (`ROADMAP-LEGADO-2026-08-15.md`) para repensar a direção. Os
+  itens 3 e 4 deste ADR **não são mais fila de trabalho**. O horizonte vivo vai
+  até a Fase 2.9 (dano correto na arma; a bateria voltar a medir), e o que vem
+  depois está em aberto de propósito.
+- Nasceram fora deste ADR, por medição e não por plano, as Fases 1.5, 2.5, 2.6 e
+  2.7 — a lista original era uma ordem de prioridade, não um índice fechado, e na
+  prática as fases boas vieram de censo, não de cronograma.
 - **Fase 1 — CONCLUÍDA em 2026-07-25.** Entregou o contrato de argumentos em zod
   (`gm/tool-schemas.ts`), a economia de ação real (reação/free action) e uma
   camada determinística de conformidade do dataset. O item "GBNF" saiu por
@@ -320,9 +336,10 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   lista vazia por terceiros inverteria calado todo predicado sobre efeito
   alheio); o badge/contador; `DamageDice` e `TempHP` dos efeitos (308 e 221 REs,
   sem leitor ainda); e `ItemAlteration`, agora a maior key sem leitor (1.714).
-- **Revisitar quando:** a Fase 3 trouxer posição — `self:flanking`,
+- **Revisitar quando:** alguma coisa trouxer posição ao estado — `self:flanking`,
   `target:distance` e cobertura são a próxima maior família indecidível depois
-  de `spellcasting` (544).
+  de `spellcasting` (544). **Nota de 2026-08-15:** isso era a Fase 3, que foi
+  retirada do roadmap; a família segue indecidível e sem dono (ver ADR-011).
 
 ### ADR-010 — Desambiguação de nome: a intenção vem da origem, não da inferência
 
@@ -366,6 +383,87 @@ a ficha NÃO decidiu. Era o estado mentindo (doutrina 4).
 
 **Revisitar quando:** a bateria medir o caminho da paleta (hoje ela só exercita
 prosa livre), ou se `lookupLocalRule` ganhar desambiguação semântica.
+
+### ADR-011 — Posição é RELAÇÃO, não geometria
+
+**Data:** 2026-08-15 · **Revisa:** a Fase 3 do ADR-003. **Preserva:** ADR-001.
+
+**Status:** a **restrição** é aceita e vale; o **plano de fase** que ela
+descrevia foi retirado no mesmo dia. Horas depois de escrito, o usuário decidiu
+que a direção do roadmap da Fase 3 em diante não é a que ele imagina para o jogo,
+e o plano inteiro foi congelado em `ROADMAP-LEGADO-2026-08-15.md`. O que morre é
+o cronograma; o que fica de pé é: **(a)** o projeto não vira VTT — geometria fina
+é gatilho de mudança de produto, não de evolução (ADR-001); **(b)** as medições
+abaixo, que qualquer proposta posicional futura herda em vez de refazer; **(c)**
+o desenho relacional (faixas + evento de movimento + relação derivada), como
+**referência de COMO fazer**, caso posição volte à mesa — não como fila de
+tarefas aprovada.
+
+**Contexto — o roadmap contradizia um ADR.** A Fase 3 do ADR-003 ("combate
+posicional + geração procedural") tinha como terceira tarefa *"camada tática no
+HUD: render de grid + tokens"*. O ADR-001 recusou migrar para o Foundry e
+registrou que a decisão só se revisita quando o objetivo virar *"a experiência
+visual completa de VTT (mapa/token/grid tático maduro)"* — e que aí é **mudar de
+produto, não evoluir este**. O roadmap portanto carregava, escrita, a coisa que o
+ADR-001 recusou. Sinalizado pelo usuário em 2026-08-15.
+
+**A medição que decidiu.** Antes de reescrever, medimos o que a geometria
+compraria de verdade.
+
+*Vocabulário posicional nos 16.671 rule elements:* `cover` 35, `range-increment`
+28, `forced-movement` 21, `flanking.canFlank/flankable` 18, **`target:distance`
+11**. Excluindo `terrain:*` (68, exploração) e `off-guard` (84, condição que a
+engine já tem), a família posicional inteira vale **~113 REs — menos de 1%**.
+Para escala: a Fase 2.6 sozinha moveu +2.491 alcançáveis, e `ItemAlteration`,
+hoje sem leitor, tem 1.714 — **quinze vezes toda a geometria**. Como "regras
+como dados", o grid é o pior investimento disponível.
+
+*Reações:* das 582 do dataset, **166 (29%) têm gatilho posicional** — o maior
+buraco estrutural que sobrou depois da Fase 2.6. Mas ao ler o que elas pedem, a
+geometria não aparece. As quatro que a bateria declara bloqueadas:
+
+| reação | gatilho literal do dado |
+|---|---|
+| Reactive Strike | "A creature **within your reach** … or **leaves a square**" |
+| Stand Still | "A creature **within your reach** uses a move action…" |
+| Disrupt Prey | "Your hunted prey is **within your reach**, and it uses…" |
+| Goblin Scuttle | "An ally **ends a move action adjacent to you**" |
+
+Nenhuma pede coordenada. Todas pedem **uma relação binária** (ao alcance?
+adjacente?) e **um evento de movimento**. Das 166, 41 pedem adjacência binária e
+54 pedem evento de movimento; mesmo as 53 que dizem "within N feet" são
+respondíveis por faixa.
+
+**Decisão (o desenho, hoje sem fase associada).** Se posição voltar à mesa, ela é
+**relacional, sem grid**: o estado é a
+relação, não a coordenada. Faixas (`engaged`/`near`/`far`) no `Combatant`, o
+`Stride` como ação discreta que muda faixa **emitindo um evento de movimento**
+(o gancho que hoje não existe), adjacência/alcance/flanqueamento/cobertura
+derivados, e as reações posicionais disparando em código no molde do
+`triggerEnemyReactions`. O HUD mostra as relações como **texto/badge**: zero
+render espacial. A geração procedural sai da fase (vira fase própria, medida
+pelo próprio mérito).
+
+**Por que isto NÃO é meio-Foundry.** É theater of mind com estado estruturado —
+o modelo continua narrando "você avança sobre o goblin"; a engine registra
+`engaged(jogador, goblin)`. A Régua fica satisfeita (a regra posicional roda em
+código, não na inferência) sem importar o modelo espacial de uma VTT.
+
+**Consequência honesta — o que fica de fora, por escolha:** contagem exata de
+alvos de área (quantos o fireball pega vira função da faixa/grupo, aproximação
+DECLARADA), economia de movimento em pés, elevação, terreno difícil, e as 68 REs
+de `terrain:*`. Se um dia isso importar de verdade, esse é o gatilho honesto
+para reabrir o ADR-001 — e aí como mudança de produto, com os olhos abertos.
+
+**Consequência de ordem (o que sobreviveu à retirada do plano).** As Fases 2.8
+(dano correto na arma) e 2.9 (a bateria voltar a medir) seguem no roadmap vivo, e
+o motivo delas independe de posição: **a régua parou de medir** — a bateria não
+enxerga a Fase 2.6 nem a 2.7 — e mecânica nova sem evidência foi exatamente como
+as duas últimas fases entraram. Evidência antes de mais mecânica, venha o que
+vier depois.
+
+**Revisitar quando:** posição voltar à mesa numa proposta nova. Aí este ADR é o
+ponto de partida (medições + desenho relacional), não um documento a refazer.
 
 ### Bifurcações consideradas e adiadas (não fazer sem reabrir a decisão)
 - **Modo dois-modelos** (`RULES_MODEL`/`NARRATIVE_MODEL`): exige segundo
