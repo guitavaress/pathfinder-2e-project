@@ -1,11 +1,30 @@
-# Roadmap de evolução — pathfinder-2e-project
+# Roadmap de evolução — LEGADO, congelado em 2026-08-15
+
+> ## ⚠️ ESTE ARQUIVO NÃO É O ROADMAP VIGENTE
+>
+> É a **fotografia** do roadmap no dia em que a Fase 3 em diante foi retirada do
+> plano ativo. O roadmap vivo é `ROADMAP.md`. **Nada aqui é para executar.**
+>
+> **Por que existe.** Depois da Fase 2.7, o usuário decidiu que a direção
+> planejada da Fase 3 em diante não era a que ele imagina para o jogo, e preferiu
+> um vazio honesto a um plano herdado — inclusive a versão relacional que o
+> ADR-011 tinha acabado de escrever. As fases 1 a 2.9 seguem valendo e continuam
+> no arquivo vivo; o que foi congelado aqui é **Fase 3, Fase 3.5 e Fase 4**.
+>
+> **O que ainda tem valor aqui** (e por isso não foi apagado): as MEDIÇÕES.
+> A família posicional vale ~113 rule elements de 16.671 (<1%); 166 das 582
+> reações (29%) têm gatilho posicional e nenhuma pede coordenada; o gerador
+> procedural não depende de posição; o RAG só se paga quando a janela apertar.
+> Qualquer plano novo que toque esses assuntos começa com estes números, não do
+> zero. O raciocínio está no **ADR-011** de `DECISOES-E-CONTEXTO.md`, que segue
+> de pé como decisão de **não** virar VTT.
+>
+> **Consulte, não obedeça.**
+
+---
 
 > **Par deste arquivo:** `DECISOES-E-CONTEXTO.md` diz *por que*; este diz *o quê*.
 > Leia os ADRs de lá antes de executar qualquer fase.
->
-> **Horizonte atual: até a Fase 2.9.** O plano da Fase 3 em diante foi retirado em
-> 2026-08-15 e congelado em `ROADMAP-LEGADO-2026-08-15.md` (consultar, não
-> obedecer). O vazio é deliberado — ver "Depois da 2.9", ao final.
 >
 > **Para o Claude Code — disciplina de execução (vale para todas as fases):**
 > 1. **Leia o código real primeiro.** Os caminhos e nomes abaixo vêm do README;
@@ -74,7 +93,7 @@ harness realmente sabe verificar.
 
 Os 35 cenários "sem asserção" são o ponto cego DECLARADO — nem falha nem
 aprovação. Por motivo: 26 passivos que a engine não implementa (nada
-observável), 4 reações bloqueadas em posição (gatilho depende dela), 3 em
+observável), 4 reações bloqueadas na Fase 3 (gatilho depende de posição), 3 em
 que guardar a reação foi a jogada certa, 2 em que a engine declarou que a cena
 não se aplicava. Esse número só cai implementando mecânica — é o mapa honesto
 da dívida, não ruído a ser escondido.
@@ -292,8 +311,7 @@ natural a T6.
 
 **Fora de escopo, registrado:** as reações que a bateria acusa (`Shield Block`
 precisa de hardness estruturado, `Clever Gambit`); a família posicional
-(`target:distance`, `self:flanking`, cobertura) — hoje **sem fase associada**
-(o plano posicional foi retirado; ver ADR-011 e o roadmap de legado).
+(`target:distance`, `self:flanking`, cobertura), que é Fase 3.
 
 ---
 
@@ -364,7 +382,7 @@ ações. `Shackles of Law`, FLAKY no piso anterior, agora passa 3/3.
 jogador); o badge/contador do efeito (53 statements); `DamageDice` (308) e
 `TempHP` (221) dos efeitos, sem leitor; e `ItemAlteration`, agora a maior key sem
 leitor (1.714). A maior família indecidível que sobra é `spellcasting` (544),
-seguida da posicional — que hoje não tem fase associada (ADR-011).
+seguida da posicional — que é Fase 3.
 
 ---
 
@@ -417,8 +435,8 @@ Medido a cada `npm test` na linha `[T7]` de `rules/sheet-lookup.test.ts`.
   runas de propriedade tocam todo crítico e todo ataque mágico; hoje **nenhum dos
   dois existe no código** (zero ocorrências em `packages/server/src`).
 - **Por quê:** escolhido pelo usuário em 2026-08-15 como a branch seguinte à
-  Fase 2.7. Motivo que sobreviveu à retirada do plano (ADR-011): o erro mais
-  frequente do jogo não é posicional, é o dano.
+  Fase 2.7. Precede a Fase 3 por ordem do ADR-011: o erro mais frequente do jogo
+  não é posicional, é o dano.
 - **Tarefas:**
   1. **`deadly`/`fatal` no crítico.** *Deadly* soma um dado extra do tamanho
      listado **depois** de dobrar, e a quantidade sobe com a striking (greater 2,
@@ -464,29 +482,101 @@ Medido a cada `npm test` na linha `[T7]` de `rules/sheet-lookup.test.ts`.
 
 ---
 
-## Depois da 2.9 — em aberto, de propósito
+## Fase 3 — Posição RELACIONAL (sem grid) — **reescrita, ver ADR-011**
 
-**Não há Fase 3.** O plano que existia daqui em diante (combate posicional,
-gerador procedural, RAG) foi retirado em **2026-08-15**: o usuário decidiu que a
-direção não era a que ele imagina para o jogo e preferiu o vazio a um plano
-herdado. Está congelado, íntegro, em **`ROADMAP-LEGADO-2026-08-15.md`** —
-consultar, não obedecer.
+> A versão anterior desta fase (grid/coordenadas + gerador procedural + tokens no
+> HUD) **contradizia o ADR-001**, que só reabre a questão da VTT quando o objetivo
+> virar "mapa/token/grid tático maduro" — e aí como *mudança de produto*. O ADR-011
+> mediu o que a geometria compraria e reescreveu a fase. O histórico está ao final.
 
-**Para quem for propor o que vem depois** (agente ou humano), o que a história
-deste arquivo ensina sobre COMO propor:
+- **Objetivo:** fazer a posição EXISTIR como estado determinístico, sem importar o
+  modelo espacial de uma VTT. O estado é a **relação**, não a coordenada.
+- **Por quê:** das 582 reações do dataset, **166 (29%) têm gatilho posicional** — o
+  maior buraco estrutural depois da Fase 2.6. E nenhuma delas pede coordenada:
+  pedem uma relação binária ("within your reach", "adjacent") e um evento de
+  movimento ("leaves a square"). Já a geometria pura vale **~113 rule elements de
+  16.671 (<1%)** — o pior investimento disponível em "regras como dados".
+- **Pré-leitura:** `gm/combat.ts` (o `triggerEnemyReactions` é o molde),
+  `CombatantSchema` em `packages/shared/src/types.ts` (hoje **não tem campo algum
+  de posição**), `rules/roll-context.ts` (onde o vocabulário novo entra).
+- **Tarefas:**
+  1. **Faixas e engajamento.** `engaged`/`near`/`far` no `Combatant`; `Stride`
+     vira ação discreta que muda faixa **emitindo um evento de movimento** — é o
+     gancho que hoje não existe e sem o qual nenhuma reação de movimento dispara.
+  2. **Relações derivadas.** `adjacent`/`within-reach` a partir da faixa;
+     flanqueamento como par declarado (com aliado — a Fase 2 já entregou o
+     roster) concedendo off-guard; cobertura como flag da cena, fixada no
+     `start_combat`.
+  3. **Reações posicionais em código.** As quatro que a bateria acusa (`Stand
+     Still`, `Reactive Strike`, `Disrupt Prey`, `Goblin Scuttle`) + as demais de
+     "within your reach", disparando pelo evento da tarefa 1.
+  4. **Vocabulário ao dado.** `target:distance` (faixa→pés), `range-increment`,
+     `self:flanking` e `cover` entram no `roll-context.ts`, com a linha **`[T8]`**
+     de métrica em `rules/dataset-conformance.test.ts`.
+- **Critérios de aceite:** regra que depende de posição roda em CÓDIGO, não na
+  inferência do modelo; as quatro reações saem de "sem asserção" na bateria; a
+  linha `[T8]` mostra a família posicional decidível.
+- **Testes:** unit por relação (flanqueamento concede off-guard; reação dispara no
+  evento de movimento e só com a reação disponível; range increment penaliza);
+  a bateria ganha cenários posicionais.
+- **HUD:** as relações aparecem como **texto/badge** no combate ("engajado com
+  Goblin 1", "flanqueando", "com cobertura"). **Zero render espacial** — decisão do
+  usuário em 2026-08-15, junto do ADR-011.
+- **Fora de escopo, DECLARADO** (ADR-011): contagem exata de alvos de área (vira
+  função da faixa/grupo), economia de movimento em pés, elevação, terreno difícil
+  e as 68 REs de `terrain:*`. Se isso passar a importar, é o gatilho honesto para
+  reabrir o ADR-001 — como mudança de produto.
+- **Feito quando:** um combate roda com engajamento, flanqueamento e reações de
+  movimento enforced em código, e o jogador nunca vê um grid.
 
-- As fases que deram certo — 1.5, 2.5, 2.6, 2.7 — **não vieram do plano**.
-  Nasceram de um censo que mediu o buraco antes de escrever a tarefa, e cada uma
-  entrou com uma linha de métrica no `npm test` (`[T5]`, `[T6]`, `[T7]`).
-- As que vieram do plano abstrato precisaram ser reescritas: a Fase 1 perdeu o
-  GBNF por impossibilidade técnica (**ADR-006**) e a Fase 3 perdeu o grid por
-  medição (**ADR-011**).
-- Portanto: **proposta sem medição não entra.** O número vem primeiro; a fase
-  vem depois. E se a proposta tocar VTT/mapa/grid, o ADR-001 e o ADR-011 já
-  responderam — releia antes, não depois.
+<details>
+<summary>Plano original da fase (histórico — contradizia o ADR-001)</summary>
 
-O que segue valendo como dívida REAL, medida e sem plano associado, está logo
-abaixo (fila de confiabilidade) e nas seções de dívida das Fases 2.5/2.6/2.7.
+- **Objetivo:** sair do combate abstrato para o tático (posição importa) e gerar
+  mapas/dungeons proceduralmente.
+- **Tarefas:** (1) estado posicional na engine com grid/coordenadas; (2) gerador
+  procedural seeded; (3) camada tática no HUD com render de grid + tokens.
+- **Por que saiu:** a tarefa 3 é literalmente a cláusula de revisitar do ADR-001; a
+  tarefa 1 fundia relação (barata, alto retorno) com geometria (cara, <1% dos rule
+  elements); a tarefa 2 não dependia de nenhuma das duas e virou fase própria.
+
+</details>
+
+---
+
+## Fase 3.5 — Gerador de local *seeded* (algorítmico, NÃO IA)
+
+- **Status:** registrada, **não iniciar sem medir primeiro**. Saiu da Fase 3 pelo
+  ADR-011: não depende de grid nem de posição relacional, e portanto deve ser
+  avaliada pelo próprio mérito.
+- **Objetivo:** locais reprodutíveis por seed (salas, ocupantes, conexões)
+  alimentando a cena, o `start_combat` e o Brain — sem geometria tática.
+- **Critério de aceite:** mesma seed → mesmo local; o modelo DESCREVE o que o
+  algoritmo montou, nunca inventa a planta.
+- **Antes de começar:** medir se a falta disso é dor real. O mundo hoje vem do
+  `LORE.md`/`WORLD.md` e do Brain, e pode ser que baste.
+
+---
+
+## Fase 4 — RAG sobre o Brain (escala de campanha)
+
+- **Objetivo:** manter o contexto limitado conforme a campanha cresce.
+- **Por quê:** ADR-005. Fazer **só quando** a janela de contexto virar gargalo real
+  (antes disso é otimização prematura).
+- **Pré-leitura:** como o Brain (`packages/brain`) é lido de volta hoje e injetado
+  no estágio narrativo; o formato dos nós markdown.
+- **Tarefas:**
+  1. Embeddings locais dos nós do Brain.
+  2. Recuperação top-k por turno, substituindo o despejo integral de memória.
+  3. Bench de qualidade de recuperação (o nó certo entra quando deveria?).
+- **Critérios de aceite:** com Brain grande, o tamanho do contexto injetado
+  permanece limitado; a recuperação traz os nós relevantes ao turno.
+- **Testes:** bench de recuperação reprodutível; teste de que o contexto não cresce
+  linearmente com o tamanho do Brain.
+- **Riscos:** recuperar de menos quebra continuidade; calibre o k e cubra com o
+  bench.
+- **Feito quando:** campanha longa roda sem estourar contexto e o ADR-005 vira
+  Aceito.
 
 ---
 
@@ -528,8 +618,7 @@ paralelas. Atacar nesta ordem, um por vez:
      efeito não está implementado (redução por Hardness do escudo; identificação
      via Recall Knowledge). Seguem FAIL na bateria, que é o veredito correto.
    - `Stand Still`, `Reactive Strike`, `Disrupt Prey`, `Goblin Scuttle` —
-     gatilho depende de alcance/posição. **Bloqueadas até existir estado
-     posicional** — o que hoje não tem fase (ADR-011); o juiz as
+     gatilho depende de alcance/posição. **Bloqueadas na Fase 3**; o juiz as
      declara "sem asserção" (lendo o `**Trigger**` do dado oficial, não uma
      lista escrita à mão) em vez de acusar o jogo por uma regra que ele ainda
      não tem como conhecer.

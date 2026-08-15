@@ -160,7 +160,8 @@ mora em código determinístico e testado. O modelo só chama tools e narra.
 Regras de trabalho:
 - Uma fase / uma tarefa por vez. Nada de frentes paralelas.
 - Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
-  O piso vigente é **653 testes do servidor** (+31 do brain) e, na bateria, **69 PASS · 3 FLAKY ·
+  O piso vigente é **663 testes do servidor** (+31 do brain, medido em 2026-08-15)
+  e, na bateria, **69 PASS · 3 FLAKY ·
   1 SUSPECT · 2 FAIL com cobertura de asserção 40/75** (gate de **2026-08-14**,
   pós-Fases 2.5/2.6, `--repeat=3` contra o commit 8dafee6; juiz honesto — NÃO
   comparável com os 75/75 antigos). Piso, não meta.
@@ -169,5 +170,18 @@ Regras de trabalho:
   Os FLAKY são [MODELO]: o modelo resolve a atividade por `roll_check` com o
   combate inativo, e fora de combate a engine não cobra ações.
   A bateria **não** exercita a paleta da Fase 2.7 (manda prosa direto, sem
-  `refs`) nem os efeitos ativos da 2.6 — medir os dois exige cenários novos.
+  `refs`) nem os efeitos ativos da 2.6 — medir os dois exige cenários novos
+  (é a Fase 2.9).
 - Se uma tarefa contradisser uma decisão registrada nos ADRs, PARE e sinalize.
+  **Precedente vivo (ADR-011, 2026-08-15):** a Fase 3 pedia "grid + tokens no
+  HUD", que é a cláusula de revisitar do ADR-001 escrita como tarefa. A medição
+  matou a ideia (a geometria vale <1% dos rule elements; as 166 reações
+  posicionais pedem relação binária e evento, não coordenada) e o usuário
+  retirou o plano da Fase 3 em diante para repensar a direção.
+- **O roadmap vivo vai até a Fase 2.9** — **2.8** (deadly/fatal + runas + a
+  decisão de ADR do item investido) e **2.9** (a bateria voltar a medir as Fases
+  2.6 e 2.7). Depois disso está **em aberto de propósito**; o plano antigo está
+  congelado em `docs/ROADMAP-LEGADO-2026-08-15.md` — **consultar, não obedecer**.
+  Proposta de fase nova nasce de censo com métrica no `npm test`, não de
+  cronograma: foi assim que 1.5, 2.5, 2.6 e 2.7 deram certo e é por não ser assim
+  que as fases planejadas no abstrato precisaram ser reescritas.
