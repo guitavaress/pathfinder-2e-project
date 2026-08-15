@@ -140,8 +140,14 @@ export const CharacterSchema = z.object({
   level: z.number().int().min(1).max(20),
   abilities: AbilityScoresSchema,
   abilityModifiers: AbilityScoresSchema,
-  maxHp: z.number().int(),
-  ac: z.number().int(),
+  // `.min(1)` não é regra de PF2e — é rede contra o default 0 do import.
+  // `asNumber(v, 0)` no parser fazia um export sem `acTotal` (campo renomeado,
+  // JSON truncado) entrar com CA 0, e `buildCombat` copia isso para o
+  // combatente: todo ataque inimigo vira crítico automático, em silêncio. O
+  // parser agora rejeita o campo AUSENTE com mensagem; isto aqui é a última
+  // instância, para save antigo e para quem monta `Character` na mão.
+  maxHp: z.number().int().min(1),
+  ac: z.number().int().min(1),
   speed: z.number().int(),
   perception: z.number().int(),
   saves: z.object({

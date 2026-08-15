@@ -71,6 +71,25 @@ function asString(v: unknown, fallback = ""): string {
 }
 
 /**
+ * Campo MECÂNICO obrigatório: ausência vira erro de import, não zero.
+ *
+ * `asNumber(v, 0)` é certo para o que é opcional de verdade (bônus, dinheiro,
+ * velocidade extra). Para CA e HP é veneno: um export com o campo renomeado ou
+ * truncado entrava com CA 0 — e todo ataque inimigo passa a ser crítico
+ * automático — sem uma linha de aviso. Falhar o import é ruidoso e recuperável;
+ * jogar com CA 0 não é.
+ */
+function requireNumber(v: unknown, field: string): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) {
+    throw new Error(
+      `Pathbuilder export incompleto: '${field}' ausente ou não numérico. ` +
+        `Exporte a ficha de novo pelo Pathbuilder (menu "Export JSON").`,
+    );
+  }
+  return v;
+}
+
+/**
  * Converts the JSON exported by Pathbuilder 2e into a normalized `Character`.
  * Throws if the basic structure doesn't match.
  */
@@ -120,8 +139,10 @@ export function parsePathbuilder(raw: unknown): Character {
   });
 
   // HP = ancestryhp + (classhp + conMod) * level + bonushp + bonushpPerLevel * level.
-  const ancestryHp = asNumber(attributes.ancestryhp);
-  const classHp = asNumber(attributes.classhp);
+  // Os dois primeiros DEFINEM o HP e são obrigatórios; os bônus são opcionais
+  // de verdade e seguem com default 0.
+  const ancestryHp = requireNumber(attributes.ancestryhp, "attributes.ancestryhp");
+  const classHp = requireNumber(attributes.classhp, "attributes.classhp");
   const bonusHp = asNumber(attributes.bonushp);
   const bonusHpPerLevel = asNumber(attributes.bonushpPerLevel);
   const maxHp =
@@ -132,11 +153,20 @@ export function parsePathbuilder(raw: unknown): Character {
 
   const acTotal = (build.acTotal ?? {}) as Record<string, unknown>;
 
-  const keyAbility = asString(build.keyability, "str") as Ability;
+  // `as Ability` sem validar: uma grafia fora de ABILITIES fazia
+  // `abilityModifiers[keyAbility]` ser undefined e o `?? 0` engolir — a Class
+  // DC perdia o modificador da habilidade-chave em silêncio. Cair no "str" do
+  // default é igualmente errado; declarar é o certo.
+  const keyRaw = asString(build.keyability, "str");
+  if (!(ABILITIES as readonly string[]).includes(keyRaw)) {
+    throw new Error(
+      `Pathbuilder export inválido: 'keyability' é "${keyRaw}", que não é uma habilidade (${ABILITIES.join(", ")}).`,
+    );
+  }
+  const keyAbility = keyRaw as Ability;
   const classDcRank = toRank(prof.classDC);
   const classDc =
-    10 +
-    proficiencyBonus(classDcRank, level, abilityModifiers[keyAbility] ?? 0);
+    10 + proficiencyBonus(classDcRank, level, abilityModifiers[keyAbility]);
 
   const featsRaw = (build.feats ?? []) as unknown[][];
   const feats = featsRaw
@@ -152,14 +182,25 @@ export function parsePathbuilder(raw: unknown): Character {
 
   // Weapons: attack and damage come precomputed from Pathbuilder.
   const weaponsRaw = (build.weapons ?? []) as Record<string, unknown>[];
-  const weapons = weaponsRaw.map((w) => ({
-    name: asString(w.display, asString(w.name, "Weapon")),
-    attack: asNumber(w.attack),
-    die: asString(w.die),
-    dice: strikingDice(w.str),
-    damageBonus: asNumber(w.damageBonus),
-    damageType: asString(w.damageType),
-  }));
+  const weapons = weaponsRaw.map((w) => {
+    const name = asString(w.display, asString(w.name, "Weapon"));
+    // `die` vazio era pior que ausente: `parseDie("")` devolve 6, então uma
+    // arma sem dado rolava d6 FABRICADO — e nada no resumo dizia isso.
+    const die = asString(w.die);
+    if (!/^d?\d+$/i.test(die.trim())) {
+      throw new Error(
+        `Pathbuilder export incompleto: a arma "${name}" veio sem dado de dano ('die' = "${die}"). Exporte a ficha de novo.`,
+      );
+    }
+    return {
+      name,
+      attack: requireNumber(w.attack, `weapons["${name}"].attack`),
+      die,
+      dice: strikingDice(w.str),
+      damageBonus: asNumber(w.damageBonus),
+      damageType: asString(w.damageType),
+    };
+  });
 
   const armorRaw = (build.armor ?? []) as Record<string, unknown>[];
   const armor = armorRaw.map((a) => ({
@@ -255,7 +296,7 @@ export function parsePathbuilder(raw: unknown): Character {
     abilities: abilities as Character["abilities"],
     abilityModifiers: abilityModifiers as Character["abilityModifiers"],
     maxHp,
-    ac: asNumber(acTotal.acTotal),
+    ac: requireNumber(acTotal.acTotal, "acTotal.acTotal"),
     speed: asNumber(attributes.speed) + asNumber(attributes.speedBonus),
     perception: proficiencyBonus(perceptionRank, level, abilityModifiers.wis),
     saves: {
