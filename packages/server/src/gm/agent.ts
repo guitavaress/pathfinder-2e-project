@@ -474,6 +474,16 @@ const client = new OpenAI({ baseURL: LLM_BASE_URL, apiKey: "local" });
 const TOOLS: ChatCompletionTool[] = buildTools();
 
 /** Resolves a check's modifier from the character sheet. */
+/**
+ * "Strike" genérico: o modelo não nomeou arma, atacou com o que tem na mão.
+ *
+ * Exportado como constante porque `resolveModifier` (bônus) e `rollDamage`
+ * (dado) PRECISAM concordar: se um trata "strike" como a arma [0] e o outro
+ * não, o ataque sai com o bônus de uma arma e o dano de outra — que foi
+ * exatamente o bug introduzido ao tentar consertar o fallback do dano.
+ */
+const GENERIC_STRIKE = /^(attack|strike|ataque|unarmed)$/;
+
 function resolveModifier(session: Session, skillRaw: string): number | null {
   const key = skillRaw.toLowerCase().trim();
   const c = session.character;
@@ -491,12 +501,7 @@ function resolveModifier(session: Session, skillRaw: string): number | null {
     c.weapons.find((w) => w.name.toLowerCase() === key) ??
     c.weapons.find((w) => key.includes(w.name.toLowerCase()));
   if (weapon) return weapon.attack;
-  if (
-    (key === "attack" || key === "strike" || key === "ataque" || key === "unarmed") &&
-    c.weapons[0]
-  ) {
-    return c.weapons[0].attack;
-  }
+  if (GENERIC_STRIKE.test(key) && c.weapons[0]) return c.weapons[0].attack;
   return null;
 }
 
@@ -572,17 +577,23 @@ export function findSheetWeapon(c: Character, ref: string): Weapon | null {
   );
 }
 
-/** Attack bonus for a Strike: the player's weapon bonus, or the enemy's real/benchmark attack. */
+/**
+ * Attack bonus for a Strike: the player's weapon bonus, or the enemy's
+ * real/benchmark attack. `null` quando a ficha do JOGADOR não resolve o nome.
+ *
+ * Devolvia `weapons[0]?.attack ?? perception` — fabricava bônus de ataque a
+ * partir da PERCEPÇÃO, que não é bônus de ataque de coisa nenhuma, e o resumo
+ * ainda imprimia o nome que o modelo inventou. O caminho não-ataque
+ * (`roll_check` de perícia) sempre rejeitou nome desconhecido; este era o
+ * assimétrico, e assimetria em favor de rolar é o bug `dc ?? 0` de novo.
+ * Ausência agora é ausência: quem chama rejeita.
+ */
 function combatAttackModifier(
   session: Session,
   attacker: Combatant,
   skill: string,
-): number {
-  if (attacker.kind === "player") {
-    const mod = resolveModifier(session, skill);
-    if (mod !== null) return mod;
-    return session.character.weapons[0]?.attack ?? session.character.perception;
-  }
+): number | null {
+  if (attacker.kind === "player") return resolveModifier(session, skill);
   return strikeProfileFor(attacker).bonus;
 }
 
@@ -636,10 +647,16 @@ function rollDamage(
 
   if (attacker?.kind === "player") {
     const name = String(input.weapon ?? "").toLowerCase().trim();
+    // O `?? weapons[0]` incondicional fazia o dano sair da adaga enquanto o
+    // resumo dizia "Greatsword". Agora a arma [0] só entra quando o BÔNUS
+    // também veio dela — nome vazio ou Strike genérico (ver GENERIC_STRIKE em
+    // `resolveModifier`). Nome nomeado que não resolve não chega aqui: o
+    // caminho de ataque rejeita antes de rolar.
+    const generic = !name || GENERIC_STRIKE.test(name);
     const w =
       session.character.weapons.find((x) => x.name.toLowerCase() === name) ??
       session.character.weapons.find((x) => name && name.includes(x.name.toLowerCase())) ??
-      session.character.weapons[0];
+      (generic ? session.character.weapons[0] : undefined);
     if (w) {
       // `w.dice`, não 1: a runa striking multiplica os DADOS, e o Pathbuilder
       // manda sempre o dado base no `die`. O `?? 1` cobre arma montada sem
@@ -1068,6 +1085,15 @@ export async function executeTool(
           }
         }
         const baseMod = combatAttackModifier(session, attacker, skill);
+        if (baseMod === null) {
+          // Mesma prosa corretiva do caminho não-ataque: o modelo nomeou uma
+          // arma que a ficha não tem. Rejeitar é o único desfecho honesto —
+          // nada é aplicado, a MAP não avança, nenhuma ação é cobrada.
+          return {
+            content: `No weapon or attack named "${skill}" on the sheet. Use a weapon the character actually carries, or an existing skill/save name.`,
+            isError: true,
+          };
+        }
         const map = mapPenalty(attacker.mapProgress, agile);
         // Conditions as real mechanics: off-guard −2 AC, frightened −N to
         // the target's AC and to the attacker's rolls.
@@ -1550,11 +1576,24 @@ export async function executeTool(
             isError: true,
           };
         }
+        // `entry.attack` é nullable de verdade (`parse.ts` grava null quando o
+        // Pathbuilder não manda). O `?? 0` rolava em +0 e o resultado passava
+        // por legítimo — enquanto 27 linhas abaixo o MESMO bloco rejeita
+        // corretamente o DC ausente. Assimetria fechada: sem bônus de ataque
+        // de magia, não há ataque de magia.
+        if (entry.attack == null) {
+          refundSpellResource(session, isCantrip, isFocus, castRank);
+          if (you) you.actionsRemaining += cost;
+          return {
+            content: `The sheet has no spell attack bonus for ${c.name}'s tradition (nothing was spent). Import the character again or resolve ${sheetName} by its save instead.`,
+            isError: true,
+          };
+        }
         const map = mapPenalty(you!.mapProgress);
         const ac = effectiveAC(target, rollOptionsOf(session, target, you!, { action: sheetName }));
         const result = rollCheck(
           `${sheetName} spell attack: ${c.name} vs ${target.name} (AC ${ac}${map ? `, MAP ${map}` : ""})`,
-          (entry.attack ?? 0) + map,
+          entry.attack + map,
           ac,
         );
         you!.mapProgress += 1;
@@ -2221,13 +2260,15 @@ export async function executeTool(
       // Contrato estrito: parâmetro desconhecido não pode ser engolido em
       // silêncio (play-test: `updateType: "off-guard"` foi ignorado e o
       // off-guard do Twin Feint nunca aplicou — a 2ª Strike rolou vs AC cheia).
+      // O `&& !hasEffect` que existia aqui era a brecha: com
+      // `{"hpDelta":-5,"updateType":"off-guard"}` o HP era aplicado e o
+      // `updateType` descartado sem uma linha de log — metade do conserto do
+      // Twin Feint. Desde 2026-08-15 o `strictObject` do zod pega isso antes
+      // (ver `dispatchToolCall`); esta checagem fica como defesa em
+      // profundidade, para quem chama `executeTool` direto.
       const KNOWN_PARAMS = new Set(["hpDelta", "addConditions", "removeConditions", "target"]);
       const unknown = Object.keys(input).filter((k) => !KNOWN_PARAMS.has(k));
-      const hasEffect =
-        typeof input.hpDelta === "number" ||
-        Array.isArray(input.addConditions) ||
-        Array.isArray(input.removeConditions);
-      if (unknown.length > 0 && !hasEffect) {
+      if (unknown.length > 0) {
         return {
           content: `Unknown parameter(s) ${unknown.map((k) => `"${k}"`).join(", ")} — NOTHING was applied. Valid parameters: hpDelta (number), addConditions (string[]), removeConditions (string[]), target (combatant id/name). To apply a condition, retry with addConditions, e.g. {"target":"${targetRef || "..."}","addConditions":["off-guard"]}.`,
           isError: true,

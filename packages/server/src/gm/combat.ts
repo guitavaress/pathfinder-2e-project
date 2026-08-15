@@ -687,6 +687,12 @@ export function findCombatant(combat: Combat, ref: string): Combatant | undefine
   }
   const cleaned = ref.replace(/\[[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
   const key = cleaned.toLowerCase();
+  // Chave VAZIA não casa ninguém. `"goblin".includes("")` é true, então uma
+  // tag de id obsoleta ou alucinada (`"[id:4f2a]"` de um combate anterior —
+  // ids são regerados a cada `buildCombat`) devolvia o combatente de MAIOR
+  // INICIATIVA como se tivesse sido nomeado. Em `roll_check` o atacante é
+  // derivado do alvo, então isso chegava a virar o inimigo batendo no jogador.
+  if (!key) return undefined;
   const exact =
     combat.combatants.find((c) => c.id === ref.trim()) ??
     combat.combatants.find((c) => c.name.toLowerCase() === key) ??
