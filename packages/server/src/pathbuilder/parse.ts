@@ -21,6 +21,29 @@ function toRank(pathbuilderValue: number | undefined): ProficiencyRank {
 }
 
 /**
+ * Quantos dados de dano a runa striking concede (PF2e Player Core).
+ *
+ * O Pathbuilder já embute a runa de POTÊNCIA no `attack` que exporta, mas o
+ * `die` que ele manda é sempre o dado BASE da arma — a striking vive só no
+ * campo `str`. Lendo só o `die`, um "+1 Striking Rapier" rolava 1d6 em vez de
+ * 2d6: ~3,5 de dano a menos por acerto, na arma principal do personagem.
+ *
+ * A chave é normalizada porque a grafia varia entre exports ("greaterStriking"
+ * e "greater striking" aparecem os dois); runa desconhecida cai em 1 dado, que
+ * é o comportamento seguro — subestimar o dano é menos grave que fabricá-lo.
+ */
+const STRIKING_DICE: Record<string, number> = {
+  striking: 2,
+  greaterstriking: 3,
+  majorstriking: 4,
+};
+
+function strikingDice(raw: unknown): number {
+  const key = String(raw ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  return STRIKING_DICE[key] ?? 1;
+}
+
+/**
  * Total bonus of a proficiency (skill, save, perception).
  * PF2e: if trained+, add level + rank*2 + mod; if untrained, add only the mod.
  */
@@ -133,6 +156,7 @@ export function parsePathbuilder(raw: unknown): Character {
     name: asString(w.display, asString(w.name, "Weapon")),
     attack: asNumber(w.attack),
     die: asString(w.die),
+    dice: strikingDice(w.str),
     damageBonus: asNumber(w.damageBonus),
     damageType: asString(w.damageType),
   }));

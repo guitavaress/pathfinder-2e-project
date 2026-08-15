@@ -78,6 +78,12 @@ export const WeaponSchema = z.object({
   attack: z.number().int(),
   /** Damage die, e.g. "d4". */
   die: z.string(),
+  /**
+   * How many damage dice the weapon rolls — a striking rune adds dice
+   * (striking 2, greater 3, major 4). `default(1)` porque save.json antigo
+   * não tem o campo: ficha sem runa continua rolando 1 dado.
+   */
+  dice: z.number().int().min(1).default(1),
   /** Flat damage bonus. */
   damageBonus: z.number().int(),
   /** Damage type, e.g. "P", "S", "B". */

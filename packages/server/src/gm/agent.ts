@@ -641,7 +641,11 @@ function rollDamage(
       session.character.weapons.find((x) => name && name.includes(x.name.toLowerCase())) ??
       session.character.weapons[0];
     if (w) {
-      const amount = dbl(rollDice(1, parseDie(w.die)) + w.damageBonus);
+      // `w.dice`, não 1: a runa striking multiplica os DADOS, e o Pathbuilder
+      // manda sempre o dado base no `die`. O `?? 1` cobre arma montada sem
+      // passar pelo zod (save antigo, fixture de teste): sem ele, `rollDice`
+      // com `undefined` não roda o laço e o golpe sairia com dano ZERO.
+      const amount = dbl(rollDice(Math.max(1, w.dice ?? 1), parseDie(w.die)) + w.damageBonus);
       const type = input.damageType
         ? String(input.damageType)
         : (DAMAGE_TYPE_NAMES[w.damageType] ?? w.damageType ?? "damage");

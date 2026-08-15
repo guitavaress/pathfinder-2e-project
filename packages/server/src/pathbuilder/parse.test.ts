@@ -94,3 +94,52 @@ describe("parsePathbuilder with the example character (Goblin Rogue level 5)", (
     expect(c.spellcasting).toEqual([]);
   });
 });
+
+/**
+ * A runa striking multiplica os DADOS de dano, e o Pathbuilder nunca embute
+ * isso no `die` — ele manda o dado base e a runa separada, no campo `str`.
+ * Bug real de play-test: um "+1 Striking Rapier" rolava 1d6 em vez de 2d6.
+ */
+describe("runa striking → quantidade de dados de dano", () => {
+  const build = (str: unknown) =>
+    parsePathbuilder({
+      success: true,
+      build: {
+        name: "T",
+        class: "Rogue",
+        level: 5,
+        abilities: { str: 10, dex: 18, con: 12, int: 10, wis: 10, cha: 10 },
+        weapons: [
+          { name: "Rapier", display: "Rapier", die: "d6", str, attack: 14, damageBonus: 1, damageType: "P" },
+        ],
+      },
+    }).weapons[0]!;
+
+  it("arma sem runa rola 1 dado", () => {
+    expect(build("").dice).toBe(1);
+    expect(build(null).dice).toBe(1);
+    expect(build(undefined).dice).toBe(1);
+  });
+
+  it("striking = 2, greater = 3, major = 4", () => {
+    expect(build("striking").dice).toBe(2);
+    expect(build("greaterStriking").dice).toBe(3);
+    expect(build("majorStriking").dice).toBe(4);
+  });
+
+  it("a grafia do export não muda o resultado", () => {
+    // "greaterStriking" e "greater striking" aparecem os dois na natureza.
+    expect(build("greater striking").dice).toBe(3);
+    expect(build("Major Striking").dice).toBe(4);
+  });
+
+  it("runa desconhecida cai em 1 dado, não inventa dano", () => {
+    expect(build("mitalquevoceinventou").dice).toBe(1);
+  });
+
+  it("o dado BASE continua vindo do `die`, não da runa", () => {
+    const w = build("striking");
+    expect(w.die).toBe("d6");
+    expect(w.dice).toBe(2); // 2d6, não d12
+  });
+});

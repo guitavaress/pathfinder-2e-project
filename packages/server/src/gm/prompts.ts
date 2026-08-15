@@ -107,7 +107,7 @@ export function characterSheetBlock(c: Character): string {
   const weapons = c.weapons
     .map(
       (w) =>
-        `${w.name} ${fmt(w.attack)} (${w.die}${w.damageBonus ? fmt(w.damageBonus) : ""} ${w.damageType})`,
+        `${w.name} ${fmt(w.attack)} (${w.dice}${w.die}${w.damageBonus ? fmt(w.damageBonus) : ""} ${w.damageType})`,
     )
     .join(", ");
   const armor = c.armor.map((a) => `${a.name}${a.worn ? " (worn)" : ""}`).join(", ");

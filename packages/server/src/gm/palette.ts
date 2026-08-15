@@ -15,7 +15,7 @@
  * Escondê-lo seria a UI mentindo sobre o personagem.
  */
 import type { Character } from "@pf2e/shared";
-import { actionLabel, lookupInCategory } from "../rules/dataset.js";
+import { actionLabel, itemRecord, lookupInCategory } from "../rules/dataset.js";
 import { sheetCategoriesOf, type SheetCategory } from "../rules/sheet-lookup.js";
 
 /** Agrupamento da UI — mais grosso que a categoria do dataset, de propósito. */
@@ -60,7 +60,14 @@ export function buildPalette(character: Character): PaletteEntry[] {
       const dedupe = `${key}::${cat}`;
       if (seen.has(dedupe)) continue;
       seen.add(dedupe);
-      const rec = lookupInCategory(key, cat);
+      // Equipamento resolve pelo `itemRecord`, que é o MESMO grounding de item
+      // que a engine usa em combate: ele descasca runa ("+1 Striking Rapier" →
+      // "Rapier") e conhece a convenção de variante do dataset ("Studded
+      // Leather" → "Studded Leather Armor"). Com o `lookupInCategory` cru a
+      // paleta perdia o uuid justamente da arma empunhada — a paleta oferecia
+      // uma coisa e o portão da ficha resolvia outra, que é o que este arquivo
+      // existe para impedir.
+      const rec = (cat === "equipment" ? itemRecord(key) : null) ?? lookupInCategory(key, cat);
       const cost = rec ? actionLabel(rec) : "";
       out.push({
         name: displayName(character, key) ?? rec?.name ?? key,

@@ -205,6 +205,45 @@ describe.skipIf(!hasGenerated)("Strike do jogador: dano", () => {
     expect(Number.isInteger(single)).toBe(true);
   });
 
+  it("a runa striking rola os dados A MAIS, e o dado base não muda", async () => {
+    // Dados fixos no máximo: 1d6+1 = 7 e 2d6+1 = 13. A diferença é exatamente
+    // um d6 cheio — se a engine ignorasse a runa, os dois dariam 7.
+    fixDice(0.95);
+    const semRuna = mkSession({
+      weapons: [{ name: "Rapier", attack: 40, die: "d6", dice: 1, damageBonus: 1, damageType: "P" }],
+    });
+    await fight(semRuna);
+    const a = await strike(semRuna, "Rapier");
+
+    vi.restoreAllMocks();
+    fixDice(0.95);
+    const comRuna = mkSession({
+      weapons: [{ name: "Rapier", attack: 40, die: "d6", dice: 2, damageBonus: 1, damageType: "P" }],
+    });
+    await fight(comRuna);
+    const b = await strike(comRuna, "Rapier");
+
+    // As duas rodadas têm dados idênticos, então caem no MESMO grau — o único
+    // delta é o dado extra. No crítico ele dobra junto, que é a regra: a runa
+    // entra na base, e a base é o que dobra.
+    expect(b.crit).toBe(a.crit);
+    expect(b.damage - a.damage).toBe(a.crit ? 12 : 6);
+  });
+
+  it("arma sem o campo `dice` continua causando dano (save antigo)", async () => {
+    // save.json gravado antes da runa existir no schema não tem `dice`. Sem o
+    // fallback, `rollDice(undefined, …)` não roda o laço e o golpe sai com 0.
+    fixDice(0.95);
+    const s = mkSession({
+      weapons: [
+        { name: "Rapier", attack: 40, die: "d6", damageBonus: 1, damageType: "P" },
+      ] as unknown as Character["weapons"],
+    });
+    await fight(s);
+    const r = await strike(s, "Rapier");
+    expect(r.damage).toBeGreaterThan(0);
+  });
+
   it("Sneak Attack entra contra alvo off-guard", async () => {
     // Os dois cenários com o alvo off-guard: mesma CA, mesmo d20, mesmo grau —
     // a ÚNICA variável é a class feature, então o delta é o Sneak Attack puro.

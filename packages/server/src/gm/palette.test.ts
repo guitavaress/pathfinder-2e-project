@@ -89,6 +89,30 @@ describe.skipIf(!hasGenerated)("buildPalette", () => {
     expect(hit.primary!.category).toBe(entry.category);
   });
 
+  it("a arma com runa continua sendo a arma — a paleta descasca o que o dado não grafa", () => {
+    // Bug real de play-test: o Pathbuilder exporta o `display` com as runas
+    // ("+1 Striking Rapier") e o dataset grafa a base ("Rapier"). Resolvendo
+    // com o `lookupInCategory` cru, a paleta perdia o uuid da arma EMPUNHADA
+    // e mandava ao `lookup_rule` uma referência mais fraca que a da engine.
+    const c = {
+      ...BASE,
+      weapons: [
+        { name: "+1 Striking Rapier", attack: 14, die: "d6", damageBonus: 1, damageType: "P" },
+      ],
+      armor: [{ name: "Studded Leather", proficiency: "light", worn: true }],
+    } as unknown as Character;
+    const entries = buildPalette(c);
+
+    const rapier = entries.find((e) => e.name === "+1 Striking Rapier");
+    expect(rapier, "a grafia da ficha é preservada").toBeDefined();
+    expect(rapier!.uuid, "mas o uuid vem da base do dado").toBeTruthy();
+
+    // "Studded Leather" na ficha × "Studded Leather Armor" no dataset.
+    const armor = entries.find((e) => e.name === "Studded Leather");
+    expect(armor).toBeDefined();
+    expect(armor!.uuid).toBeTruthy();
+  });
+
   it("ficha sem os campos opcionais não explode", () => {
     const partial = { feats: ["Bon Mot"] } as unknown as Character;
     expect(() => buildPalette(partial)).not.toThrow();
