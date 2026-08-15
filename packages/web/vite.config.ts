@@ -35,6 +35,9 @@ export default defineConfig({
       "/health": apiProxy,
       "/brain": apiProxy,
       "/campaign": apiProxy,
+      // Rota nova precisa entrar AQUI também, senão o dev server devolve o
+      // index.html com 200 e o cliente lê uma lista vazia sem erro nenhum.
+      "/palette": apiProxy,
     },
   },
 });

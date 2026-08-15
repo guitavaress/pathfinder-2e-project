@@ -58,10 +58,16 @@ export interface PaletteEntry {
 export async function fetchPalette(sessionId: string): Promise<PaletteEntry[]> {
   try {
     const res = await fetch(`/palette/${encodeURIComponent(sessionId)}`);
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.warn(`[palette] HTTP ${res.status} — o \`@\` fica vazio neste turno.`);
+      return [];
+    }
     const body = (await res.json()) as { entries?: PaletteEntry[] };
     return body.entries ?? [];
-  } catch {
+  } catch (err) {
+    // Falhar em silêncio esconde rota fora do proxy do dev server: a resposta
+    // vem 200 com o index.html e o `@` simplesmente não abre, sem sintoma.
+    console.warn("[palette] resposta ilegível — o `@` fica vazio:", err);
     return [];
   }
 }
