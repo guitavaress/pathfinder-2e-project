@@ -1,8 +1,16 @@
 # Colisão de nomes no índice do dataset — a decisão, com os números
 
-> Rascunho de decisão preparado em 2026-08-14 (madrugada). **Não implementei
-> nada**: a escolha é sua e antecede a Fase 2.5. Isto existe para ela virar uma
-> linha em vez de uma investigação.
+> **DECIDIDO e IMPLEMENTADO em 2026-08-15** (Fase 2.7, ADR-010). O usuário
+> escolheu o portão da ficha **e** acrescentou a peça que faltava: se a UI
+> deixar o jogador apontar a habilidade, o `lookup_rule` sabe exatamente o que
+> olhar e a ambiguidade morre na origem, antes do modelo. Foi assim que ficou —
+> referência explícita primeiro, portão da ficha depois, índice por último.
+>
+> O texto abaixo é o rascunho original de 2026-08-14, preservado como registro
+> do que se sabia na hora de decidir. Duas correções de medição vieram da
+> implementação: com `deities` contando como categoria da ficha, os números
+> são **172 / 131 / 6** (e não 167 / 128 / 14), e o portão que já existia no
+> código cobria **73** dessas 172 — era feats-only.
 
 ## O problema, em um caso
 
@@ -79,3 +87,26 @@ Os dois FAIL da bateria (`Shake it Off`, `Shield Block`) são o teste. O primeir
 deve virar PASS só com esta mudança; o segundo **não** — ele precisa de hardness
 estruturado, que o importador ainda não guarda (verificado: os 115 docs
 `docType: "shield"` vêm sem hardness/HP/BT).
+
+---
+
+## O que efetivamente foi construído (2026-08-15)
+
+A opção (a) + portão da ficha, **mais** a paleta como quarta opção — que não
+estava no rascunho porque veio do usuário depois:
+
+| força | onde | resolve |
+|---|---|---|
+| referência explícita (uuid/categoria) | `sheet-lookup.ts`, `refs` no turno | tudo o que passa pela paleta, inclusive as 131 que a ficha não decide |
+| portão da ficha, generalizado | `sheetCategoriesOf` | **172 (56%)**, em código |
+| índice + homônimos listados | `lookupLocalRule` | o resto, com os dois lados à vista |
+
+O `(b)` ficou embutido de graça: expor o homônimo já é registrar. O `(c)`
+continua rejeitado — precedência estática não resolve nenhum destes casos.
+
+**A previsão do rascunho sobre a bateria não foi testada.** O rascunho dizia
+que `Shake it Off` deveria virar PASS só com esta mudança. Ele já vinha
+passando antes da fase, porque o portão feats-only cobria justamente esse caso;
+o que a fase acrescenta são as outras 99 colisões que a ficha decide e o
+caminho da paleta — e **nenhum dos dois está na bateria hoje**, que manda prosa
+direto ao servidor, sem `refs`. Medir isto exige cenários novos.

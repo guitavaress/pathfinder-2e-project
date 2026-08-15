@@ -324,6 +324,49 @@ Qualquer proposta que quebre uma destas está fora de escopo por padrão:
   `target:distance` e cobertura são a próxima maior família indecidível depois
   de `spellcasting` (544).
 
+### ADR-010 — Desambiguação de nome: a intenção vem da origem, não da inferência
+
+**Data:** 2026-08-15 · **Status:** aceito, implementado na Fase 2.7
+
+**Contexto.** 309 nomes do dataset existem em duas ou mais categorias, com
+textos DIFERENTES — `Shake It Off` é reação em `actions` e feat de bárbaro em
+`feats`; `Fly` é ação de voar e magia. O índice por nome é primeiro-ganha por
+precedência de categoria, então o GM lia a errada em **47 dos 53** pares
+`feats`×`actions` medidos (Jaccard < 0,6). Era a causa de FAILs na bateria.
+
+**Decisão.** Três forças, nesta ordem, em `rules/sheet-lookup.ts`:
+
+1. **Referência explícita** (uuid ou categoria). A paleta `@` da UI manda o
+   documento que o JOGADOR escolheu; a engine fixa no turno (`session.turnRefs`,
+   um turno só) e o `lookup_rule` consulta antes de qualquer coisa que o modelo
+   tenha pedido. Sem casamento por nome, não há colisão possível.
+2. **Portão da ficha.** Se o personagem nomeia exatamente um dos lados, aquele
+   é o certo — decidido em código. Cobre **172 das 309** colisões (56%).
+3. **Índice**, inalterado, para a prosa livre. Homônimos sempre LISTADOS.
+
+**Por que não só (2), como o rascunho original propunha.** Porque 131 colisões
+(42%) têm dois lados nomeáveis pela ficha: nenhum código as decide, só a
+intenção. E porque a alternativa — precedência estática por categoria —
+resolve **zero**: para `Shake It Off` a resposta certa depende da CLASSE do
+personagem, não da categoria; precedência estática só muda de quem é o erro.
+
+**Por que a referência não viaja como prosa.** Um marcador no texto ("Shake It
+Off (feat)") depende de o modelo repassar a categoria à tool. Isso é prompt,
+logo mitigação, e um 12B esquece — doutrina 1. A referência viaja **fora** da
+conversa, no payload do turno, e a engine a aplica sozinha.
+
+**Consequência honesta.** A paleta reduz a ambiguidade, não a elimina: texto
+livre continua existindo e continua caindo no portão e no índice. E 6 colisões
+não têm lado nenhum na ficha (bestiary, hazard) — ali quem escolhe é o modelo,
+com os dois à vista.
+
+**Efeito colateral que virou correção:** a nota de homônimo afirmava "esta é a
+que o personagem usa" mesmo quando ninguém tinha decidido. Agora ela diz quando
+a ficha NÃO decidiu. Era o estado mentindo (doutrina 4).
+
+**Revisitar quando:** a bateria medir o caminho da paleta (hoje ela só exercita
+prosa livre), ou se `lookupLocalRule` ganhar desambiguação semântica.
+
 ### Bifurcações consideradas e adiadas (não fazer sem reabrir a decisão)
 - **Modo dois-modelos** (`RULES_MODEL`/`NARRATIVE_MODEL`): exige segundo
   `llama-server`; limitado pela VRAM. Adiado.
