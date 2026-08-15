@@ -42,7 +42,7 @@ import {
   type ExpiryEvent,
 } from "../rules/active-effects.js";
 import { slug, type RollOptions } from "../rules/roll-options.js";
-import { buildTools } from "./tool-schemas.js";
+import { buildTools, validateToolArgs } from "./tool-schemas.js";
 import {
   allyCombatant,
   applyDamage,
@@ -959,6 +959,32 @@ function budgetNotes(plan: EncounterPlan): string {
 
 // Exportada para os testes unitários (use_item, guards) — o fluxo normal só a
 // chama via runRulesStage.
+/**
+ * Validação de argumentos + dispatch, na ordem que a doutrina 1 exige.
+ *
+ * Existe como unidade própria porque o laço de tool calls do `runRulesStage` só
+ * roda com o llama-server no ar — durante ~3 semanas `validateToolArgs` ficou
+ * exportada, testada e NUNCA chamada em produção, e nenhum teste podia ter
+ * pego isso. Aqui o contrato é exercitável sem GPU.
+ *
+ * Rejeição não aplica NADA: `executeTool` sequer é chamado.
+ */
+export async function dispatchToolCall(
+  session: Session,
+  name: string,
+  rawArgs: Record<string, unknown>,
+  emit: (e: StreamEvent) => void,
+): Promise<{ outcome: ToolOutcome; args: Record<string, unknown> }> {
+  const check = validateToolArgs(name, rawArgs);
+  if (!check.ok) {
+    return { outcome: { content: check.message, isError: true }, args: rawArgs };
+  }
+  return {
+    outcome: await executeTool(session, name, check.args, emit),
+    args: check.args,
+  };
+}
+
 export async function executeTool(
   session: Session,
   name: string,
@@ -3075,8 +3101,17 @@ export async function runRulesStage(
     anyTool = true;
 
     for (const tc of toolCalls) {
-      const args = parseToolArgs(tc.function.arguments);
-      const outcome = await executeTool(session, tc.function.name, args, emit);
+      // `dispatchToolCall` valida ANTES de executar (doutrina 1). Sem isto,
+      // todo `input.x ?? default` de `executeTool` é porta aberta — e o caminho
+      // Gemma 4 do llama.cpp ignora o schema (ADR-006), então esta camada é a
+      // ÚNICA que resta. Rejeição volta ao modelo pelo mesmo canal dos erros
+      // semânticos, e NADA é aplicado ao estado.
+      const { outcome, args } = await dispatchToolCall(
+        session,
+        tc.function.name,
+        parseToolArgs(tc.function.arguments),
+        emit,
+      );
       // 240 e não 80: este log É a fonte de verdade da bateria de feats (o
       // harness lê o stdout do servidor para saber o que a engine respondeu).
       // Com 80 caracteres, notas que a engine escreve no FIM da mensagem —

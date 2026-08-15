@@ -15,7 +15,15 @@
  *
  * Consequência: chaves, tipos, `required` e enums só valem se NÓS validarmos.
  * É o que este módulo faz — schema em zod é o dono, o JSON Schema mandado ao
- * modelo é DERIVADO dele, e `validateToolArgs` roda antes do dispatch.
+ * modelo é DERIVADO dele, e `validateToolArgs` roda antes do dispatch
+ * (`agent.ts`, no laço de tool calls).
+ *
+ * ATENÇÃO — esta última frase foi FALSA de 2026-07-25 a 2026-08-15: o arquivo
+ * nasceu com `validateToolArgs` exportada, testada e **nunca chamada em
+ * produção**. Durante ~3 semanas nada validou argumento de tool: nem a gramática
+ * (que ignora o schema, ver acima) nem a engine. Se você mexer no dispatch,
+ * garanta que a chamada continua lá — um teste em `tool-schemas.test.ts` trava
+ * isso, mas o teste só existe porque o buraco existiu.
  * Doutrina 1: gramática/schema cuida do formato, engine cuida do sentido — a
  * validação semântica de `executeTool` (ficha, dataset, orçamento de ações)
  * continua inteira.
