@@ -169,12 +169,20 @@ export function makeCorpusCharacter(opts: CorpusOptions): Character {
     }),
   );
 
+  // Números na escala REAL do nível. A primeira versão usava `level + 4 + mod`
+  // para tudo, o que num nível 20 dava +25 contra CA 44 do bestiary: o
+  // personagem precisava de 19 no dado e a simulação media um boneco sendo
+  // massacrado, não uma luta. PF2e no nível 20: proficiência master/legendary
+  // (level + 6/8) + runa de potência (+3) + habilidade.
+  const profBonus = level >= 15 ? 8 : level >= 7 ? 6 : 4;
+  const runeBonus = level >= 16 ? 3 : level >= 10 ? 2 : level >= 2 ? 1 : 0;
+  const strikingDice = level >= 19 ? 4 : level >= 12 ? 3 : level >= 4 ? 2 : 1;
   const weaponRecs = pickMany(r, p.weapons, 1 + Math.floor(r() * 2));
   const weapons = weaponRecs.map((w) => ({
     name: w.name,
-    attack: level + 4 + mods.str,
+    attack: level + profBonus + runeBonus + mods.str,
     die: w.damage?.die ?? "d6",
-    dice: 1,
+    dice: strikingDice,
     damageBonus: mods.str,
     damageType: "S",
   }));
@@ -182,7 +190,7 @@ export function makeCorpusCharacter(opts: CorpusOptions): Character {
   if (weapons.length === 0) {
     weapons.push({
       name: "Fist",
-      attack: level + 4 + mods.str,
+      attack: level + profBonus + runeBonus + mods.str,
       die: "d4",
       dice: 1,
       damageBonus: mods.str,
@@ -224,15 +232,16 @@ export function makeCorpusCharacter(opts: CorpusOptions): Character {
     abilities: abilities as Character["abilities"],
     abilityModifiers: mods as Character["abilityModifiers"],
     maxHp: 8 + (8 + mods.con) * level,
-    ac: 10 + Math.min(level + 2, 8) + Math.max(0, mods.dex),
+    // CA na escala do nível: 10 + proficiência + armadura+runa + Dex (limitado).
+    ac: 10 + profBonus + level + Math.min(2 + runeBonus, 5) + Math.min(Math.max(0, mods.dex), 4),
     speed: 25,
-    perception: level + 2 + mods.wis,
+    perception: level + profBonus + mods.wis,
     saves: {
-      fortitude: level + 2 + mods.con,
-      reflex: level + 2 + mods.dex,
-      will: level + 2 + mods.wis,
+      fortitude: level + profBonus + mods.con,
+      reflex: level + profBonus + mods.dex,
+      will: level + profBonus + mods.wis,
     },
-    classDc: 10 + level + 2 + mods.str,
+    classDc: 10 + level + profBonus + mods.str,
     acItemBonus: 2,
     weaponProficiencies: { simple: 2, martial: 2 },
     skills,

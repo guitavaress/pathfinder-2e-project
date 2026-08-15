@@ -2916,6 +2916,39 @@ function partyBlock(session: Session): string {
  * vivo. Aliado caster luta como marcial por enquanto (conjuração de aliado é
  * tarefa futura registrada no ROADMAP — exigiria política própria de alvo).
  */
+/**
+ * O fim de rodada COMPLETO, na ordem que o PF2e exige.
+ *
+ * Exportado como unidade porque a simulação (`scripts/sim-battery.ts`) precisa
+ * rodar exatamente esta sequência — copiá-la lá criaria uma ficção que diverge
+ * do código real na primeira mudança, e a bateria passaria a medir a cópia.
+ * Mesmo motivo de `dispatchToolCall` e `GENERIC_STRIKE`: se dois lugares TÊM de
+ * concordar, eles compartilham o código em vez de repeti-lo.
+ *
+ * Ordem, e por quê: aliados agem entre o jogador e o revide (podem fechar a
+ * luta sozinhos) → inimigos revidam → dano persistente ticka (dano → flat check
+ * DC 15) → upkeep de fim de rodada (off-guard expira, frightened decrementa,
+ * ações renovam, efeitos com prazo em rodadas vencem).
+ */
+export function resolveRoundEnd(
+  session: Session,
+  emit: (e: StreamEvent) => void,
+): string[] {
+  const lines: string[] = [];
+  const combat = session.state.combat;
+  if (!combat?.active) return lines;
+
+  lines.push(...resolveAllyTurns(session, emit));
+  if (combat.active) lines.push(...resolveEnemyTurns(session, emit));
+  if (combat.active) lines.push(...applyPersistentTicks(session, emit));
+  if (combat.active) {
+    tickEndOfRound(combat);
+    lines.push(...expirePlayerEffects(session, "round"));
+    emit({ type: "state", state: session.state });
+  }
+  return lines;
+}
+
 export function resolveAllyTurns(
   session: Session,
   emit: (e: StreamEvent) => void,
@@ -3305,22 +3338,7 @@ export async function runRulesStage(
     combat?.combatants.some((c) => c.kind === "enemy" && !c.defeated) ?? false;
   const tookTurn = endedTurn || (you ? you.actionsRemaining < 3 : false);
   if (combat?.active && enemiesAlive && tookTurn) {
-    // Aliados agem entre o jogador e o revide (podem fechar a luta sozinhos).
-    summaryLines.push(...resolveAllyTurns(session, emit));
-    if (combat.active) {
-      summaryLines.push(...resolveEnemyTurns(session, emit));
-    }
-    // Dano persistente ticka no fim da rodada (dano → flat check DC 15).
-    if (combat.active) {
-      summaryLines.push(...applyPersistentTicks(session, emit));
-    }
-    // End-of-round upkeep: off-guard expires, frightened N decrements, e os
-    // efeitos com prazo em rodadas vencem (Fase 2.6).
-    if (combat.active) {
-      tickEndOfRound(combat);
-      summaryLines.push(...expirePlayerEffects(session, "round"));
-      emit({ type: "state", state: session.state });
-    }
+    summaryLines.push(...resolveRoundEnd(session, emit));
   }
 
   // Saiu da luta: o que durava "este encontro" ou tinha prazo em rodadas acaba

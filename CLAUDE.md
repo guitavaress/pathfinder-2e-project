@@ -82,6 +82,7 @@ Medido nesta máquina: ~116 tok/s de geração, ~2200 tok/s de prefill.
 gemma-up / gemma-down    # sobe/derruba o llama-server (porta 1234)
 npm test                 # unit tests (vitest, packages/server + packages/brain)
 npm run build            # tsc + vite em todos os workspaces
+npm run sim              # BATERIA DE SIMULAÇÃO — rodar a cada PR (sem GPU, ~1s)
 npm run data:pf2e        # (re)gera o dataset de regras do foundryvtt/pf2e
 # Auditoria de feats (suite de regressão do GM — usa GPU/llama.cpp):
 cd packages/server
@@ -183,6 +184,16 @@ mora em código determinístico e testado. O modelo só chama tools e narra.
 
 Regras de trabalho:
 - Uma fase / uma tarefa por vez. Nada de frentes paralelas.
+- **A cada PR, rodar `npm run sim`** (decisão do usuário, 2026-08-15). É a
+  bateria de simulação: personagens de NÍVEL 20 gerados do dataset jogam um dia
+  de aventura completo contra criaturas oficiais do bestiary, e ~4.600
+  invariantes são verificadas passo a passo. Sem GPU, ~1s, determinística
+  (`--seed=`, `--chars=`, `--level=`, `--verbose`). Sai com código 1 em qualquer
+  violação. Ela responde UMA pergunta — *a engine se contradiz?* — e não
+  substitui play-test: cena, ritmo e voz continuam exigindo o jogador.
+  Ao mexer no turno, a bateria e o `runRulesStage` **compartilham**
+  `resolveRoundEnd`/`beginPlayerRound` de propósito: copiar a sequência faria a
+  bateria medir uma ficção que diverge do código real.
 - Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
   O piso vigente é **709 testes do servidor** (+31 do brain, medido em 2026-08-15)
   e, na bateria, **69 PASS · 3 FLAKY ·
