@@ -5,7 +5,7 @@ import type {
 } from "openai/resources/chat/completions";
 import type { AttackContext, Character, Combatant, Companion, Weapon } from "@pf2e/shared";
 import type { Adjudicated, CheckResult, DegreeOfSuccess, GameState, TurnRef } from "@pf2e/shared";
-import { adjudicationFor } from "../rules/coverage.js";
+import { adjudicationFor, adjudicationForSpell } from "../rules/coverage.js";
 import { degreeOfSuccess, isValidDc, rollCheck } from "../dice/check.js";
 import {
   actionLabel,
@@ -811,6 +811,26 @@ function ownedAbilities(session: Session): string[] {
 }
 
 /**
+ * Declara — ao JOGADOR e ao NARRADOR — que algo foi reconhecido e não executado.
+ *
+ * Fonte única da declaração porque ela nasceu em `spend_actions` e ficou só lá:
+ * durante um PR inteiro a promessa "a engine declara o que não faz" valia para
+ * 1 dos 4 caminhos que invocam habilidade de ficha. Repetir o `emit` + a linha
+ * em cada `case` garantiria que eles divergissem.
+ *
+ * Devolve o fragmento para o `summaryLine` — string vazia quando não há o que
+ * declarar, para o chamador poder concatenar sem condicional.
+ */
+function declareAdjudicated(
+  emit: (e: StreamEvent) => void,
+  adj: { name: string; reason: string } | null,
+): string {
+  if (!adj) return "";
+  emit({ type: "adjudicated", adjudicated: adj });
+  return `\n- ${adj.name}: NÃO automatizado pela engine (${adj.reason}) — adjudique pela regra escrita, sem inventar número.`;
+}
+
+/**
  * Põe no registro o efeito que a ficha autoriza, devolvendo a linha do resumo.
  *
  * O efeito precisa existir no dado E estar na ficha: nome inventado não entra,
@@ -1305,9 +1325,18 @@ export async function executeTool(
         dc,
       );
       emit({ type: "check", result });
+      // O caminho onde as ações de perícia caem, e onde o silêncio era total:
+      // Demoralize e "olhar feio para o inimigo" produziam a MESMA linha. A
+      // rolagem é real; o efeito do feat citado é que não é aplicado, e isso
+      // passa a ser dito. (Estender a declaração para cá era o buraco que a
+      // T5 deixou: ela nasceu só em `spend_actions`.)
+      const rollAdjLine = declareAdjudicated(
+        emit,
+        adjudicationFor(session.character, `${reason} ${skill}`, ownedAbilities(session)),
+      );
       return {
         content: JSON.stringify(result),
-        summaryLine: `- ${checkReason(result.label)}: ${DEGREE_EN[result.degree]}.`,
+        summaryLine: `- ${checkReason(result.label)}: ${DEGREE_EN[result.degree]}.${rollAdjLine}`,
       };
     }
     case "rest": {
@@ -1534,11 +1563,19 @@ export async function executeTool(
         : null;
 
       // Sem mecânica estruturada: gasto real + efeito narrado (utility spells).
+      // 51% das magias caem aqui. A string sentinela avisava o NARRADOR desde
+      // sempre; o jogador não era avisado de nada — via a magia ser conjurada,
+      // o slot sumir, e nada acontecer. Quando a magia concede efeito ativo
+      // (`castEffLine`), aí há mecânica de verdade e não se declara nada.
       if (!mech || (mech.damage.length === 0 && !mech.attack && !mech.defense)) {
         emit({ type: "state", state: session.state });
+        const castAdjLine = declareAdjudicated(
+          emit,
+          castEffLine ? null : adjudicationForSpell(sheetName),
+        );
         return {
           content: `${sheetName} is cast${resourceNote}. No structured combat effect — narrate its utility effect faithfully (text: ${spellRecord(sheetName)?.text.slice(0, 300) ?? "see rules"}).`,
-          summaryLine: `- Casts ${castLabel}${resourceNote}.${castEffLine ? `\n${castEffLine}` : ""}`,
+          summaryLine: `- Casts ${castLabel}${resourceNote}.${castEffLine ? `\n${castEffLine}` : ""}${castAdjLine}`,
         };
       }
 
@@ -2015,13 +2052,10 @@ export async function executeTool(
       // (numerado, como todo resultado mecânico) e ao jogador (evento próprio).
       // Sem isto, gastar ação com Toughness e com Sneak Attack produz a MESMA
       // linha, e o jogador não sabe qual foi enforced.
-      const adj = effLine
-        ? null
-        : adjudicationFor(session.character, reason, ownedAbilities(session));
-      if (adj) emit({ type: "adjudicated", adjudicated: adj });
-      const adjLine = adj
-        ? `\n- ${adj.name}: NÃO automatizado pela engine (${adj.reason}) — adjudique pela regra escrita, sem inventar número.`
-        : "";
+      const adjLine = declareAdjudicated(
+        emit,
+        effLine ? null : adjudicationFor(session.character, reason, ownedAbilities(session)),
+      );
       return {
         content: `Spent ${cost} action(s) on: ${reason}. ${you.actionsRemaining} remaining this turn.${effLine ? ` ${effLine.replace(/^- /, "")}` : ""}${adjLine ? ` ${adjLine.trim()}` : ""}`,
         summaryLine: `- ${reason} (${cost} action${cost > 1 ? "s" : ""} spent).${effLine ? `\n${effLine}` : ""}${adjLine}`,
@@ -2210,9 +2244,16 @@ export async function executeTool(
       if (isConsumable) consume();
       if (inCombat) emit({ type: "state", state: session.state });
       const spentNote = isConsumable ? ` Consumed (${qtyNote()}).` : "";
+      // Item gasto sem efeito resolvido: a quantidade some do inventário e nada
+      // acontece. Bomba e cura têm caminho próprio acima e NÃO chegam aqui —
+      // então declarar aqui não pisa no que funciona.
+      const itemAdjLine = declareAdjudicated(emit, {
+        name: owned.name,
+        reason: "item sem dano, cura ou efeito estruturado no dado",
+      });
       return {
         content: `Used ${owned.name}.${spentNote} No mechanical effect — narrate its use.`,
-        summaryLine: `- ${owned.name} used.${spentNote}`,
+        summaryLine: `- ${owned.name} used.${spentNote}${itemAdjLine}`,
       };
     }
     case "lookup_rule": {

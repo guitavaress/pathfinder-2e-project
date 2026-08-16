@@ -313,6 +313,20 @@ export function adjudicationFor(
   return null;
 }
 
+/**
+ * A magia citada e o que a engine faz com ela — o par de `adjudicationFor`
+ * para `cast_spell`.
+ *
+ * Magia não está em `ownedAbilities` (que é feats + classFeatures), então o
+ * caminho de conjuração precisa do seu próprio: 51% das magias não têm dano,
+ * save nem ataque, e para essas `cast_spell` cobra o slot e devolve prosa.
+ */
+export function adjudicationForSpell(name: string): { name: string; reason: string } | null {
+  const entry = auditSpell(name);
+  if (entry.verdict === "mechanized") return null;
+  return { name: entry.name, reason: entry.reason };
+}
+
 /** Conta, no dataset inteiro, quantos docs de ficha caem em cada balde. */
 export function datasetCoverageCensus(): Record<string, { total: number; withReader: number }> {
   const out: Record<string, { total: number; withReader: number }> = {};
