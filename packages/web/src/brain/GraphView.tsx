@@ -58,7 +58,7 @@ export function GraphView({ graph, onBackToScene }: Props) {
           <circle cx="12" cy="12" r="1.6" fill="#c6a24c" stroke="none" />
           <path d="M12 3v2M12 19v2M3 12h2M19 12h2" stroke="#4a3d28" />
         </svg>
-        <h3>O mundo ainda é um mistério</h3>
+        <h3>The world is still a mystery</h3>
         <p>
           Cada pessoa, lugar e segredo que seu personagem descobrir se tornará uma
           estrela neste mapa. Volte à cena — e comece a revelar.
@@ -88,8 +88,8 @@ export function GraphView({ graph, onBackToScene }: Props) {
               setSearch(e.target.value);
               engineRef.current?.setSearch(e.target.value);
             }}
-            placeholder="Buscar por nome…"
-            aria-label="Buscar nó por nome"
+            placeholder="Search by name…"
+            aria-label="Search node by name"
           />
         </div>
         <div className="brain-chips">
@@ -140,8 +140,8 @@ export function GraphView({ graph, onBackToScene }: Props) {
         <canvas ref={canvasRef} className="brain-canvas" />
         <div className="brain-zoom-hint">
           {zoomHigh
-            ? "zoom alto — rótulos das ligações visíveis"
-            : "aproxime (scroll) para revelar os rótulos das ligações"}
+            ? "high zoom — link labels visible"
+            : "zoom in (scroll) to reveal link labels"}
         </div>
         <div
           className="brain-drawer"

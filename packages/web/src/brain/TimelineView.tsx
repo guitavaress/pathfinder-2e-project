@@ -21,7 +21,7 @@ export function TimelineView({ entries }: { entries: TimelineEntry[] }) {
       <div className="brain-reader-col">
         <div className="brain-ornament">
           <span className="brain-ornament-rule left" />
-          <span className="brain-ornament-label">Cronologia do Mundo</span>
+          <span className="brain-ornament-label">World Chronology</span>
           <span className="brain-ornament-rule right" />
         </div>
         <div className="brain-timeline">

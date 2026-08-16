@@ -53,13 +53,13 @@ export function NodePanel({ node, graph, onClose, onGo }: Props) {
             </span>
           )}
           <div className="brain-topbar-spring" />
-          <button className="brain-close sm" aria-label="Fechar painel" onClick={onClose}>
+          <button className="brain-close sm" aria-label="Close panel" onClick={onClose}>
             ✕
           </button>
         </div>
         <h2 className="brain-node-name">{node.name}</h2>
         <p className="brain-node-meta">
-          Descoberto na {humanStamp(node.created)} · atualizado na {humanStamp(node.updated)}
+          Discovered in {humanStamp(node.created)} · updated in {humanStamp(node.updated)}
         </p>
         {node.tags.length > 0 && (
           <div className="brain-node-tags">

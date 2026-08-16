@@ -80,7 +80,7 @@ export function ActivityView({ activity }: { activity: BrainActivityPass[] }) {
               )}
               {hasError && (
                 <div className="brain-pass-error">
-                  <span className="tag">! ERRO</span>
+                  <span className="tag">! ERROR</span>
                   <span>{pass.error}</span>
                 </div>
               )}

@@ -13,10 +13,10 @@ import { TimelineView } from "./TimelineView.js";
 export type BrainTab = "graph" | "journal" | "timeline" | "activity";
 
 const TABS: { id: BrainTab; label: string }[] = [
-  { id: "graph", label: "Grafo" },
+  { id: "graph", label: "Graph" },
   { id: "journal", label: "Journal" },
   { id: "timeline", label: "Timeline" },
-  { id: "activity", label: "Atividade" },
+  { id: "activity", label: "Activity" },
 ];
 
 interface Props {
@@ -90,7 +90,7 @@ export function BrainOverlay({ tab, onTab, onClose }: Props) {
       tabIndex={-1}
       role="dialog"
       aria-modal="true"
-      aria-label="Grimório da Memória"
+      aria-label="Memory Grimoire"
     >
       <header className="brain-topbar">
         <div className="brain-brand">
@@ -101,7 +101,7 @@ export function BrainOverlay({ tab, onTab, onClose }: Props) {
             <circle cx="12" cy="20" r="1.6" />
             <path d="M12 7.2 6 12.2M12 7.2l6 5M6.8 15.6l3.8 3.4M17.2 15.6l-3.8 3.4" />
           </svg>
-          <span>Grimório da Memória</span>
+          <span>Memory Grimoire</span>
         </div>
         <nav className="brain-tabs">
           {TABS.map((t) => (
@@ -120,7 +120,7 @@ export function BrainOverlay({ tab, onTab, onClose }: Props) {
             S{meta.session} · T{meta.turn}
           </span>
         )}
-        <button className="brain-close" aria-label="Fechar (Esc)" onClick={onClose}>
+        <button className="brain-close" aria-label="Close (Esc)" onClick={onClose}>
           ✕
         </button>
       </header>
@@ -134,7 +134,7 @@ export function BrainOverlay({ tab, onTab, onClose }: Props) {
               <i />
             </span>
           </div>
-          <p className="brain-soft-italic">Abrindo o grimório…</p>
+          <p className="brain-soft-italic">Opening the grimoire…</p>
           <p className="brain-ghost">GET /brain/map</p>
         </div>
       )}
@@ -145,13 +145,13 @@ export function BrainOverlay({ tab, onTab, onClose }: Props) {
             <path d="M12 3 2.5 20h19L12 3z" />
             <path d="M12 10v4M12 17h.01" />
           </svg>
-          <p className="brain-error-title">A memória não respondeu</p>
+          <p className="brain-error-title">Memory did not respond</p>
           <p className="brain-soft-italic">
-            Não foi possível ler /brain. O servidor local está de pé?
+            Could not read /brain. Is the local server up?
           </p>
           <p className="brain-ghost">{error}</p>
           <button className="brain-retry" onClick={() => void load()}>
-            Tentar de novo
+            Try again
           </button>
         </div>
       )}

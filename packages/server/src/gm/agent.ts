@@ -827,7 +827,7 @@ function declareAdjudicated(
 ): string {
   if (!adj) return "";
   emit({ type: "adjudicated", adjudicated: adj });
-  return `\n- ${adj.name}: NÃO automatizado pela engine (${adj.reason}) — adjudique pela regra escrita, sem inventar número.`;
+  return `\n- ${adj.name}: NOT automated by the engine (${adj.reason}) — adjudicate from the written rule, do NOT invent a number.`;
 }
 
 /**
@@ -2249,7 +2249,7 @@ export async function executeTool(
       // então declarar aqui não pisa no que funciona.
       const itemAdjLine = declareAdjudicated(emit, {
         name: owned.name,
-        reason: "item sem dano, cura ou efeito estruturado no dado",
+        reason: "item with no structured damage, healing or effect in the data",
       });
       return {
         content: `Used ${owned.name}.${spentNote} No mechanical effect — narrate its use.`,
