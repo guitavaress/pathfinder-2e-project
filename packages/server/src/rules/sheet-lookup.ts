@@ -29,6 +29,7 @@ import {
   lookupLocalRule,
   type RuleRecord,
 } from "./dataset.js";
+import { grantedDocsFor } from "./granted.js";
 
 /**
  * Categorias que uma FICHA sabe nomear, e o campo de onde o nome vem.
@@ -91,6 +92,16 @@ function add(map: Map<string, Set<SheetCategory>>, name: unknown, cat: SheetCate
 export function sheetCategoriesOf(character: Character): Map<string, Set<SheetCategory>> {
   const map = new Map<string, Set<SheetCategory>>();
   for (const f of character.feats ?? []) add(map, f, "feats");
+  // Concedidos por `GrantItem` também são "o que a ficha nomeia" — um feat que
+  // o personagem ganhou de outro feat decide colisão igual aos que ele
+  // escolheu. Só entram categorias que este portão já reconhece: `actions`
+  // está fora de SHEET_CATEGORIES de propósito (ADR-010 — "Shield Block" em
+  // `actions` é a ação genérica, não o feat do personagem), e uma concessão não
+  // é motivo para afrouxar isso.
+  const sheetCats = new Set<string>(SHEET_CATEGORIES);
+  for (const g of grantedDocsFor(character)) {
+    if (sheetCats.has(g.category)) add(map, g.name, g.category as SheetCategory);
+  }
   for (const f of character.classFeatures ?? []) add(map, f, "feats");
   for (const sc of character.spellcasting ?? []) {
     for (const s of sc.spells ?? []) add(map, s, "spells");

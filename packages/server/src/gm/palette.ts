@@ -17,6 +17,7 @@
 import type { Character } from "@pf2e/shared";
 import { actionLabel, itemRecord, lookupInCategory } from "../rules/dataset.js";
 import { sheetCategoriesOf, type SheetCategory } from "../rules/sheet-lookup.js";
+import { grantedNamesFor } from "../rules/granted.js";
 
 /** Agrupamento da UI — mais grosso que a categoria do dataset, de propósito. */
 export type PaletteGroup = "ability" | "spell" | "item" | "identity";
@@ -89,6 +90,10 @@ export function buildPalette(character: Character): PaletteEntry[] {
 function displayName(character: Character, key: string): string | null {
   const pools: unknown[] = [
     ...(character.feats ?? []),
+    // Concedidos por `GrantItem`: o jogador tem essas habilidades, então elas
+    // têm de estar na paleta `@` — apontar para elas é o único jeito de
+    // desambiguar sem depender do modelo (ADR-010).
+    ...grantedNamesFor(character),
     ...(character.classFeatures ?? []),
     ...(character.spellcasting ?? []).flatMap((sc) => sc.spells ?? []),
     ...(character.equipment ?? []).map((e) => e.name),

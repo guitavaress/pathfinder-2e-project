@@ -25,6 +25,7 @@
  */
 import type { Character } from "@pf2e/shared";
 import { categoryRecords, type RuleRecord } from "./dataset.js";
+import { grantedNamesFor } from "./granted.js";
 import { normalizeDamageType, type Defenses } from "./damage.js";
 import { modifierType, type Modifier } from "./modifiers.js";
 import { evaluate } from "./predicate.js";
@@ -182,6 +183,12 @@ function effectModifiers(effects: readonly ActiveEffectRef[]): SheetModifier[] {
 function sheetSources(c: Character): string[] {
   return [
     ...(c.feats ?? []),
+    // O que os feats da ficha CONCEDEM (`GrantItem`): o doc concedido traz os
+    // próprios rule elements, e sem isto eles nunca eram lidos. O portão de
+    // não-duplo-cômputo (ADR-008) segue valendo igual — modificador
+    // incondicional em seletor de ficha continua `assumed-in-sheet`, porque
+    // não sabemos se o Pathbuilder já o embutiu no valor exportado.
+    ...grantedNamesFor(c),
     ...(c.classFeatures ?? []),
     ...(c.heritage ? [c.heritage] : []),
     ...(c.ancestry ? [c.ancestry] : []),

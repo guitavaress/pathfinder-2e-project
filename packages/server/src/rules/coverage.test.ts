@@ -22,13 +22,23 @@ const here = dirname(fileURLToPath(import.meta.url));
 const hasGenerated = existsSync(join(here, "../../data/pf2e/generated"));
 
 /**
- * TETO CONGELADO — medido em 2026-08-15 sobre 60 fichas geradas (seed 1234).
+ * PISO DE CONHECIMENTO — medido em 2026-08-16 sobre 60 fichas geradas.
  *
- * Só pode DESCER. Se subir, alguma mudança tornou a engine mais silenciosa e o
- * teste tem de acusar antes do play-test. Se descer bastante, baixe o número no
- * mesmo commit que causou a melhora — teto frouxo não mede nada.
+ * Números ABSOLUTOS, não proporção, e a razão é uma lição de 2026-08-16: o
+ * leitor de `GrantItem` fez a auditoria enxergar 149 documentos que a ficha
+ * sempre teve (concedidos por feats) e que ela não contava. O MECANIZADO subiu
+ * de 340 para 350 — e mesmo assim a PROPORÇÃO de cego subiu, de 60,8% para
+ * 64,0%, porque o denominador cresceu. O teto proporcional acusou uma regressão
+ * que não existia.
+ *
+ * Proporção não sobrevive a mudança de escopo; contagem absoluta sobrevive.
+ * Estes dois pisos só podem SUBIR — acrescentar entradas nunca os reduz, e
+ * qualquer mudança que faça a engine aplicar ou declarar MENOS é acusada. Se
+ * subirem de verdade, suba o número no mesmo commit que causou a melhora: piso
+ * frouxo não mede nada.
  */
-const BLIND_CEILING = 0.62; // medido: 61,3%
+const MECHANIZED_FLOOR = 350;
+const KNOWN_FLOOR = 535; // mecanizado + declarado: o que a engine não ignora
 const CORPUS_SIZE = 60;
 const CORPUS_SEED = 1234;
 
@@ -72,11 +82,14 @@ describe.skipIf(!hasGenerated)("cobertura de ficha (requer generated/)", () => {
       `[T9] motivos do CEGO: ${top.map(([r, n]) => `${n}× ${r.slice(0, 58)}`).join(" | ")}`,
     );
 
-    const blindRatio = totals.blind / entries;
     expect(
-      blindRatio,
-      `balde CEGO cresceu além do teto congelado — alguma mudança deixou a engine mais silenciosa`,
-    ).toBeLessThanOrEqual(BLIND_CEILING);
+      totals.mechanized,
+      "a engine passou a APLICAR menos do que aplicava — regressão de mecânica",
+    ).toBeGreaterThanOrEqual(MECHANIZED_FLOOR);
+    expect(
+      totals.mechanized + totals.declared,
+      "a engine passou a IGNORAR em silêncio o que antes ela aplicava ou declarava",
+    ).toBeGreaterThanOrEqual(KNOWN_FLOOR);
     // A soma tem de fechar: entrada sem veredito é buraco na própria auditoria.
     expect(totals.mechanized + totals.declared + totals.blind).toBe(entries);
   });
