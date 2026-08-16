@@ -11,14 +11,14 @@
  * A metade mais importante daqui é a negativa: declarar o que FUNCIONA seria
  * ruído, e ruído acaba desligado.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Character, Combatant } from "@pf2e/shared";
 import { executeTool, type StreamEvent } from "./agent.js";
 import { buildCombat } from "./combat.js";
-import { adjudicationFor } from "../rules/coverage.js";
+import { adjudicationFor, adjudicationForSpell } from "../rules/coverage.js";
 import { makeCorpus } from "../rules/corpus.js";
 import type { Session } from "./sessions.js";
 
@@ -59,7 +59,13 @@ function mkSession(feats: string[]): Session {
       feats,
       classFeatures: [],
       equipment: [],
-      skills: {},
+      // Perícias de verdade: com `skills: {}` o `roll_check` rejeita antes de
+      // rolar ("no check named medicine on the sheet") e o teste da declaração
+      // no caminho de perícia media a rejeição, não a declaração.
+      skills: {
+        medicine: { name: "medicine", ability: "wis", rank: 2, modifier: 11 },
+        athletics: { name: "athletics", ability: "str", rank: 2, modifier: 13 },
+      },
       lores: [],
       spellcasting: [],
     } as unknown as Character,
@@ -155,6 +161,129 @@ describe.skipIf(!hasGenerated)("spend_actions declara ao narrador e ao jogador",
     );
     expect(events.filter((e) => e.type === "adjudicated")).toHaveLength(0);
     expect(out.summaryLine).not.toContain("NÃO automatizado");
+  });
+
+  it("roll_check: feat de perícia inerte é declarado junto da rolagem", async () => {
+    // O caminho onde as ações de perícia caem, e onde o silêncio era TOTAL:
+    // Demoralize e "olhar feio" produziam a mesma linha. A rolagem continua
+    // acontecendo; o que passa a ser dito é que o feat não foi aplicado.
+    const s = mkSession(["Battle Medicine"]);
+    const events: StreamEvent[] = [];
+    const out = await executeTool(
+      s,
+      "roll_check",
+      { skill: "medicine", dc: 15, reason: "uso Battle Medicine no aliado" },
+      (e) => events.push(e),
+    );
+    expect(events.filter((e) => e.type === "check")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "adjudicated")).toHaveLength(1);
+    expect(out.summaryLine).toContain("NÃO automatizado");
+  });
+
+  it("roll_check: perícia comum NÃO é declarada (rolar já é o mecanismo)", async () => {
+    const s = mkSession(["Battle Medicine"]);
+    const events: StreamEvent[] = [];
+    await executeTool(
+      s,
+      "roll_check",
+      { skill: "athletics", dc: 15, reason: "escalo o muro" },
+      (e) => events.push(e),
+    );
+    expect(events.filter((e) => e.type === "adjudicated")).toHaveLength(0);
+  });
+
+  it("cast_spell: magia de utilidade é declarada ao jogador", async () => {
+    // 51% das magias não têm dano/save/ataque. A string sentinela avisava o
+    // narrador desde sempre; o jogador via o slot sumir e nada acontecer.
+    //
+    // `Create Water` e não `Prestidigitation`: esta CONCEDE efeito ativo de 1
+    // dia, então tem mecânica de verdade e a engine corretamente NÃO declara —
+    // o primeiro rascunho deste teste escolheu o exemplo errado (de novo).
+    const s = mkSession([]);
+    s.character = {
+      ...s.character,
+      spellcasting: [
+        {
+          name: "Arcane",
+          tradition: "arcane",
+          type: "prepared",
+          ability: "int",
+          attack: 12,
+          dc: 22,
+          spells: ["Create Water"],
+          slots: { "1": 2 },
+          spellsByRank: { "1": ["Create Water"] },
+        },
+      ],
+    } as unknown as Character;
+    const events: StreamEvent[] = [];
+    const out = await executeTool(s, "cast_spell", { spell: "Create Water" }, (e) =>
+      events.push(e),
+    );
+    expect(out.isError).toBeUndefined();
+    expect(events.filter((e) => e.type === "adjudicated")).toHaveLength(1);
+  });
+
+  it("cast_spell: magia que CONCEDE efeito ativo não é declarada", () => {
+    // A fronteira que o teste acima descobriu na marra: efeito ativo com prazo
+    // do dado É mecânica, e declarar aqui seria ruído.
+    expect(adjudicationForSpell("Fireball")).toBeNull();
+  });
+
+  it("cast_spell: magia com dano NÃO é declarada", async () => {
+    const s = mkSession([]);
+    s.character = {
+      ...s.character,
+      spellcasting: [
+        {
+          name: "Arcane",
+          tradition: "arcane",
+          type: "prepared",
+          ability: "int",
+          attack: 12,
+          dc: 22,
+          spells: ["Fireball"],
+          slots: { "3": 2 },
+          spellsByRank: { "3": ["Fireball"] },
+        },
+      ],
+    } as unknown as Character;
+    const events: StreamEvent[] = [];
+    await executeTool(s, "cast_spell", { spell: "Fireball", target: "Giant Rat" }, (e) =>
+      events.push(e),
+    );
+    expect(events.filter((e) => e.type === "adjudicated")).toHaveLength(0);
+  });
+
+  it("use_item: item sem efeito é declarado; poção de cura NÃO é", async () => {
+    const s = mkSession([]);
+    s.character = {
+      ...s.character,
+      equipment: [
+        { name: "Rope", qty: 1 },
+        { name: "Healing Potion (Minor)", qty: 1 },
+      ],
+    } as unknown as Character;
+
+    const inertes: StreamEvent[] = [];
+    await executeTool(s, "use_item", { item: "Rope", reason: "amarro" }, (e) => inertes.push(e));
+    expect(inertes.filter((e) => e.type === "adjudicated")).toHaveLength(1);
+
+    const cura: StreamEvent[] = [];
+    await executeTool(s, "use_item", { item: "Healing Potion (Minor)", reason: "bebo" }, (e) =>
+      cura.push(e),
+    );
+    expect(cura.filter((e) => e.type === "adjudicated")).toHaveLength(0);
+  });
+
+  it("os QUATRO caminhos que invocam habilidade de ficha declaram", () => {
+    // Regressão do buraco que a T5 deixou: a declaração nasceu só em
+    // `spend_actions` e ficou lá durante um PR inteiro. Se alguém adicionar um
+    // caminho novo que invoque habilidade e esquecer de declarar, este teste
+    // não pega — mas se alguém REMOVER de um dos quatro, pega.
+    const source = readFileSync(join(here, "agent.ts"), "utf8");
+    const calls = [...source.matchAll(/declareAdjudicated\(/g)].length;
+    expect(calls, "1 definição + 4 chamadas").toBe(5);
   });
 
   it("nenhuma ficha do corpus faz a declaração explodir", async () => {

@@ -48,7 +48,11 @@ markdown), `packages/server` (Express + agente GM), `packages/web` (React/Vite, 
    não aconteceu. Cura/dano/itens sem fonte na ficha são rejeitados pela engine.
    **Vale também para o que a engine NÃO faz** (ADR-012): habilidade da ficha que
    ela reconhece mas não executa é DECLARADA — linha própria no resumo e evento
-   `adjudicated` ao jogador (`rules/coverage.ts` → `adjudicationFor`). Medido:
+   `adjudicated` ao jogador (`rules/coverage.ts` → `adjudicationFor`), pelos
+   **quatro** caminhos que invocam habilidade de ficha: `spend_actions`,
+   `roll_check`, `cast_spell` (utilidade) e `use_item` (sem efeito). Fonte única
+   em `declareAdjudicated` — a declaração nasceu só no `spend_actions` e ficou
+   lá um PR inteiro, valendo para 1 dos 4. Medido:
    **61,3% das entradas de uma ficha caem nesse caso**, porque 52,6% dos feats do
    PF2e são prosa pura em QUALQUER fonte (o Foundry também não os automatiza). O
    alvo do projeto não é automatizar tudo — é ser impecável em saber o que sabe.
