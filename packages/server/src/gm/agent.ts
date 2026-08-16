@@ -43,6 +43,7 @@ import {
   type ExpiryEvent,
 } from "../rules/active-effects.js";
 import { slug, type RollOptions } from "../rules/roll-options.js";
+import { grantedNamesFor } from "../rules/granted.js";
 import { buildTools, validateToolArgs } from "./tool-schemas.js";
 import {
   allyCombatant,
@@ -807,7 +808,11 @@ function pinnedRefFor(session: Session, query: string): TurnRef | undefined {
 /** Tudo que a ficha nomeia e pode disparar um efeito auto-dirigido. */
 function ownedAbilities(session: Session): string[] {
   const c = session.character;
-  return [...(c.feats ?? []), ...(c.classFeatures ?? [])];
+  // Inclui o que os feats CONCEDEM (`GrantItem`): a ação `Envenom` que
+  // `Innate Venom` dá é tão do personagem quanto o feat que ele escolheu — sem
+  // isto ela não concedia efeito, não era declarada e não existia para o
+  // `mentionedSelfEffect`.
+  return [...(c.feats ?? []), ...(c.classFeatures ?? []), ...grantedNamesFor(c)];
 }
 
 /**
