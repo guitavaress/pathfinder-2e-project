@@ -34,6 +34,7 @@ import {
   type RuleRecord,
 } from "./dataset.js";
 import { selfEffectOf } from "./active-effects.js";
+import { grantedDocsFor } from "./granted.js";
 import { actorModifiersFor, type SkipReason } from "./actor-modifiers.js";
 
 /** As 4 keys de rule element de 38 que têm leitor (ver [T5] na conformance). */
@@ -99,7 +100,16 @@ function ruleKeysOf(rec: RuleRecord): string[] {
  * só então nas demais de ficha — o mesmo espírito do portão do ADR-010, sem
  * fuzzy: nome que não casa EXATO é achado da auditoria, não coisa a adivinhar.
  */
-function recordFor(name: string, kind: EntryKind): RuleRecord | null {
+function recordFor(name: string, kind: EntryKind, category?: string): RuleRecord | null {
+  // `category` vem de quem JÁ sabe onde o doc mora — hoje as concessões de
+  // `GrantItem`, que resolveram por uuid. Sem isto, uma AÇÃO concedida era
+  // procurada só nas categorias de ficha (`actions` não está entre elas) e a
+  // auditoria a reportava como "nome não casa nenhum doc do dataset", que é
+  // falso e inflava o balde cego em 53 entradas.
+  if (category) {
+    const hit = lookupInCategory(name, category);
+    if (hit) return hit;
+  }
   const primary = CATEGORY_OF[kind];
   if (primary) {
     const hit = lookupInCategory(name, primary);
@@ -116,12 +126,17 @@ function recordFor(name: string, kind: EntryKind): RuleRecord | null {
 /** Sneak Attack é a ÚNICA feature de classe com código próprio (agent.ts). */
 const HARDCODED_FEATURES = /sneak attack/i;
 
-function auditNamed(c: Character, name: string, kind: EntryKind): CoverageEntry {
+function auditNamed(
+  c: Character,
+  name: string,
+  kind: EntryKind,
+  category?: string,
+): CoverageEntry {
   if (HARDCODED_FEATURES.test(name)) {
     return { name, kind, verdict: "mechanized", reason: "implementada em código (Sneak Attack)" };
   }
 
-  const rec = recordFor(name, kind);
+  const rec = recordFor(name, kind, category);
   if (!rec) {
     return {
       name,
@@ -255,6 +270,13 @@ export function auditCharacter(c: Character): CoverageReport {
   const entries: CoverageEntry[] = [];
 
   for (const name of c.feats ?? []) entries.push(auditNamed(c, name, "feat"));
+  // Concedidos (`GrantItem`): entram como entrada PRÓPRIA porque trazem a
+  // própria mecânica. Antes de existirem aqui, o feat que concede aparecia
+  // como cego ("mecânica que nenhum leitor abre") e o que ele concedia não
+  // aparecia de forma alguma — a ficha era medida menor do que é.
+  for (const g of grantedDocsFor(c)) {
+    entries.push(auditNamed(c, g.name, "feat", g.category));
+  }
   for (const name of c.classFeatures ?? []) entries.push(auditNamed(c, name, "classFeature"));
   if (c.heritage) entries.push(auditNamed(c, c.heritage, "heritage"));
   if (c.ancestry) entries.push(auditNamed(c, c.ancestry, "ancestry"));
