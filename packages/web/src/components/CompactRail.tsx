@@ -57,7 +57,7 @@ export function CompactRail({ character: c, state, onOpenSheet, onOpenBrain }: P
         <ScrollIcon size={15} />
         Full sheet
       </button>
-      <button className="rail-btn" onClick={onOpenBrain} title="Grimório da Memória (B)">
+      <button className="rail-btn" onClick={onOpenBrain} title="Memory Grimoire (B)">
         <ConstellationIcon size={15} />
         Grimório <kbd className="rail-kbd">B</kbd>
       </button>

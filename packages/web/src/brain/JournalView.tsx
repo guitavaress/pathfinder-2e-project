@@ -31,11 +31,11 @@ export function JournalView({ sessions }: { sessions: JournalSession[] }) {
   return (
     <div className="brain-journal">
       <nav className="brain-session-nav">
-        <span className="brain-session-nav-h">Sessões</span>
+        <span className="brain-session-nav-h">Sessions</span>
         {sessions.map((s) => (
           <button key={s.n} className="brain-session-link" onClick={() => goTo(s.n)}>
             <span className="brain-session-num">S{s.n}</span>
-            <span>Sessão {s.n}</span>
+            <span>Session {s.n}</span>
           </button>
         ))}
         <div className="brain-topbar-spring" />
@@ -49,7 +49,7 @@ export function JournalView({ sessions }: { sessions: JournalSession[] }) {
             <div key={s.n} data-session={s.n}>
               <div className="brain-ornament">
                 <span className="brain-ornament-rule left" />
-                <span className="brain-ornament-label">Sessão {s.n}</span>
+                <span className="brain-ornament-label">Session {s.n}</span>
                 <span className="brain-ornament-rule right" />
               </div>
               <div className="brain-journal-entries">

@@ -97,7 +97,7 @@ describe.skipIf(!hasGenerated)("adjudicationFor (requer generated/)", () => {
     const s = mkSession(["Assurance"]);
     const adj = adjudicationFor(s.character, "uso Assurance em Athletics", ["Assurance"]);
     expect(adj?.name).toBe("Assurance");
-    expect(adj?.reason).toContain("nenhum leitor abre");
+    expect(adj?.reason).toContain("no reader opens");
   });
 
   it("NÃO declara Toughness — ele é mecanizado de verdade", () => {
@@ -139,8 +139,8 @@ describe.skipIf(!hasGenerated)("spend_actions declara ao narrador e ao jogador",
 
     // Ao NARRADOR: linha no resumo mecânico, com a instrução de não inventar.
     expect(out.summaryLine).toContain("Battle Medicine");
-    expect(out.summaryLine).toContain("NÃO automatizado");
-    expect(out.summaryLine).toContain("sem inventar número");
+    expect(out.summaryLine).toContain("NOT automated");
+    expect(out.summaryLine).toContain("do NOT invent a number");
   });
 
   it("a ação ainda é COBRADA — declarar não é desfazer", async () => {
@@ -160,7 +160,7 @@ describe.skipIf(!hasGenerated)("spend_actions declara ao narrador e ao jogador",
       (e) => events.push(e),
     );
     expect(events.filter((e) => e.type === "adjudicated")).toHaveLength(0);
-    expect(out.summaryLine).not.toContain("NÃO automatizado");
+    expect(out.summaryLine).not.toContain("NOT automated");
   });
 
   it("roll_check: feat de perícia inerte é declarado junto da rolagem", async () => {
@@ -177,7 +177,7 @@ describe.skipIf(!hasGenerated)("spend_actions declara ao narrador e ao jogador",
     );
     expect(events.filter((e) => e.type === "check")).toHaveLength(1);
     expect(events.filter((e) => e.type === "adjudicated")).toHaveLength(1);
-    expect(out.summaryLine).toContain("NÃO automatizado");
+    expect(out.summaryLine).toContain("NOT automated");
   });
 
   it("roll_check: perícia comum NÃO é declarada (rolar já é o mecanismo)", async () => {

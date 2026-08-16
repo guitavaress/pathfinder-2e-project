@@ -10,9 +10,9 @@ export type NodeType = (typeof NODE_TYPES)[number];
 /** Cor/rotulagem por tipo de nó (tema constelação — handoff design_handoff_brain). */
 export const TYPE_META: Record<NodeType, { label: string; color: string }> = {
   npc: { label: "NPC", color: "#e3c878" },
-  place: { label: "Lugar", color: "#9ab873" },
-  faction: { label: "Facção", color: "#c97c6a" },
-  quest: { label: "Missão", color: "#7fb0b5" },
+  place: { label: "Place", color: "#9ab873" },
+  faction: { label: "Faction", color: "#c97c6a" },
+  quest: { label: "Quest", color: "#7fb0b5" },
   item: { label: "Item", color: "#c2853f" },
   lore: { label: "Lore", color: "#a98fc9" },
 };
@@ -76,7 +76,7 @@ export interface BrainData {
 /** "S3.T12" → "Sessão 3 · Turno 12" (util compartilhado do handoff). */
 export function humanStamp(s: string): string {
   const m = /^S(\d+)\.T(\d+)$/.exec(s ?? "");
-  return m ? `Sessão ${m[1]} · Turno ${m[2]}` : s;
+  return m ? `Session ${m[1]} · Turn ${m[2]}` : s;
 }
 
 async function getJson<T>(path: string): Promise<T> {

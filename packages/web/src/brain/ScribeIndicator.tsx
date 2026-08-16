@@ -23,7 +23,7 @@ const TOAST_MS = 5000;
 
 function summarize(pass: BrainActivityPass): ScribeState {
   if (pass.error) {
-    return { status: "warn", toast: "O escriba tropeçou — ver por quê →" };
+    return { status: "warn", toast: "The scribe stumbled — see why →" };
   }
   const parts = pass.applied.slice(0, 3).map((cmd) => {
     const m = /^(CREATE|UPDATE|APPEND)\s+(.+)\.md$/.exec(cmd);
@@ -37,7 +37,7 @@ function summarize(pass: BrainActivityPass): ScribeState {
     };
   }
   if (parts.length === 0) {
-    return { status: "done", toast: "O escriba não viu nada novo." };
+    return { status: "done", toast: "The scribe saw nothing new." };
   }
   return { status: "done", toast: `Anotado: ${parts.join(" · ")}` };
 }
@@ -108,10 +108,10 @@ export function useScribe(): {
 }
 
 const LABEL: Record<ScribeStatus, string> = {
-  idle: "Abrir o Grimório da Memória (Atividade)",
-  writing: "O escriba está anotando",
-  done: "Memória atualizada",
-  warn: "Memória atualizada com avisos",
+  idle: "Open the Memory Grimoire (Activity)",
+  writing: "The scribe is writing",
+  done: "Memory updated",
+  warn: "Memory updated with warnings",
 };
 
 export function ScribeIndicator({ scribe }: { scribe: ScribeState }) {
@@ -124,7 +124,11 @@ export function ScribeIndicator({ scribe }: { scribe: ScribeState }) {
       <button
         className={`scribe-btn ${status}`}
         aria-label={LABEL[status]}
-        title={status === "writing" ? "O escriba está anotando o que você descobriu nesta cena…" : LABEL[status]}
+        title={
+          status === "writing"
+            ? "The scribe is writing down what you discovered in this scene…"
+            : LABEL[status]
+        }
         onClick={open}
       >
         <svg

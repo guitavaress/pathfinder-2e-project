@@ -133,7 +133,7 @@ function auditNamed(
   category?: string,
 ): CoverageEntry {
   if (HARDCODED_FEATURES.test(name)) {
-    return { name, kind, verdict: "mechanized", reason: "implementada em código (Sneak Attack)" };
+    return { name, kind, verdict: "mechanized", reason: "implemented in code (Sneak Attack)" };
   }
 
   const rec = recordFor(name, kind, category);
@@ -142,14 +142,14 @@ function auditNamed(
       name,
       kind,
       verdict: "blind",
-      reason: "nome não casa nenhum doc do dataset — a engine não sabe que existe",
+      reason: "name matches no dataset doc — the engine does not know it exists",
     };
   }
 
   // Concessão de efeito (stance, selfEffect, Effect: homônimo) é mecanização
   // real: o efeito entra no registro e seus rule elements passam a valer.
   if (selfEffectOf(rec)) {
-    return { name, kind, verdict: "mechanized", reason: "concede efeito ativo com prazo do dado" };
+    return { name, kind, verdict: "mechanized", reason: "grants an active effect with the duration from the data" };
   }
 
   const keys = ruleKeysOf(rec);
@@ -160,8 +160,8 @@ function auditNamed(
       kind,
       verdict: "blind",
       reason: cost
-        ? `prosa pura: a engine cobra o custo (${cost.kind}) mas nada aplica o efeito`
-        : "prosa pura: nenhuma mecânica legível por máquina, aqui ou em qualquer fonte",
+        ? `plain prose: the engine charges the cost (${cost.kind}) but nothing applies the effect`
+        : "plain prose: no machine-readable mechanics, here or in any source",
     };
   }
 
@@ -171,7 +171,7 @@ function auditNamed(
       name,
       kind,
       verdict: "blind",
-      reason: `tem mecânica no dado que nenhum leitor abre (${keys.join(", ")})`,
+      reason: `has mechanics in the data that no reader opens (${keys.join(", ")})`,
       ruleKeys: keys,
     };
   }
@@ -184,7 +184,7 @@ function auditNamed(
       name,
       kind,
       verdict: "declared",
-      reason: `a engine viu e não aplicou (${skip})`,
+      reason: `the engine saw it and did not apply it (${skip})`,
       ruleKeys: keys,
       skipReason: skip,
     };
@@ -193,7 +193,7 @@ function auditNamed(
     name,
     kind,
     verdict: "mechanized",
-    reason: `rule element com leitor (${readable.join(", ")})`,
+    reason: `rule element with a reader (${readable.join(", ")})`,
     ruleKeys: keys,
   };
 }
@@ -235,19 +235,19 @@ function auditSpell(name: string): CoverageEntry {
       name,
       kind: "spell",
       verdict: "blind",
-      reason: "magia não encontrada no dataset — cast_spell não resolve nada",
+      reason: "spell not found in the dataset — cast_spell resolves nothing",
     };
   }
   const mech = rec.spell;
   if (!mech) {
-    return { name, kind: "spell", verdict: "blind", reason: "sem bloco de mecânica estruturada" };
+    return { name, kind: "spell", verdict: "blind", reason: "no structured mechanics block" };
   }
   if (mech.damage?.length || mech.attack || mech.defense?.save) {
     return {
       name,
       kind: "spell",
       verdict: "mechanized",
-      reason: "dano/ataque/save estruturados — cast_spell resolve em código",
+      reason: "structured damage/attack/save — cast_spell resolves it in code",
     };
   }
   // O caso de utilidade tem string sentinela no runtime ("No structured combat
@@ -256,7 +256,7 @@ function auditSpell(name: string): CoverageEntry {
     name,
     kind: "spell",
     verdict: "declared",
-    reason: "utilidade: sem dano/save/ataque — a engine declara o vazio ao narrador",
+    reason: "utility: no damage/save/attack — the engine declares the void to the narrator",
   };
 }
 
@@ -293,7 +293,7 @@ export function auditCharacter(c: Character): CoverageReport {
       name: w.name,
       kind: "weapon",
       verdict: "mechanized",
-      reason: "Strike resolvido em código (ataque, MAP, dano tipado)",
+      reason: "Strike resolved in code (attack, MAP, typed damage)",
     });
   }
 

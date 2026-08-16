@@ -31,6 +31,11 @@ export interface BrainActivity {
 function instructions(): string {
   return [
     "You maintain the PROTAGONIST'S MEMORY of a tabletop RPG world as short Markdown files.",
+    // Sem esta linha o escriba copiava o nome como aparecesse na cena e, quando
+    // o jogador escreve noutro idioma, produzia híbridos: "the Ruines do
+    // Relógio" — nem inglês nem português, e um nome novo a cada turno, o que
+    // faz o dedup de nó falhar e a memória fragmentar.
+    "WRITE EVERYTHING IN ENGLISH, including names of places, people and factions. Never mix languages inside a name, and never half-translate one: if the scene calls a place 'as Ruínas do Relógio', record it as 'The Clockwork Ruins' and reuse that exact spelling from then on.",
     "From this turn's events, extract ONLY durable world facts the protagonist learned: people met, places visited, factions, quests taken/resolved, significant items, lore.",
     "Output ONLY commands in this exact format (no prose before, between, or after):",
     "=== CREATE Name.md ===",

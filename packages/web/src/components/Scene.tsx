@@ -213,7 +213,7 @@ function LogRow({ item, dropCap }: { item: LogItem; dropCap: boolean }) {
     return (
       <div className="row adjudicated" title={item.adjudicated.reason}>
         <span className="adjudicated-name">{item.adjudicated.name}</span>
-        <span className="adjudicated-note">narrado, não automatizado pela engine</span>
+        <span className="adjudicated-note">narrated, not automated by the engine</span>
       </div>
     );
   }
