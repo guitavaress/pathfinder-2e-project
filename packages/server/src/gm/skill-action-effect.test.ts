@@ -70,6 +70,8 @@ function mkSession(opts: { foes?: number } = {}): Session {
         athletics: { name: "athletics", ability: "str", rank: 2, modifier: 13 },
         intimidation: { name: "intimidation", ability: "cha", rank: 2, modifier: 11 },
         deception: { name: "deception", ability: "cha", rank: 2, modifier: 11 },
+        acrobatics: { name: "acrobatics", ability: "dex", rank: 2, modifier: 11 },
+        stealth: { name: "stealth", ability: "dex", rank: 2, modifier: 11 },
       },
       lores: [],
       spellcasting: [],
@@ -198,6 +200,66 @@ describe.skipIf(!hasGenerated)("ação de perícia aplica condição (requer gen
     );
     expect(out.isError).toBeUndefined();
     expect(s.state.conditions).toEqual([]);
+  });
+
+  it("Escape solta o jogador do grabbed — a contrapartida do Grapple", async () => {
+    // A primeira leva criou a assimetria: Grapple prendia e nada soltava.
+    // Implementar o que prende sem o que solta é pior que não ter nenhum.
+    const s = mkSession();
+    s.state.conditions.push("grabbed");
+    const you = s.state.combat!.combatants.find((c) => c.kind === "player")!;
+    you.conditions.push("grabbed");
+
+    const out = await executeTool(
+      s,
+      "roll_check",
+      { skill: "athletics", dc: 15, reason: "I Escape the grapple" },
+      noop,
+    );
+    if (SUCESSO.includes(degreeOf(out))) {
+      expect(s.state.conditions).not.toContain("grabbed");
+      expect(you.conditions).not.toContain("grabbed");
+      expect(out.summaryLine).toContain("breaks free");
+    } else {
+      expect(s.state.conditions).toContain("grabbed");
+    }
+  });
+
+  it("Escape tira as TRÊS condições que o RAW nomeia", async () => {
+    const s = mkSession();
+    s.state.conditions.push("grabbed", "restrained", "immobilized", "frightened 1");
+    const out = await executeTool(
+      s,
+      "roll_check",
+      { skill: "acrobatics", dc: 15, reason: "I Escape" },
+      noop,
+    );
+    if (SUCESSO.includes(degreeOf(out))) {
+      expect(s.state.conditions).toEqual(["frightened 1"]);
+    }
+  });
+
+  it("Escape sem estar preso não faz nada (nem mente no resumo)", async () => {
+    const s = mkSession();
+    const out = await executeTool(
+      s,
+      "roll_check",
+      { skill: "athletics", dc: 15, reason: "I Escape" },
+      noop,
+    );
+    expect(out.summaryLine).not.toContain("breaks free");
+  });
+
+  it("Create a Diversion deixa o JOGADOR hidden", async () => {
+    const s = mkSession();
+    const out = await executeTool(
+      s,
+      "roll_check",
+      { skill: "deception", dc: 15, reason: "I Create a Diversion" },
+      noop,
+    );
+    const escondido = s.state.conditions.includes("hidden");
+    expect(escondido).toBe(SUCESSO.includes(degreeOf(out)));
   });
 
   it("crítico de falha do Trip derruba QUEM TENTOU", async () => {

@@ -48,6 +48,17 @@ export interface SkillActionOutcome {
   /** Condição oficial, no formato do estado ("frightened 2", "prone"). */
   condition: string;
   on: ConditionTarget;
+  /**
+   * `remove` tira a condição em vez de aplicá-la — é o que Escape faz.
+   *
+   * Existe porque a primeira leva criou uma assimetria: Grapple passou a
+   * aplicar `grabbed` e nada tirava, então o jogador ficava preso para sempre.
+   * Implementar o que prende sem o que solta é pior que não implementar
+   * nenhum dos dois.
+   */
+  mode?: "apply" | "remove";
+  /** Condições extras removidas junto (Escape tira as três de uma vez). */
+  alsoRemove?: string[];
 }
 
 export interface SkillActionSpec {
@@ -122,9 +133,85 @@ export const SKILL_ACTIONS: SkillActionSpec[] = [
       criticalFailure: { condition: "prone", on: "self" },
     },
   },
+  {
+    // "Critical Success / Success You get free and remove the grabbed,
+    //  immobilized, and restrained conditions imposed by your chosen target."
+    //
+    // A contrapartida do Grapple. Sem ela a primeira leva prendia o jogador
+    // sem saída — implementar o que prende sem o que solta é pior que não ter
+    // nenhum dos dois. Escape usa o modificador de ataque desarmado por RAW,
+    // mas aceita Acrobatics e Athletics; casamos pelas duas perícias.
+    name: "Escape",
+    skill: "athletics",
+    outcomes: {
+      criticalSuccess: {
+        condition: "grabbed",
+        on: "self",
+        mode: "remove",
+        alsoRemove: ["immobilized", "restrained"],
+      },
+      success: {
+        condition: "grabbed",
+        on: "self",
+        mode: "remove",
+        alsoRemove: ["immobilized", "restrained"],
+      },
+    },
+  },
+  {
+    // Mesma ação, pela outra perícia que o RAW autoriza ("You can attempt an
+    // Acrobatics or Athletics check instead").
+    name: "Escape",
+    skill: "acrobatics",
+    outcomes: {
+      criticalSuccess: {
+        condition: "grabbed",
+        on: "self",
+        mode: "remove",
+        alsoRemove: ["immobilized", "restrained"],
+      },
+      success: {
+        condition: "grabbed",
+        on: "self",
+        mode: "remove",
+        alsoRemove: ["immobilized", "restrained"],
+      },
+    },
+  },
+  {
+    // "Success You become Hidden to each creature whose Perception DC is less
+    //  than or equal to your result."
+    //
+    // Requisito NÃO checado, declarado: o RAW compara com a Perception DC de
+    // cada criatura, e a engine não tem esse duelo por alvo — aplica `hidden`
+    // no sucesso e deixa o narrador tratar quem viu.
+    name: "Create a Diversion",
+    skill: "deception",
+    outcomes: {
+      success: { condition: "hidden", on: "self" },
+      criticalSuccess: { condition: "hidden", on: "self" },
+    },
+  },
+  {
+    // "Success If the creature could see you, you're now Hidden from it."
+    //
+    // Requisito NÃO checado: Hide exige cobertura ou ocultação, que é estado
+    // POSICIONAL (ADR-011). A engine não tem como saber se há cobertura, e
+    // inventar a checagem seria pior que não fazê-la — mesma decisão do Feint.
+    name: "Hide",
+    skill: "stealth",
+    outcomes: {
+      success: { condition: "hidden", on: "self" },
+      criticalSuccess: { condition: "hidden", on: "self" },
+    },
+  },
 ];
 
-const byName = new Map(SKILL_ACTIONS.map((s) => [s.name.toLowerCase(), s]));
+/** Primeira entrada por nome — `Escape` tem duas (Athletics e Acrobatics). */
+const byName = new Map<string, SkillActionSpec>();
+for (const s of SKILL_ACTIONS) {
+  if (!byName.has(s.name.toLowerCase())) byName.set(s.name.toLowerCase(), s);
+}
 
 /**
  * A ação de perícia que este `roll_check` está resolvendo, se houver.
@@ -138,11 +225,18 @@ const byName = new Map(SKILL_ACTIONS.map((s) => [s.name.toLowerCase(), s]));
 export function skillActionFor(text: string, skill: string): SkillActionSpec | null {
   const t = text.toLowerCase();
   const s = skill.toLowerCase().trim();
+  let melhor: { spec: SkillActionSpec; at: number } | null = null;
   for (const spec of SKILL_ACTIONS) {
     if (spec.skill !== s) continue;
-    if (new RegExp(`\\b${spec.name.toLowerCase()}\\b`).test(t)) return spec;
+    const m = new RegExp(`\\b${spec.name.toLowerCase()}\\b`).exec(t);
+    if (!m) continue;
+    // Ganha quem aparece PRIMEIRO no texto, não quem vem primeiro na tabela:
+    // "I Escape the grapple" casa as duas, e a ordem da tabela devolvia
+    // Grapple — o jogador tentando se soltar seria agarrado de novo. Quem age
+    // diz primeiro o que está fazendo.
+    if (!melhor || m.index < melhor.at) melhor = { spec, at: m.index };
   }
-  return null;
+  return melhor?.spec ?? null;
 }
 
 /** O que a ação causa neste grau — `null` quando o grau não causa nada (RAW). */

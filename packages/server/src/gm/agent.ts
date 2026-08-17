@@ -846,15 +846,33 @@ function applySkillAction(
   if (!isOfficialCondition(outcome.condition)) return "";
 
   const combat = session.state.combat;
+  const you = combat?.active ? playerOf(combat) : undefined;
+
+  // REMOÇÃO (Escape): tira a condição do jogador nos dois lugares onde ela
+  // mora — o estado da sessão e o combatente. Sem isto, a primeira leva
+  // prendia com Grapple e nada soltava.
+  if (outcome.on === "self" && outcome.mode === "remove") {
+    const alvos = new Set([outcome.condition, ...(outcome.alsoRemove ?? [])]);
+    const tinha = (list: string[]) =>
+      list.some((c) => alvos.has(c.replace(/\s+\d+$/, "").toLowerCase()));
+    const drop = (list: string[]) =>
+      list.filter((c) => !alvos.has(c.replace(/\s+\d+$/, "").toLowerCase()));
+    const havia = tinha(session.state.conditions) || (you ? tinha(you.conditions) : false);
+    if (!havia) return "";
+    session.state.conditions = drop(session.state.conditions);
+    if (you) you.conditions = drop(you.conditions);
+    emit({ type: "state", state: session.state });
+    return `\n- ${spec.name}: ${session.character.name} breaks free (${[...alvos].join("/")} removed).`;
+  }
+
   if (outcome.on === "self") {
     const conds = session.state.conditions;
     if (!conds.includes(outcome.condition)) conds.push(outcome.condition);
-    const you = combat?.active ? playerOf(combat) : undefined;
     if (you && !you.conditions.includes(outcome.condition)) {
       you.conditions.push(outcome.condition);
     }
     emit({ type: "state", state: session.state });
-    return `\n- ${spec.name} backfires: ${session.character.name} is ${outcome.condition}.`;
+    return `\n- ${spec.name}: ${session.character.name} is ${outcome.condition}.`;
   }
 
   // No alvo: precisa de combate ativo e de um alvo resolvido. Sem isso a ação
