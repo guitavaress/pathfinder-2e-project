@@ -199,7 +199,7 @@ Regras de trabalho:
   `resolveRoundEnd`/`beginPlayerRound` de propósito: copiar a sequência faria a
   bateria medir uma ficção que diverge do código real.
 - Todo comportamento mecânico novo nasce com teste e estende a bateria feat-audit.
-  O piso vigente é **709 testes do servidor** (+31 do brain, medido em 2026-08-15)
+  O piso vigente é **743 testes do servidor** (+31 do brain, medido em 2026-08-17)
   e, na bateria, **69 PASS · 3 FLAKY ·
   1 SUSPECT · 2 FAIL com cobertura de asserção 40/75** (gate de **2026-08-14**,
   pós-Fases 2.5/2.6, `--repeat=3` contra o commit 8dafee6; juiz honesto — NÃO
