@@ -44,6 +44,7 @@ import {
 } from "../rules/active-effects.js";
 import { slug, type RollOptions } from "../rules/roll-options.js";
 import { grantedNamesFor } from "../rules/granted.js";
+import { outcomeOf, skillActionFor } from "../rules/skill-actions.js";
 import { buildTools, validateToolArgs } from "./tool-schemas.js";
 import {
   allyCombatant,
@@ -816,6 +817,65 @@ function ownedAbilities(session: Session): string[] {
 }
 
 /**
+ * Aplica a condição de uma AÇÃO DE PERÍCIA, quando o turno resolveu uma.
+ *
+ * Devolve a linha para o resumo mecânico ("" quando não houve ação de perícia
+ * ou quando o grau não causa nada — Trip que falha não derruba ninguém, e isso
+ * é RAW, não omissão).
+ *
+ * A condição entra pelo mesmo portão do `update_state`: whitelist oficial
+ * (`isOfficialCondition`) e alvo resolvido pela ENGINE. O modelo não escolhe
+ * nem o alvo nem a condição — ele só declarou a ação, e o resto é código.
+ *
+ * Fora de combate não há combatente para receber a condição do alvo; a que cai
+ * no PRÓPRIO jogador (crítico de Trip que derruba quem tentou) entra no estado
+ * da sessão de qualquer jeito.
+ */
+function applySkillAction(
+  session: Session,
+  text: string,
+  skill: string,
+  degree: DegreeOfSuccess,
+  targetRef: string,
+  emit: (e: StreamEvent) => void,
+): string {
+  const spec = skillActionFor(text, skill);
+  if (!spec) return "";
+  const outcome = outcomeOf(spec, degree);
+  if (!outcome) return "";
+  if (!isOfficialCondition(outcome.condition)) return "";
+
+  const combat = session.state.combat;
+  if (outcome.on === "self") {
+    const conds = session.state.conditions;
+    if (!conds.includes(outcome.condition)) conds.push(outcome.condition);
+    const you = combat?.active ? playerOf(combat) : undefined;
+    if (you && !you.conditions.includes(outcome.condition)) {
+      you.conditions.push(outcome.condition);
+    }
+    emit({ type: "state", state: session.state });
+    return `\n- ${spec.name} backfires: ${session.character.name} is ${outcome.condition}.`;
+  }
+
+  // No alvo: precisa de combate ativo e de um alvo resolvido. Sem isso a ação
+  // acontece narrativamente, mas nada de estado é inventado.
+  if (!combat?.active) return "";
+  // Alvo nomeado pela tool vence; sem ele, o único inimigo vivo. Com dois ou
+  // mais inimigos e nenhum nome, NÃO se escolhe por conta própria: aplicar
+  // frightened no goblin errado é pior que não aplicar, e o modelo tem a tool
+  // `update_state` para corrigir de propósito.
+  const named = targetRef ? findCombatant(combat, targetRef) : undefined;
+  const vivos = combat.combatants.filter((c) => c.kind === "enemy" && !c.defeated);
+  const target = named ?? (vivos.length === 1 ? vivos[0] : undefined);
+  if (!target) return "";
+  if (!target.conditions.includes(outcome.condition)) {
+    target.conditions.push(outcome.condition);
+  }
+  emit({ type: "state", state: session.state });
+  return `\n- ${spec.name}: ${target.name} is ${outcome.condition}.`;
+}
+
+/**
  * Declara — ao JOGADOR e ao NARRADOR — que algo foi reconhecido e não executado.
  *
  * Fonte única da declaração porque ela nasceu em `spend_actions` e ficou só lá:
@@ -1044,11 +1104,18 @@ export async function executeTool(
       const combat = session.state.combat;
       const targetRef = input.target ? String(input.target) : "";
 
+      // AÇÃO DE PERÍCIA COM ALVO não é ataque: Demoralize rola Intimidation
+      // contra o Will DC, Trip rola Athletics contra o Reflex DC. Sem esta
+      // exceção, `target` presente jogava a rolagem no caminho de ATAQUE e ela
+      // era resolvida contra a CA — número errado, e a condição nunca aplicava
+      // porque o gancho de perícia mora no outro ramo.
+      const isSkillAction = skillActionFor(`${reason} ${skill}`, skill) !== null;
+
       // ATTACK path: a Strike against a target. Who is attacking is decided by
       // the target: a Strike ON the player comes from an enemy; a Strike on an
       // enemy comes from the player. This keeps things robust even if the model
       // loses track of whose "turn" it is.
-      if (combat?.active && targetRef) {
+      if (combat?.active && targetRef && !isSkillAction) {
         const target = findCombatant(combat, targetRef);
         if (!target) {
           const valid = combat.combatants
@@ -1330,18 +1397,31 @@ export async function executeTool(
         dc,
       );
       emit({ type: "check", result });
-      // O caminho onde as ações de perícia caem, e onde o silêncio era total:
-      // Demoralize e "olhar feio para o inimigo" produziam a MESMA linha. A
-      // rolagem é real; o efeito do feat citado é que não é aplicado, e isso
+      // AÇÃO DE PERÍCIA COM CONSEQUÊNCIA: Demoralize aplica frightened, Trip
+      // aplica prone. Até 2026-08-16 esta rolagem parava aqui e o resumo de um
+      // Demoralize bem-sucedido era idêntico ao de "olhar feio para o inimigo".
+      // A condição entra pelo MESMO caminho do `update_state` (whitelist
+      // oficial, alvo resolvido pela engine) — o modelo não é consultado.
+      const skillActionLine = applySkillAction(
+        session,
+        `${reason} ${skill}`,
+        skill,
+        result.degree,
+        String(input.target ?? ""),
+        emit,
+      );
+      // O caminho onde as ações de perícia caem, e onde o silêncio era total.
+      // A rolagem é real; o efeito do FEAT citado é que não é aplicado, e isso
       // passa a ser dito. (Estender a declaração para cá era o buraco que a
-      // T5 deixou: ela nasceu só em `spend_actions`.)
-      const rollAdjLine = declareAdjudicated(
+      // T5 deixou: ela nasceu só em `spend_actions`.) Se a ação de perícia
+      // acima JÁ aplicou mecânica, não há o que declarar.
+      const rollAdjLine = skillActionLine ? "" : declareAdjudicated(
         emit,
         adjudicationFor(session.character, `${reason} ${skill}`, ownedAbilities(session)),
       );
       return {
         content: JSON.stringify(result),
-        summaryLine: `- ${checkReason(result.label)}: ${DEGREE_EN[result.degree]}.${rollAdjLine}`,
+        summaryLine: `- ${checkReason(result.label)}: ${DEGREE_EN[result.degree]}.${skillActionLine}${rollAdjLine}`,
       };
     }
     case "rest": {
