@@ -15,8 +15,8 @@
 > 3. **A Régua é lei:** mecânica em código, voz no LLM. PR que mova estado para o
 >    modelo é rejeitado por princípio.
 > 4. **Todo comportamento mecânico novo nasce com teste** e estende a bateria
->    feat-audit. O gate vigente da bateria e os **740 testes** (709 server + 31
->    brain, medidos em 2026-08-15) são piso, não meta. Ao mexer no JUIZ da bateria, rode
+>    feat-audit. O gate vigente da bateria e os **774 testes** (743 server + 31
+>    brain, medidos em 2026-08-17) são piso, não meta. Ao mexer no JUIZ da bateria, rode
 >    `replay-judge.ts` antes de gastar GPU — ele re-julga transcripts gravados e
 >    separa "o juiz mudou de opinião" de "o jogo mudou".
 > 5. Se uma tarefa contradisser um ADR, **pare e sinalize**.
@@ -499,21 +499,54 @@ feature de classe mecanizada; `classes 0/27` e `ancestries 0/50` com leitor; os
 
 ---
 
-## Fase 3 (nova numeração livre) — Ações de perícia com consequência
+## Fase 2.76 — GrantItem + ações de perícia com consequência
 
-- **Status:** nomeada e medida, **não iniciada**. É a candidata natural a
-  próxima fase de mecânica, ao lado da 2.8.
-- **O buraco:** `roll_check` de perícia rola o d20 e PARA. Demoralize não aplica
-  `frightened`, Trip não aplica `prone`, Grapple não aplica `grabbed`, Shove e
-  Feint não fazem nada. A única ação de perícia com consequência real no sistema
-  inteiro é Treat Wounds (tool `rest` própria). O `summaryLine` de um Demoralize
-  bem-sucedido é idêntico ao de uma rolagem inventada.
-- **Antes de começar, o censo** (como em toda fase que deu certo): quantas ações
-  de perícia têm consequência ESTRUTURADA no dado, e quantas só a descrevem em
-  prosa por grau de sucesso. `skill-actions.json` existe mas hoje só é lido como
-  seed de fallback, e achata os quatro graus numa string.
-- **Por que não entrou na fase 2.75:** é regra nova, e aquela fase era sobre
-  fazer a engine parar de mentir. Misturar as duas teria escondido as duas.
+### ✅ CONCLUÍDA em 2026-08-16/17 (PRs #20 e #22)
+
+**`GrantItem`** (PR #20): um feat concede outro documento — `Innate Venom` dá a
+ação `Envenom` — e o Pathbuilder exporta só o que o jogador ESCOLHEU, então o
+concedido não existia para a engine. `rules/granted.ts` resolve o fecho
+transitivo (guarda de ciclo, teto de profundidade 4) e liga a cinco
+consumidores. **149 documentos a mais** por corpus de 60 fichas; MECANIZADO
+340 → 350.
+
+**Ações de perícia** (PR #22): Demoralize aplica `frightened`, Trip `prone`,
+Grapple `grabbed`, Feint `off-guard`. `roll_check` com alvo também parou de ir
+para o caminho de ATAQUE (resolvia Demoralize contra a CA em vez do Will DC).
+
+**A exceção declarada:** as 16 ações de perícia mais usadas têm **ZERO rule
+elements** — o dado traz prosa por grau, e o Foundry também não as automatiza.
+Então a tabela é código, amarrada por um teste de conformidade que exige a
+condição aparecer no TEXTO OFICIAL daquele grau. Ele pegou um erro na primeira
+rodada: `Shove` não derruba no crítico de sucesso, ele EMPURRA.
+
+**Piso: 725 → 743 testes do servidor.**
+
+**O que ficou de fora, declarado no módulo:** duração exata (Grapple dura "até o
+fim do seu próximo turno"; expira pelo upkeep), imunidade de 10 min do
+Demoralize, requisitos de posição (Feint exige alcance — Fase 3), dano do
+crítico do Trip, e ambiguidade de alvo (com 2+ inimigos sem nome, a engine NÃO
+escolhe). Faltam as ações de furtividade/percepção: `Hide`, `Sneak`, `Seek`,
+`Create a Diversion`, `Escape`, `Disarm`.
+
+### A medição que ABANDONOU o alvo anterior
+
+A fila dizia `ActiveEffectLike` e `ItemAlteration`. O censo os desqualificou:
+
+| `ActiveEffectLike` (1.259 na ficha) | | `ItemAlteration` (1.387) | |
+|---|---|---|---|
+| duplo-cômputo | **665 (53%)** | texto/tag interna | 1.038 (75%) |
+| flag interna do Foundry | 448 (36%) | acionável | 174 (12,5%) |
+| **acionável** | **68 (5,4%)** | | |
+
+E o impacto real: dos 119 docs com `ItemAlteration` acionável, o corpus de 60
+fichas carrega **12 distintos**. Implementar um leitor completo para 12
+documentos, com 53% da outra key sendo risco de duplo-cômputo na ficha do
+jogador, foi recusado por medição.
+
+**Terceira métrica, terceira resposta** — e é a lição a carregar: "REs no
+dataset" < "entradas de ficha que citam a key" < "entradas cujo efeito é
+ACIONÁVEL". As duas primeiras apontaram alvos errados.
 
 ---
 
