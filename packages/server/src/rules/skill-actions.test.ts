@@ -79,7 +79,14 @@ describe.skipIf(!hasGenerated)("conformidade da tabela com o dado (requer genera
         // "off-guard" no sucesso. Normalizar hífen/espaço compara o CONCEITO
         // sem afrouxar a checagem: "prone" continua tendo de aparecer.
         const norm = (s: string) => s.toLowerCase().replace(/[-\s]+/g, " ");
-        const trecho = norm(degreeText(rec.text ?? "", LABEL[degree]!));
+        // RAW do PF2e: grau NÃO listado usa o do sucesso ("Create a Diversion"
+        // e "Hide" só listam Success). Não é afrouxamento do teste — é a regra
+        // de graus do jogo, e sem ela a tabela seria obrigada a mentir que o
+        // crítico não faz nada.
+        const proprio = degreeText(rec.text ?? "", LABEL[degree]!);
+        const trecho = norm(
+          proprio || (degree === "criticalSuccess" ? degreeText(rec.text ?? "", "Success") : ""),
+        );
         const base = norm(outcome.condition.replace(/\s+\d+$/, ""));
         expect(
           trecho.includes(base),

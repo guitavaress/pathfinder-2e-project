@@ -576,6 +576,94 @@ abaixo (fila de confiabilidade) e nas seções de dívida das Fases 2.5/2.6/2.7.
 
 ---
 
+## Fila EXECUTÁVEL (2026-08-17) — cada item com o plano pronto
+
+Escrita para ser pegada sem re-análise. Cada item traz **o porquê medido**, os
+**passos**, e **como verificar**. Ordem = retorno sobre esforço.
+
+### E1 — Runas de propriedade e o flag `Invested` no parser · médio
+
+**Medido:** `pathbuilder/parse.ts` lê de `build.weapons` apenas
+`display/name`, `attack`, `die`, `str`, `damageBonus`, `damageType` — e
+**descarta `runes`, `pot`, `mat`, `grade`**. Em armadura, descarta `runes`,
+`pot`, `res`. No equipamento, o índice 3 do array (`"Invested"`) é ignorado.
+Resultado: flaming/corrosive são invisíveis, os Doubling Rings são no-op, e
+nenhum item investido existe para a engine.
+
+**Passos:**
+1. `parse.ts`: ler `runes` (array de nomes) em arma e armadura; ler o índice 3
+   do equipment como `invested: boolean`.
+2. `shared/types.ts`: `WeaponSchema.runes: string[]`, `ArmorSchema.runes`,
+   `EquipmentItemSchema.invested?: boolean` — **opcionais**, para save antigo
+   seguir carregando (mesma regra do `focusPoints`).
+3. Dano da runa entra como **parcela tipada própria** (`rules/damage.ts` já
+   suporta), nunca somada ao dano base — senão fraqueza/resistência do alvo
+   não pega a parcela certa.
+4. Teste: export real com `+1 Striking Flaming Rapier` produz parcela de fogo
+   separada; export sem runa não muda nada.
+
+**Cuidado:** NÃO some bônus de potência ao `attack` — o Pathbuilder já o
+embute (é a premissa do ADR-008, e aqui ela vale).
+
+**Destrava:** metade da Fase 2.8, sem depender da decisão de ADR pendente.
+
+### E2 — `Shield Block`: hardness no importador · médio
+
+**Medido:** é um dos 2 FAIL da feat-audit. O gatilho a engine detecta; o efeito
+não existe porque o importador **não guarda hardness/HP/BT dos 115 escudos** —
+`agent.ts` diz textualmente "Shield Block fica de fora até termos hardness
+estruturado". `acTotal.shieldBonus` do Pathbuilder também é descartado.
+
+**Passos:**
+1. `scripts/import-pf2e.ts`: extrair `system.hardness`, `system.hp.max`,
+   `system.hp.brokenThreshold` para `itemType === "shield"`; regenerar dataset.
+2. `parse.ts`: ler `acTotal.shieldBonus`.
+3. `combat.ts`: no `playerReactionVsStrike`, Shield Block reduz o dano pela
+   hardness e o excedente vai para o HP do escudo (quebra em BT).
+4. Teste: escudo com hardness 5 contra golpe de 8 → 3 de dano ao jogador.
+
+**Verificar:** a feat-audit deve tirar `Shield Block` dos FAIL (roda com GPU).
+
+### E3 — Os 140 iconics vazios · pequeno
+
+**Medido:** `import-pf2e.ts:629` só extrai `items` para `type === "npc"` ou
+`"hazard"`. Os 140 pregens da Paizo (Amiri, Ezren, Feiya… níveis 1/3/5) entram
+como casca: `text: "Level 1 common character."`, zero feats/magias/equipamento.
+O `manifest.json` prova paridade de DOCUMENTOS, não de conteúdo.
+
+**Passos:**
+1. Extrair `items[]` também para `type === "character"`, mapeando para
+   feats/magias/equipamento.
+2. Converter para o shape `Character` num helper de teste.
+3. Somar ao corpus (`rules/corpus.ts`) como fichas **canônicas** ao lado das
+   sintéticas.
+
+**Ganho:** builds legais da Paizo em 14 classes × 3 níveis no corpus, e o
+manifesto passa a poder afirmar conteúdo.
+
+### E4 — `Purging Toxins` · trivial
+
+`formula: "@item.rank"` causa **0 de dano em silêncio**. Conserto no
+`scripts/import-pf2e.ts` (resolver `@item.rank` na importação) + um teste de
+conformidade que falhe se qualquer fórmula de dano ficar não resolvida.
+
+### E5 — Terceira leva de perícias · pequeno, valor BAIXO
+
+`Seek`, `Sneak`, `Disarm`. **Medir antes de fazer:** `Seek` remove `hidden` de
+outro (alvo ambíguo), `Sneak` é movimento (posicional, ADR-011) e `Disarm` não
+aplica condição oficial — o efeito dele é um −2 que a engine não modela. É
+provável que o honesto seja **declarar** as três em vez de implementá-las.
+
+### BLOQUEADO — decisão de ADR: item investido
+
+O ADR-008 presume que o Pathbuilder exporta o valor final. **É falso para item
+investido**: o Ventriloquist's Ring tem `FlatModifier` deception +1 no dataset,
+o Pathbuilder não o inclui (medido: Deception 13 = nível 5 + expert 4 + Cha 4),
+e a engine o pula por ser incondicional em seletor de ficha. **O anel não faz
+nada.** Nenhuma linha da Fase 2.8 antes desta decisão — provável ADR novo.
+
+---
+
 ## Fila de confiabilidade (achados de 2026-07-25, priorizados)
 
 Levantados durante a Fase 1 e **deliberadamente adiados** para não abrir frentes
